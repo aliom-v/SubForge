@@ -154,9 +154,30 @@ VITE_API_BASE_URL=http://127.0.0.1:8787
 
 - `wrangler.toml` 已改成更适合 Dashboard / Git 导入的默认绑定配置，省略了资源 ID，由 Cloudflare 在导入时自动补齐。
 - Worker 已配置静态资源目录为 `apps/web/dist`，导入后会把管理后台一并托管。
-- 根 `package.json` 已增加 `deploy` / `db:migrations:apply`，Deploy to Cloudflare 会自动预填这些命令。
+- 根 `package.json` 已增加 `build` / `deploy` / `db:migrations:apply`，根据 Cloudflare 官方 Deploy to Cloudflare 文档，按钮会自动检测并预填这些命令。
+- `package.json` 里也已经补了 `cloudflare.bindings` 描述，Cloudflare 导入表单会显示绑定用途说明。
 - 首次部署后可直接通过后台安装向导创建管理员，无需先跑 `seed:admin`。
 - 若你仍想单独托管前端，也可以把 `apps/web` 部署到 Pages，但这不再是必需步骤。
+
+### 首次 UI 部署步骤
+
+1. 打开仓库首页的 `Deploy to Cloudflare` 按钮。
+2. 在 Cloudflare 导入界面确认仓库 URL 正确，并使用仓库根目录作为应用根目录。
+3. 确认构建命令为 `npm run build`，部署命令为 `npm run deploy`；如果 Cloudflare 没自动填出这两个值，可手动填写。
+4. 在绑定/变量界面确认以下运行时配置：
+   - `DB`：D1
+   - `SUB_CACHE`：KV
+   - `ADMIN_JWT_SECRET`：运行时 Secret
+   - 可选变量：`APP_ENV`、`SUBSCRIPTION_CACHE_TTL`、`PREVIEW_CACHE_TTL`、`SYNC_HTTP_TIMEOUT_MS`
+5. 完成导入后，等待 Cloudflare 首次构建并部署 Worker。
+6. 打开 Worker 域名，进入后台首次安装向导，创建首个管理员。
+7. 如果需要演示数据，再执行 `npm run seed:demo` 并导入到 D1。
+
+### 按钮使用提示
+
+- 当前按钮面向 **公开 GitHub 仓库**，私有仓库或非 GitHub/GitLab 源通常不能直接给他人一键部署。
+- 当前项目虽然是 monorepo，但 Worker 应用入口位于仓库根目录，按钮应直接指向仓库根，不要再额外传子目录。
+- 如果你后续拆成多个 Worker，再为每个 Worker 单独提供一个按钮会更稳。
 
 ## 文档入口
 
