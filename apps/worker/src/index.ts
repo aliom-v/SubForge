@@ -1,11 +1,4 @@
-import {
-  compileSubscription,
-  getBootstrapCacheKeyExamples,
-  getBootstrapChecklist,
-  getBootstrapSubscriptionExamples,
-  getServiceMetadata,
-  getSupportedRendererTargets
-} from '@subforge/core';
+import { compileSubscription } from '@subforge/core';
 import {
   API_PREFIX,
   APP_NAME,
@@ -1015,20 +1008,6 @@ export default {
       const url = new URL(request.url);
       const segments = url.pathname.split('/').filter(Boolean);
 
-      if (request.method === 'GET' && url.pathname === '/') {
-        return json({
-          ok: true,
-          service: APP_NAME,
-          bootstrap: true,
-          metadata: getServiceMetadata(),
-          supportedTargets: getSupportedRendererTargets(),
-          cacheExamples: getBootstrapCacheKeyExamples('demo-token'),
-          previewCacheExample: buildPreviewCacheKey('mihomo', 'usr_demo'),
-          nextSteps: getBootstrapChecklist(),
-          examples: getBootstrapSubscriptionExamples()
-        });
-      }
-
       if (request.method === 'GET' && url.pathname === HEALTH_ENDPOINT) {
         return json({
           ok: true,
@@ -1045,6 +1024,10 @@ export default {
 
       if (request.method === 'GET' && segments[0] === 's' && segments[1] && segments[2]) {
         return handlePublicSubscription(request, env, segments[1], segments[2]);
+      }
+
+      if (request.method === 'GET' || request.method === 'HEAD') {
+        return env.ASSETS.fetch(request);
       }
 
       return notFound(url.pathname);

@@ -56,7 +56,7 @@ assertIncludes(wrangler, 'SYNC_HTTP_TIMEOUT_MS', 'wrangler vars');
 assertIncludes(wrangler, '[assets]', 'wrangler assets config');
 assertIncludes(wrangler, 'directory = "./apps/web/dist"', 'wrangler assets directory');
 assertIncludes(wrangler, 'not_found_handling = "single-page-application"', 'wrangler spa handling');
-assertIncludes(wrangler, 'run_worker_first = ["/api/*", "/s/*", "/health"]', 'wrangler worker-first routes');
+assertIncludes(wrangler, 'run_worker_first = true', 'wrangler worker-first flag');
 assert.ok(!wrangler.includes('YOUR_D1_DATABASE_ID'), 'wrangler should not contain D1 placeholder ids');
 assert.ok(!wrangler.includes('YOUR_KV_NAMESPACE_ID'), 'wrangler should not contain KV placeholder ids');
 
@@ -93,5 +93,6 @@ assertIncludes(viteConfig, "'/s': 'http://127.0.0.1:8787'", 'vite subscription p
 const workerIndex = readFileSync('apps/worker/src/index.ts', 'utf8');
 assertIncludes(workerIndex, 'handleSetupStatus', 'worker setup status handler');
 assertIncludes(workerIndex, 'handleSetupBootstrap', 'worker setup bootstrap handler');
+assertIncludes(workerIndex, 'return env.ASSETS.fetch(request);', 'worker assets fallback');
 
 console.log('Smoke checks passed.');

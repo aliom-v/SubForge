@@ -152,8 +152,8 @@ VITE_API_BASE_URL=http://127.0.0.1:8787
 
 ## Cloudflare UI / Git 部署
 
-- 当前仓库默认走 **单 Worker + 静态资源** 部署，Worker 会直接托管 `apps/web/dist`。
-- `wrangler.toml` 继续保持“无资源 ID”模式，但这依赖 **`wrangler@4.45.0` 及以上** 在部署时自动 provision D1 / KV 绑定；仓库已升级到该版本区间。
+- 当前仓库默认走 **单 Worker + 静态资源** 部署，所有请求会先进 Worker，再由 Worker 把非 API 请求回退到 `apps/web/dist`。
+- `wrangler.toml` 继续保持“无资源 ID”模式，并启用 `run_worker_first = true`，避免 `/api/*` 请求被 SPA `index.html` 误吞；这依赖 **`wrangler@4.45.0` 及以上** 自动 provision D1 / KV 绑定。
 - 根 `package.json` 里的 `build` 与 `deploy` 已拆开：`npm run build` 只构建前端，`npm run deploy` 负责远端 migration + Worker 发布，更适合 Cloudflare UI / Git 导入。
 - `package.json` 中保留了 `cloudflare.bindings` 描述，Cloudflare 导入表单会显示绑定用途说明。
 - 首次部署后可直接通过后台安装向导创建管理员，无需先跑 `seed:admin`。
@@ -179,6 +179,7 @@ VITE_API_BASE_URL=http://127.0.0.1:8787
 - 当前按钮面向 **公开 GitHub 仓库**，私有仓库或非 GitHub/GitLab 源通常不能直接给他人一键部署。
 - 当前项目虽然是 monorepo，但 Worker 应用入口位于仓库根目录，按钮应直接指向仓库根，不要再额外传子目录。
 - 如果 Cloudflare 导入缓存了旧依赖，请重新触发一次安装，确保实际使用的是仓库里的 `wrangler@4.x`。
+- 如果页面出现 `Unexpected token '<'`，通常表示 `/api/*` 返回了 HTML；当前仓库已改成 Worker-first 路由，重新部署后应恢复正常。
 - 如果你后续拆成多个 Worker，再为每个 Worker 单独提供一个按钮会更稳。
 
 ## 文档入口

@@ -13,7 +13,7 @@ PREVIEW_CACHE_TTL = "120"
 directory = "./apps/web/dist"
 not_found_handling = "single-page-application"
 binding = "ASSETS"
-run_worker_first = ["/api/*", "/s/*", "/health"]
+run_worker_first = true
 
 [[d1_databases]]
 binding = "DB"
