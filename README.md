@@ -152,10 +152,10 @@ VITE_API_BASE_URL=http://127.0.0.1:8787
 
 ## Cloudflare UI / Git 部署
 
-- `wrangler.toml` 已改成更适合 Dashboard / Git 导入的默认绑定配置，省略了资源 ID，由 Cloudflare 在导入时自动补齐。
-- Worker 已配置静态资源目录为 `apps/web/dist`，导入后会把管理后台一并托管。
-- 根 `package.json` 已增加 `build` / `deploy` / `db:migrations:apply`，根据 Cloudflare 官方 Deploy to Cloudflare 文档，按钮会自动检测并预填这些命令。
-- `package.json` 里也已经补了 `cloudflare.bindings` 描述，Cloudflare 导入表单会显示绑定用途说明。
+- 当前仓库默认走 **单 Worker + 静态资源** 部署，Worker 会直接托管 `apps/web/dist`。
+- `wrangler.toml` 继续保持“无资源 ID”模式，但这依赖 **`wrangler@4.45.0` 及以上** 在部署时自动 provision D1 / KV 绑定；仓库已升级到该版本区间。
+- 根 `package.json` 里的 `build` 与 `deploy` 已拆开：`npm run build` 只构建前端，`npm run deploy` 负责远端 migration + Worker 发布，更适合 Cloudflare UI / Git 导入。
+- `package.json` 中保留了 `cloudflare.bindings` 描述，Cloudflare 导入表单会显示绑定用途说明。
 - 首次部署后可直接通过后台安装向导创建管理员，无需先跑 `seed:admin`。
 - 若你仍想单独托管前端，也可以把 `apps/web` 部署到 Pages，但这不再是必需步骤。
 
@@ -169,14 +169,16 @@ VITE_API_BASE_URL=http://127.0.0.1:8787
    - `SUB_CACHE`：KV
    - `ADMIN_JWT_SECRET`：运行时 Secret
    - 可选变量：`APP_ENV`、`SUBSCRIPTION_CACHE_TTL`、`PREVIEW_CACHE_TTL`、`SYNC_HTTP_TIMEOUT_MS`
-5. 完成导入后，等待 Cloudflare 首次构建并部署 Worker。
-6. 打开 Worker 域名，进入后台首次安装向导，创建首个管理员。
-7. 如果需要演示数据，再执行 `npm run seed:demo` 并导入到 D1。
+5. 首次部署时，Cloudflare 会基于仓库中的 `wrangler@4.x` 自动 provision 缺失的 D1 / KV 绑定；如果你的账号环境没有自动创建出来，再回到 Dashboard 手动补绑 `DB` / `SUB_CACHE` 即可。
+6. 完成导入后，等待 Cloudflare 首次构建并部署 Worker。
+7. 打开 Worker 域名，进入后台首次安装向导，创建首个管理员。
+8. 如果需要演示数据，再执行 `npm run seed:demo` 并导入到 D1。
 
 ### 按钮使用提示
 
 - 当前按钮面向 **公开 GitHub 仓库**，私有仓库或非 GitHub/GitLab 源通常不能直接给他人一键部署。
 - 当前项目虽然是 monorepo，但 Worker 应用入口位于仓库根目录，按钮应直接指向仓库根，不要再额外传子目录。
+- 如果 Cloudflare 导入缓存了旧依赖，请重新触发一次安装，确保实际使用的是仓库里的 `wrangler@4.x`。
 - 如果你后续拆成多个 Worker，再为每个 Worker 单独提供一个按钮会更稳。
 
 ## 文档入口

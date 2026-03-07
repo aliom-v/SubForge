@@ -56,20 +56,32 @@ assertIncludes(wrangler, 'SYNC_HTTP_TIMEOUT_MS', 'wrangler vars');
 assertIncludes(wrangler, '[assets]', 'wrangler assets config');
 assertIncludes(wrangler, 'directory = "./apps/web/dist"', 'wrangler assets directory');
 assertIncludes(wrangler, 'not_found_handling = "single-page-application"', 'wrangler spa handling');
+assertIncludes(wrangler, 'run_worker_first = ["/api/*", "/s/*", "/health"]', 'wrangler worker-first routes');
 assert.ok(!wrangler.includes('YOUR_D1_DATABASE_ID'), 'wrangler should not contain D1 placeholder ids');
 assert.ok(!wrangler.includes('YOUR_KV_NAMESPACE_ID'), 'wrangler should not contain KV placeholder ids');
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
-assert.equal(packageJson.scripts.deploy, 'npm run build:web && npm run db:migrations:apply && npm run deploy:worker', 'root deploy script');
-assert.equal(packageJson.scripts.build, 'npm run build:web && npm run build:worker', 'root build script');
+assert.equal(packageJson.scripts.build, 'npm run build:web', 'root build script');
+assert.equal(packageJson.scripts.deploy, 'npm run db:migrations:apply && npm run deploy:worker', 'root deploy script');
 assert.equal(packageJson.scripts['test:smoke'], 'node scripts/smoke-check.mjs', 'smoke script');
 assert.ok(packageJson.cloudflare?.bindings?.ADMIN_JWT_SECRET, 'package.json should describe Cloudflare bindings');
+
+const workerPackageJson = JSON.parse(readFileSync('apps/worker/package.json', 'utf8'));
+assert.equal(workerPackageJson.scripts.build, 'wrangler deploy --dry-run --config ../../wrangler.toml', 'worker dry-run build script');
+assert.match(workerPackageJson.devDependencies.wrangler, /^\^4\./, 'worker should use wrangler v4');
 
 const readme = readFileSync('README.md', 'utf8');
 assertIncludes(readme, 'PREVIEW_CACHE_TTL', 'README env docs');
 assertIncludes(readme, '规则源支持 `text` / `yaml` / `json`', 'README sync docs');
 assertIncludes(readme, 'Deploy to Cloudflare', 'README deploy button');
 assertIncludes(readme, '首次安装向导', 'README setup wizard docs');
+assertIncludes(readme, 'wrangler@4.45.0', 'README wrangler version docs');
+assertIncludes(readme, 'npm run deploy', 'README deploy command docs');
+
+const deployGuide = readFileSync('docs/部署指南.md', 'utf8');
+assertIncludes(deployGuide, 'wrangler@4.45.0+', 'deploy guide wrangler version docs');
+assertIncludes(deployGuide, 'npm run build', 'deploy guide build docs');
+assertIncludes(deployGuide, 'npm run deploy', 'deploy guide deploy docs');
 
 const webApi = readFileSync('apps/web/src/api.ts', 'utf8');
 assertIncludes(webApi, "const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';", 'web api same-origin default');

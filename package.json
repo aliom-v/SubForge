@@ -14,7 +14,7 @@
   "scripts": {
     "dev:web": "npm run dev --workspace @subforge/web",
     "dev:worker": "npm run dev --workspace @subforge/worker",
-    "build": "npm run build:web && npm run build:worker",
+    "build": "npm run build:web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "seed:admin": "node scripts/generate-admin.mjs",
@@ -24,7 +24,7 @@
     "build:worker": "npm run build --workspace @subforge/worker",
     "deploy:worker": "npm run deploy --workspace @subforge/worker",
     "db:migrations:apply": "npm run db:migrations:apply --workspace @subforge/worker",
-    "deploy": "npm run build:web && npm run db:migrations:apply && npm run deploy:worker"
+    "deploy": "npm run db:migrations:apply && npm run deploy:worker"
   },
   "cloudflare": {
     "bindings": {
