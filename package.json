@@ -1,0 +1,42 @@
+{
+  "name": "subforge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SubForge monorepo workspace",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:web": "npm run dev --workspace @subforge/web",
+    "dev:worker": "npm run dev --workspace @subforge/worker",
+    "build": "npm run build:web && npm run build:worker",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "seed:admin": "node scripts/generate-admin.mjs",
+    "seed:demo": "node scripts/generate-demo-seed.mjs",
+    "test:smoke": "node scripts/smoke-check.mjs",
+    "build:web": "npm run build --workspace @subforge/web",
+    "build:worker": "npm run build --workspace @subforge/worker",
+    "deploy:worker": "npm run deploy --workspace @subforge/worker",
+    "db:migrations:apply": "npm run db:migrations:apply --workspace @subforge/worker",
+    "deploy": "npm run build:web && npm run db:migrations:apply && npm run deploy:worker"
+  },
+  "cloudflare": {
+    "bindings": {
+      "ADMIN_JWT_SECRET": {
+        "description": "Generate a long random secret, for example with `openssl rand -hex 32`."
+      },
+      "DB": {
+        "description": "D1 database binding for SubForge metadata, users, templates, rules, and logs."
+      },
+      "SUB_CACHE": {
+        "description": "KV namespace used for public subscription and preview cache entries."
+      }
+    }
+  }
+}
