@@ -29,6 +29,20 @@ export interface RuleSourceSyncResult {
   details?: RuleSourceSyncDetails;
 }
 
+class SyncFetchError extends Error {
+  status: number | undefined;
+  fetchedBytes: number | undefined;
+  durationMs: number;
+
+  constructor(message: string, input: { status?: number; fetchedBytes?: number; durationMs: number }) {
+    super(message);
+    this.name = 'SyncFetchError';
+    this.status = input.status;
+    this.fetchedBytes = input.fetchedBytes;
+    this.durationMs = input.durationMs;
+  }
+}
+
 function toHex(buffer: ArrayBuffer): string {
   return [...new Uint8Array(buffer)].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
@@ -57,17 +71,23 @@ async function fetchText(sourceUrl: string, timeoutMs: number): Promise<{
       }
     });
 
-    if (!response.ok) {
-      throw new Error(`upstream returned ${response.status}`);
-    }
-
     const text = (await response.text()).trim();
+    const durationMs = Date.now() - start;
+    const fetchedBytes = new TextEncoder().encode(text).byteLength;
+
+    if (!response.ok) {
+      throw new SyncFetchError(`upstream returned ${response.status}`, {
+        status: response.status,
+        fetchedBytes,
+        durationMs
+      });
+    }
 
     return {
       text,
       status: response.status,
-      durationMs: Date.now() - start,
-      fetchedBytes: new TextEncoder().encode(text).byteLength
+      durationMs,
+      fetchedBytes
     };
   } finally {
     clearTimeout(timer);
@@ -219,10 +239,11 @@ function toDetailsRecord(details: RuleSourceSyncDetails): Record<string, JsonVal
 
 export async function syncRuleSourceNow(env: Env, ruleSource: RuleSourceRecord): Promise<RuleSourceSyncResult> {
   const startedAt = Date.now();
+  let upstream: Awaited<ReturnType<typeof fetchText>> | null = null;
 
   try {
     const timeoutMs = Number(env.SYNC_HTTP_TIMEOUT_MS || '10000');
-    const upstream = await fetchText(ruleSource.sourceUrl, timeoutMs);
+    upstream = await fetchText(ruleSource.sourceUrl, timeoutMs);
 
     if (!upstream.text) {
       const details: RuleSourceSyncDetails = {
@@ -295,7 +316,14 @@ export async function syncRuleSourceNow(env: Env, ruleSource: RuleSourceRecord):
     const details: RuleSourceSyncDetails = {
       sourceUrl: ruleSource.sourceUrl,
       format: ruleSource.format,
-      durationMs: Date.now() - startedAt,
+      durationMs: error instanceof SyncFetchError ? error.durationMs : Date.now() - startedAt,
+      ...(upstream ? { upstreamStatus: upstream.status, fetchedBytes: upstream.fetchedBytes } : {}),
+      ...(!upstream && error instanceof SyncFetchError && error.status !== undefined
+        ? { upstreamStatus: error.status }
+        : {}),
+      ...(!upstream && error instanceof SyncFetchError && error.fetchedBytes !== undefined
+        ? { fetchedBytes: error.fetchedBytes }
+        : {}),
       reason: message
     };
     await recordRuleSourceSync(env.DB, ruleSource.id, 'failed', message, toDetailsRecord(details));

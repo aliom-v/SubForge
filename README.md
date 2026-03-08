@@ -4,7 +4,7 @@
 >
 > [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Faliom-v%2FSubForge)
 
-SubForge 是一个部署在 Cloudflare 上的订阅分发与规则同步平台，当前仓库已具备可继续迭代的 MVP 基础：
+SubForge 是一个部署在 Cloudflare 上的订阅分发与规则同步平台，当前仓库已具备可继续迭代的 MVP 基础。当前实现与目标方案之间的差异，统一记录在 `docs/已知问题与修复计划.md`：
 
 - React + Vite 管理后台（可打包进 Worker 静态资源）
 - Cloudflare Worker API
@@ -33,11 +33,11 @@ scripts/       初始化脚本
 ### 后端
 
 - 首次安装状态检查与初始化管理员 API
-- 管理员登录、会话校验、退出
-- 用户 CRUD（含 token 重置）
+- 管理员登录、会话校验、退出接口（支持服务端会话撤销）
+- 用户管理（创建 / 编辑 / 删除 / 启停 / token 重置 / 节点绑定）
 - 节点 CRUD
-- 模板创建 / 更新 / 默认模板切换
-- 规则源创建 / 更新 / 手动同步
+- 模板创建 / 更新 / 删除 / 默认模板切换
+- 规则源创建 / 更新 / 删除 / 启停 / 手动同步
 - 用户与节点绑定管理
 - `/api/preview/:userId/:target` 预览接口
 - `/s/:token/:target` 公开订阅接口
@@ -50,7 +50,7 @@ scripts/       初始化脚本
 - 首次安装向导（创建首个管理员）
 - 单页式管理后台
 - 后台前端可随 Worker 一起部署在同一域名下
-- 用户 / 节点 / 模板 / 规则源：创建 + 编辑表单
+- 用户 / 节点 / 模板 / 规则源：创建 + 编辑 + 删除操作
 - 用户节点绑定界面
 - 规则源同步结果展示
 - 同步日志与审计日志查看
@@ -59,12 +59,19 @@ scripts/       初始化脚本
 ### 同步与缓存
 
 - 规则源支持 `text` / `yaml` / `json` 三种轻量解析
-- 同步时会记录结构化 details：格式、耗时、上游状态、规则数、哈希、跳过原因
+- 同步时会记录结构化 details：格式、耗时、上游状态、字节数、规则数、哈希、失败或跳过原因
 - 同步时会做规则归一化、去重、内容哈希比较
 - 内容未变化时会跳过快照更新
-- 用户更新 / 绑定变更时按用户失效缓存
+- 用户更新 / 绑定 / 删除变更时按用户失效缓存
 - 节点更新 / 删除时按受影响用户失效缓存
-- 模板变更时按实际受影响的目标类型失效缓存
+- 模板创建 / 更新 / 删除 / 默认切换时按实际受影响的目标类型失效缓存
+- 规则源启停 / 删除 / 内容同步变化时按全部用户失效缓存
+- 公开订阅缓存命中前会重新校验 token 对应用户是否存在、是否启用、是否过期
+- 用户节点绑定会显式拒绝缺失用户和未知节点 ID
+- 当前节点写接口只接受 `manual` 类型；`remote` / `sourceId` 继续保留给后续节点源同步
+- 默认模板只能指向 `enabled` 模板，避免“切换成功但实际不生效”的语义错觉
+- 默认模板在被禁用时会自动清除默认标记，避免返回状态与后续生效模板再次分裂
+- 节点更新支持通过 `credentials: null` / `params: null` 显式清空 metadata
 - 预览缓存与公开订阅缓存分离，TTL 可独立配置
 - API 输入增加 URL / 日期 / 端口 / 枚举值校验，前端表单同步做基础校验
 
@@ -108,8 +115,10 @@ npm install
 执行 migration：
 
 ```bash
-npx wrangler d1 execute subforge --local --file=migrations/001_init.sql
+npm run db:migrations:apply:local
 ```
+
+该命令会按顺序应用 `migrations/` 下的本地 D1 migration，包括 `002_admin_session_revocation.sql`。
 
 启动 Worker：
 
@@ -134,6 +143,12 @@ npm run dev:web
 
 ```bash
 npm run test:smoke
+```
+
+也可以直接跑当前最小回归测试集合：
+
+```bash
+npm test
 ```
 
 如需显式覆盖前端 API 地址，可设置：
@@ -187,11 +202,26 @@ VITE_API_BASE_URL=http://127.0.0.1:8787
 - `项目介绍.md`
 - `docs/实施方案.md`
 - `docs/部署指南.md`
+- `docs/已知问题与修复计划.md`
+- `docs/自动化验证与CI计划.md`
+- `docs/第二批自动化验证执行清单.md`
+- `docs/第三批自动化验证执行清单.md`
+- `docs/第四批自动化验证执行清单.md`
+- `docs/第五批自动化验证执行清单.md`
+- `docs/第六批自动化验证执行清单.md`
+- `docs/第七批自动化验证执行清单.md`
+- `docs/第八批自动化验证执行清单.md`
+- `docs/第九批自动化验证执行清单.md`
+- `docs/第十批自动化验证执行清单.md`
+- `docs/第十一批自动化验证执行清单.md`
+- `docs/第十二批自动化验证执行清单.md`
+- `docs/第十三批自动化验证执行清单.md`
 - `.omx/plans/2026-03-07-subforge-roadmap.md`
 
 ## 下一步
 
-- 继续增强规则源解析与同步错误详情
-- 补更多审计字段与后台展示信息
+- 决定是否补齐节点源同步，或继续保持文档写实
+- 继续把测试从当前 create/update/delete/bind/logout 基线扩展到更完整错误矩阵与发布前回归
+- 继续增强规则源解析与同步错误展示
 - 完善 CI / CD 与一键初始化流程
-- 增加更细的前端交互反馈与表单校验
+- 补更多审计字段与后台展示信息

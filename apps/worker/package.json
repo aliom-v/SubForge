@@ -8,11 +8,12 @@
     "build": "wrangler deploy --dry-run --config ../../wrangler.toml",
     "deploy": "wrangler deploy --config ../../wrangler.toml",
     "typecheck": "tsc --noEmit",
+    "db:migrations:apply:local": "wrangler d1 migrations apply DB --local --config ../../wrangler.toml",
     "db:migrations:apply": "wrangler d1 migrations apply DB --remote --config ../../wrangler.toml"
   },
   "dependencies": {
-    "@subforge/core": "workspace:*",
-    "@subforge/shared": "workspace:*"
+    "@subforge/core": "0.1.0",
+    "@subforge/shared": "0.1.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241022.0",

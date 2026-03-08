@@ -53,6 +53,13 @@ export interface RuleSourceSyncPayload {
   details?: Record<string, unknown>;
 }
 
+export interface LogoutPayload {
+  loggedOut: boolean;
+  serverRevocation: boolean;
+  mode: 'client_only' | 'server_revoked';
+  revokedAt?: string;
+}
+
 interface SuccessEnvelope<T> {
   ok: true;
   data: T;
@@ -101,8 +108,8 @@ export async function login(username: string, password: string): Promise<{ token
   });
 }
 
-export async function logout(token: string): Promise<void> {
-  await request('/api/admin/logout', { method: 'POST' }, token);
+export async function logout(token: string): Promise<LogoutPayload> {
+  return request('/api/admin/logout', { method: 'POST' }, token);
 }
 
 export async function fetchMe(token: string): Promise<AdminSession> {
@@ -126,6 +133,10 @@ export async function updateUser(
   input: { name?: string; status?: string; remark?: string; expiresAt?: string | null }
 ): Promise<UserRecord> {
   return request(`/api/users/${userId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
+}
+
+export async function deleteUser(token: string, userId: string): Promise<{ deleted: true; userId: string }> {
+  return request(`/api/users/${userId}`, { method: 'DELETE' }, token);
 }
 
 export async function resetUserToken(token: string, userId: string): Promise<UserRecord> {
@@ -170,6 +181,10 @@ export async function updateNode(
   return request(`/api/nodes/${nodeId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
 }
 
+export async function deleteNode(token: string, nodeId: string): Promise<{ deleted: true; nodeId: string }> {
+  return request(`/api/nodes/${nodeId}`, { method: 'DELETE' }, token);
+}
+
 export async function fetchTemplates(token: string): Promise<TemplateRecord[]> {
   return request('/api/templates', { method: 'GET' }, token);
 }
@@ -187,6 +202,13 @@ export async function updateTemplate(
   input: { name?: string; content?: string; version?: number; enabled?: boolean; isDefault?: boolean }
 ): Promise<TemplateRecord> {
   return request(`/api/templates/${templateId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
+}
+
+export async function deleteTemplate(
+  token: string,
+  templateId: string
+): Promise<{ deleted: true; templateId: string }> {
+  return request(`/api/templates/${templateId}`, { method: 'DELETE' }, token);
 }
 
 export async function setDefaultTemplate(token: string, templateId: string): Promise<TemplateRecord> {
@@ -210,6 +232,13 @@ export async function updateRuleSource(
   input: { name?: string; sourceUrl?: string; format?: RuleSourceRecord['format']; enabled?: boolean }
 ): Promise<RuleSourceRecord> {
   return request(`/api/rule-sources/${ruleSourceId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
+}
+
+export async function deleteRuleSource(
+  token: string,
+  ruleSourceId: string
+): Promise<{ deleted: true; ruleSourceId: string }> {
+  return request(`/api/rule-sources/${ruleSourceId}`, { method: 'DELETE' }, token);
 }
 
 export async function syncRuleSource(token: string, ruleSourceId: string): Promise<RuleSourceSyncPayload> {

@@ -16,6 +16,10 @@ import {
   createRuleSource,
   createTemplate,
   createUser,
+  deleteNode,
+  deleteRuleSource,
+  deleteTemplate,
+  deleteUser,
   fetchAuditLogs,
   fetchMe,
   fetchNodes,
@@ -107,6 +111,11 @@ const emptyResources: ResourceState = {
   auditLogs: []
 };
 
+const emptyUserEditForm: UserEditForm = { id: '', name: '', status: 'active', remark: '', expiresAt: '' };
+const emptyNodeEditForm: NodeEditForm = { id: '', name: '', protocol: '', server: '', port: 443, enabled: true };
+const emptyTemplateEditForm: TemplateEditForm = { id: '', name: '', content: '', version: 1, enabled: true, isDefault: false };
+const emptyRuleSourceEditForm: RuleSourceEditForm = { id: '', name: '', sourceUrl: '', format: 'text', enabled: true };
+
 export function App(): JSX.Element {
   const [token, setToken] = useState<string>(() => localStorage.getItem(sessionStorageKey) ?? '');
   const [admin, setAdmin] = useState<AdminSession | null>(null);
@@ -135,10 +144,10 @@ export function App(): JSX.Element {
   const [bindingUserId, setBindingUserId] = useState('');
   const [bindingNodeIds, setBindingNodeIds] = useState<string[]>([]);
 
-  const [userEditForm, setUserEditForm] = useState<UserEditForm>({ id: '', name: '', status: 'active', remark: '', expiresAt: '' });
-  const [nodeEditForm, setNodeEditForm] = useState<NodeEditForm>({ id: '', name: '', protocol: '', server: '', port: 443, enabled: true });
-  const [templateEditForm, setTemplateEditForm] = useState<TemplateEditForm>({ id: '', name: '', content: '', version: 1, enabled: true, isDefault: false });
-  const [ruleSourceEditForm, setRuleSourceEditForm] = useState<RuleSourceEditForm>({ id: '', name: '', sourceUrl: '', format: 'text', enabled: true });
+  const [userEditForm, setUserEditForm] = useState<UserEditForm>(emptyUserEditForm);
+  const [nodeEditForm, setNodeEditForm] = useState<NodeEditForm>(emptyNodeEditForm);
+  const [templateEditForm, setTemplateEditForm] = useState<TemplateEditForm>(emptyTemplateEditForm);
+  const [ruleSourceEditForm, setRuleSourceEditForm] = useState<RuleSourceEditForm>(emptyRuleSourceEditForm);
 
   const summary = useMemo(
     () => [
@@ -182,7 +191,10 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const user = resources.users.find((item) => item.id === userEditForm.id) ?? resources.users[0];
-    if (!user) return;
+    if (!user) {
+      setUserEditForm(emptyUserEditForm);
+      return;
+    }
     setUserEditForm({
       id: user.id,
       name: user.name,
@@ -194,7 +206,10 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const node = resources.nodes.find((item) => item.id === nodeEditForm.id) ?? resources.nodes[0];
-    if (!node) return;
+    if (!node) {
+      setNodeEditForm(emptyNodeEditForm);
+      return;
+    }
     setNodeEditForm({
       id: node.id,
       name: node.name,
@@ -207,7 +222,10 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const template = resources.templates.find((item) => item.id === templateEditForm.id) ?? resources.templates[0];
-    if (!template) return;
+    if (!template) {
+      setTemplateEditForm(emptyTemplateEditForm);
+      return;
+    }
     setTemplateEditForm({
       id: template.id,
       name: template.name,
@@ -220,7 +238,10 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const ruleSource = resources.ruleSources.find((item) => item.id === ruleSourceEditForm.id) ?? resources.ruleSources[0];
-    if (!ruleSource) return;
+    if (!ruleSource) {
+      setRuleSourceEditForm(emptyRuleSourceEditForm);
+      return;
+    }
     setRuleSourceEditForm({
       id: ruleSource.id,
       name: ruleSource.name,
@@ -268,16 +289,14 @@ export function App(): JSX.Element {
       fetchSyncLogs(currentToken),
       fetchAuditLogs(currentToken)
     ]);
+    const firstUser = users[0];
 
     setResources({ users, nodes, templates, ruleSources, syncLogs, auditLogs });
-
-    if (!previewForm.userId && users[0]) {
-      setPreviewForm((current) => ({ ...current, userId: users[0].id }));
-    }
-
-    if (!bindingUserId && users[0]) {
-      setBindingUserId(users[0].id);
-    }
+    setPreviewForm((current) => ({
+      ...current,
+      userId: users.some((user) => user.id === current.userId) ? current.userId : firstUser?.id ?? ''
+    }));
+    setBindingUserId((current) => (users.some((user) => user.id === current) ? current : firstUser?.id ?? ''));
   }
 
   async function loadUserBindings(userId: string): Promise<void> {
@@ -350,9 +369,15 @@ export function App(): JSX.Element {
   }
 
   async function handleLogout(): Promise<void> {
+    let logoutMessage = '已清除当前浏览器登录态';
+
     if (token) {
       try {
-        await logout(token);
+        const result = await logout(token);
+
+        if (result.serverRevocation) {
+          logoutMessage = '已退出登录并撤销当前服务端会话';
+        }
       } catch {
       }
     }
@@ -362,11 +387,11 @@ export function App(): JSX.Element {
     setAdmin(null);
     setResources(emptyResources);
     setPreview(null);
-    setMessage('已退出登录');
+    setMessage(logoutMessage);
     setError('');
   }
 
-  async function withAction(action: () => Promise<void>, successMessage?: string): Promise<void> {
+  async function withAction(action: () => Promise<unknown>, successMessage?: string): Promise<void> {
     setLoading(true);
     setError('');
 
@@ -428,6 +453,15 @@ export function App(): JSX.Element {
     await withAction(() => resetUserToken(token, userId), '用户 token 已重置');
   }
 
+  async function handleDeleteUser(userId: string): Promise<void> {
+    if (!token || !confirmDestructiveAction('确认删除该用户吗？')) return;
+
+    await withAction(async () => {
+      await deleteUser(token, userId);
+      setPreview(null);
+    }, '用户已删除');
+  }
+
   async function handleSaveBindings(): Promise<void> {
     if (!token || !bindingUserId) return;
     await withAction(() => replaceUserNodeBindings(token, bindingUserId, bindingNodeIds), '用户节点绑定已更新');
@@ -480,11 +514,20 @@ export function App(): JSX.Element {
     );
   }
 
+  async function handleDeleteNode(nodeId: string): Promise<void> {
+    if (!token || !confirmDestructiveAction('确认删除该节点吗？')) return;
+
+    await withAction(async () => {
+      await deleteNode(token, nodeId);
+      setPreview(null);
+    }, '节点已删除');
+  }
+
   async function handleCreateTemplate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!token) return;
 
-    const validationError = validateTemplateDraft({ ...templateForm, version: 1, enabled: true });
+    const validationError = validateTemplateDraft({ name: templateForm.name, content: templateForm.content, version: 1 });
 
     if (validationError) {
       reportValidationError(validationError);
@@ -523,11 +566,20 @@ export function App(): JSX.Element {
     await withAction(() => setDefaultTemplate(token, templateId), '默认模板已更新');
   }
 
+  async function handleDeleteTemplate(templateId: string): Promise<void> {
+    if (!token || !confirmDestructiveAction('确认删除该模板吗？')) return;
+
+    await withAction(async () => {
+      await deleteTemplate(token, templateId);
+      setPreview(null);
+    }, '模板已删除');
+  }
+
   async function handleCreateRuleSource(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!token) return;
 
-    const validationError = validateRuleSourceDraft({ ...ruleSourceForm, enabled: true });
+    const validationError = validateRuleSourceDraft({ name: ruleSourceForm.name, sourceUrl: ruleSourceForm.sourceUrl });
 
     if (validationError) {
       reportValidationError(validationError);
@@ -579,6 +631,16 @@ export function App(): JSX.Element {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleDeleteRuleSource(ruleSourceId: string): Promise<void> {
+    if (!token || !confirmDestructiveAction('确认删除该规则源吗？')) return;
+
+    await withAction(async () => {
+      await deleteRuleSource(token, ruleSourceId);
+      setPreview(null);
+      setSyncResult((current) => (current?.sourceId === ruleSourceId ? null : current));
+    }, '规则源已删除');
   }
 
   async function handlePreview(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -835,6 +897,7 @@ export function App(): JSX.Element {
                   <button type="button" onClick={() => setBindingUserId(user.id)}>绑定节点</button>
                   <button type="button" onClick={() => setUserEditForm((current) => ({ ...current, id: user.id }))}>编辑</button>
                   <button type="button" className="secondary" onClick={() => void handleResetUserToken(user.id)}>重置 Token</button>
+                  <button type="button" className="danger" onClick={() => void handleDeleteUser(user.id)}>删除</button>
                 </div>
               ])}
             />
@@ -883,7 +946,10 @@ export function App(): JSX.Element {
                 node.server,
                 node.port,
                 node.enabled ? 'enabled' : 'disabled',
-                <button type="button" key={node.id} onClick={() => setNodeEditForm((current) => ({ ...current, id: node.id }))}>编辑</button>
+                <div className="inline-actions" key={node.id}>
+                  <button type="button" onClick={() => setNodeEditForm((current) => ({ ...current, id: node.id }))}>编辑</button>
+                  <button type="button" className="danger" onClick={() => void handleDeleteNode(node.id)}>删除</button>
+                </div>
               ])}
             />
           </article>
@@ -942,6 +1008,7 @@ export function App(): JSX.Element {
                 <div className="inline-actions" key={template.id}>
                   <button type="button" onClick={() => setTemplateEditForm((current) => ({ ...current, id: template.id }))}>编辑</button>
                   <button type="button" className="secondary" onClick={() => void handleSetDefaultTemplate(template.id)}>设为默认</button>
+                  <button type="button" className="danger" onClick={() => void handleDeleteTemplate(template.id)}>删除</button>
                 </div>
               ])}
             />
@@ -1002,6 +1069,7 @@ export function App(): JSX.Element {
                 <div className="inline-actions" key={ruleSource.id}>
                   <button type="button" onClick={() => setRuleSourceEditForm((current) => ({ ...current, id: ruleSource.id }))}>编辑</button>
                   <button type="button" className="secondary" onClick={() => void handleSyncRuleSource(ruleSource.id)}>触发同步</button>
+                  <button type="button" className="danger" onClick={() => void handleDeleteRuleSource(ruleSource.id)}>删除</button>
                 </div>
               ])}
             />
@@ -1109,6 +1177,10 @@ function isValidHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function confirmDestructiveAction(message: string): boolean {
+  return typeof window === 'undefined' ? true : window.confirm(message);
 }
 
 function isValidDateTime(value: string): boolean {

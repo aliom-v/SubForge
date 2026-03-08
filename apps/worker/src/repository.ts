@@ -1,14 +1,18 @@
 import type {
+  AuditLogRecord,
+  JsonValue,
   RuleSourceFormat,
   RuleSourceRecord,
   SubscriptionTarget,
   SyncLogRecord,
   TemplateRecord,
+  UserNodeBinding,
   UserRecord,
   NodeRecord,
   AdminRecord
 } from '@subforge/shared';
 import type { SubscriptionCompileInput, SubscriptionNode, SubscriptionRuleSet, SubscriptionTemplate } from '@subforge/core';
+import { sanitizeAuditPayload } from './audit';
 import { createId, createRandomToken } from './security';
 
 interface Row {
@@ -31,7 +35,7 @@ function asBoolean(value: unknown): boolean {
   return value === 1 || value === true || value === '1';
 }
 
-function parseJsonObject(value: unknown): Record<string, unknown> | undefined {
+function parseJsonObject(value: unknown): Record<string, JsonValue> | undefined {
   if (!value) {
     return undefined;
   }
@@ -39,21 +43,28 @@ function parseJsonObject(value: unknown): Record<string, unknown> | undefined {
   try {
     const parsed = JSON.parse(String(value)) as unknown;
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
+      ? (parsed as Record<string, JsonValue>)
       : undefined;
   } catch {
     return undefined;
   }
 }
 
+function serializeJsonObject(value: Record<string, unknown> | null | undefined): string | null {
+  return value == null ? null : JSON.stringify(value);
+}
+
 function mapAdmin(row: Row): AdminRecord {
+  const sessionNotBefore = asNullableString(row.session_not_before);
+
   return {
     id: asString(row.id),
     username: asString(row.username),
     role: asString(row.role) as AdminRecord['role'],
     status: asString(row.status) as AdminRecord['status'],
     createdAt: asString(row.created_at),
-    updatedAt: asString(row.updated_at)
+    updatedAt: asString(row.updated_at),
+    ...(sessionNotBefore !== null ? { sessionNotBefore } : {})
   };
 }
 
@@ -124,7 +135,9 @@ function mapRuleSource(row: Row): RuleSourceRecord {
     createdAt: asString(row.created_at),
     updatedAt: asString(row.updated_at),
     ...(lastSyncAt !== null ? { lastSyncAt } : {}),
-    ...(lastSyncStatus !== null ? { lastSyncStatus: lastSyncStatus as RuleSourceRecord['lastSyncStatus'] } : {})
+    ...(lastSyncStatus !== null
+      ? { lastSyncStatus: lastSyncStatus as Exclude<RuleSourceRecord['lastSyncStatus'], undefined> }
+      : {})
   };
 }
 
@@ -215,6 +228,22 @@ export async function createAdmin(
   return (await getAdminById(db, id)) as AdminRecord;
 }
 
+export async function revokeAdminSessions(db: D1Database, id: string): Promise<AdminRecord | null> {
+  const current = await getAdminById(db, id);
+
+  if (!current) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  await db
+    .prepare('UPDATE admins SET session_not_before = ?, updated_at = ? WHERE id = ?')
+    .bind(now, now, id)
+    .run();
+
+  return getAdminById(db, id);
+}
+
 export async function listUsers(db: D1Database): Promise<UserRecord[]> {
   const rows = await all(db, 'SELECT * FROM users ORDER BY created_at DESC');
   return rows.map(mapUser);
@@ -237,7 +266,7 @@ export async function getUserByToken(db: D1Database, token: string): Promise<Use
 
 export async function createUser(
   db: D1Database,
-  input: { name: string; expiresAt?: string | null; remark?: string | null }
+  input: { name: string; expiresAt?: string | null | undefined; remark?: string | null | undefined }
 ): Promise<UserRecord> {
   const id = createId('usr');
   const token = createRandomToken(24);
@@ -256,7 +285,12 @@ export async function createUser(
 export async function updateUser(
   db: D1Database,
   id: string,
-  input: { name?: string; status?: string; expiresAt?: string | null; remark?: string | null }
+  input: {
+    name?: string | undefined;
+    status?: string | undefined;
+    expiresAt?: string | null | undefined;
+    remark?: string | null | undefined;
+  }
 ): Promise<UserRecord | null> {
   const current = await getUserById(db, id);
 
@@ -297,6 +331,17 @@ export async function resetUserToken(db: D1Database, id: string): Promise<UserRe
   return getUserById(db, id);
 }
 
+export async function deleteUser(db: D1Database, id: string): Promise<boolean> {
+  const current = await getUserById(db, id);
+
+  if (!current) {
+    return false;
+  }
+
+  await db.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+  return true;
+}
+
 export async function replaceUserNodes(db: D1Database, userId: string, nodeIds: string[]): Promise<void> {
   await db.prepare('DELETE FROM user_node_map WHERE user_id = ?').bind(userId).run();
 
@@ -331,11 +376,11 @@ export async function createNode(
     protocol: string;
     server: string;
     port: number;
-    sourceType?: string;
-    sourceId?: string | null;
-    enabled?: boolean;
-    credentials?: Record<string, unknown>;
-    params?: Record<string, unknown>;
+    sourceType?: string | undefined;
+    sourceId?: string | null | undefined;
+    enabled?: boolean | undefined;
+    credentials?: Record<string, unknown> | null | undefined;
+    params?: Record<string, unknown> | null | undefined;
   }
 ): Promise<NodeRecord> {
   const id = createId('node');
@@ -351,8 +396,8 @@ export async function createNode(
       input.protocol,
       input.server,
       input.port,
-      input.credentials ? JSON.stringify(input.credentials) : null,
-      input.params ? JSON.stringify(input.params) : null,
+      serializeJsonObject(input.credentials),
+      serializeJsonObject(input.params),
       input.sourceType ?? 'manual',
       input.sourceId ?? null,
       input.enabled === false ? 0 : 1,
@@ -369,15 +414,15 @@ export async function updateNode(
   db: D1Database,
   id: string,
   input: {
-    name?: string;
-    protocol?: string;
-    server?: string;
-    port?: number;
-    sourceType?: string;
-    sourceId?: string | null;
-    enabled?: boolean;
-    credentials?: Record<string, unknown>;
-    params?: Record<string, unknown>;
+    name?: string | undefined;
+    protocol?: string | undefined;
+    server?: string | undefined;
+    port?: number | undefined;
+    sourceType?: string | undefined;
+    sourceId?: string | null | undefined;
+    enabled?: boolean | undefined;
+    credentials?: Record<string, unknown> | null | undefined;
+    params?: Record<string, unknown> | null | undefined;
   }
 ): Promise<NodeRecord | null> {
   const current = await getNodeById(db, id);
@@ -395,8 +440,8 @@ export async function updateNode(
       input.protocol ?? current.protocol,
       input.server ?? current.server,
       input.port ?? current.port,
-      'credentials' in input ? JSON.stringify(input.credentials ?? null) : JSON.stringify(current.credentials ?? null),
-      'params' in input ? JSON.stringify(input.params ?? null) : JSON.stringify(current.params ?? null),
+      'credentials' in input ? serializeJsonObject(input.credentials) : serializeJsonObject(current.credentials),
+      'params' in input ? serializeJsonObject(input.params) : serializeJsonObject(current.params),
       input.sourceType ?? current.sourceType,
       'sourceId' in input ? (input.sourceId ?? null) : (current.sourceId ?? null),
       input.enabled === undefined ? (current.enabled ? 1 : 0) : input.enabled ? 1 : 0,
@@ -447,9 +492,9 @@ export async function createTemplate(
     name: string;
     targetType: SubscriptionTarget;
     content: string;
-    version?: number;
-    isDefault?: boolean;
-    enabled?: boolean;
+    version?: number | undefined;
+    isDefault?: boolean | undefined;
+    enabled?: boolean | undefined;
   }
 ): Promise<TemplateRecord> {
   const id = createId('tpl');
@@ -486,11 +531,11 @@ export async function updateTemplate(
   db: D1Database,
   id: string,
   input: {
-    name?: string;
-    content?: string;
-    version?: number;
-    enabled?: boolean;
-    isDefault?: boolean;
+    name?: string | undefined;
+    content?: string | undefined;
+    version?: number | undefined;
+    enabled?: boolean | undefined;
+    isDefault?: boolean | undefined;
   }
 ): Promise<TemplateRecord | null> {
   const current = await getTemplateById(db, id);
@@ -500,6 +545,9 @@ export async function updateTemplate(
   }
 
   const now = new Date().toISOString();
+  const nextEnabled = input.enabled === undefined ? current.status === 'enabled' : input.enabled;
+  const nextIsDefault =
+    !nextEnabled ? false : input.isDefault === undefined ? current.isDefault : input.isDefault;
 
   if (input.isDefault) {
     await db
@@ -516,8 +564,8 @@ export async function updateTemplate(
       input.name ?? current.name,
       input.content ?? current.content,
       input.version ?? current.version,
-      input.isDefault === undefined ? (current.isDefault ? 1 : 0) : input.isDefault ? 1 : 0,
-      input.enabled === undefined ? (current.status === 'enabled' ? 1 : 0) : input.enabled ? 1 : 0,
+      nextIsDefault ? 1 : 0,
+      nextEnabled ? 1 : 0,
       now,
       id
     )
@@ -546,6 +594,17 @@ export async function setDefaultTemplate(db: D1Database, id: string): Promise<Te
   return getTemplateById(db, id);
 }
 
+export async function deleteTemplate(db: D1Database, id: string): Promise<boolean> {
+  const current = await getTemplateById(db, id);
+
+  if (!current) {
+    return false;
+  }
+
+  await db.prepare('DELETE FROM templates WHERE id = ?').bind(id).run();
+  return true;
+}
+
 export async function listRuleSources(db: D1Database): Promise<RuleSourceRecord[]> {
   const rows = await all(db, 'SELECT * FROM rule_sources ORDER BY created_at DESC');
   return rows.map(mapRuleSource);
@@ -562,7 +621,7 @@ export async function createRuleSource(
     name: string;
     sourceUrl: string;
     format: RuleSourceFormat;
-    enabled?: boolean;
+    enabled?: boolean | undefined;
   }
 ): Promise<RuleSourceRecord> {
   const id = createId('rs');
@@ -582,10 +641,10 @@ export async function updateRuleSource(
   db: D1Database,
   id: string,
   input: {
-    name?: string;
-    sourceUrl?: string;
-    format?: RuleSourceFormat;
-    enabled?: boolean;
+    name?: string | undefined;
+    sourceUrl?: string | undefined;
+    format?: RuleSourceFormat | undefined;
+    enabled?: boolean | undefined;
   }
 ): Promise<RuleSourceRecord | null> {
   const current = await getRuleSourceById(db, id);
@@ -609,6 +668,17 @@ export async function updateRuleSource(
     .run();
 
   return getRuleSourceById(db, id);
+}
+
+export async function deleteRuleSource(db: D1Database, id: string): Promise<boolean> {
+  const current = await getRuleSourceById(db, id);
+
+  if (!current) {
+    return false;
+  }
+
+  await db.prepare('DELETE FROM rule_sources WHERE id = ?').bind(id).run();
+  return true;
 }
 
 export async function recordRuleSourceSync(
@@ -809,7 +879,7 @@ export async function listUserNodeBindings(
 
 function mapAuditLog(row: Row): AuditLogRecord {
   const targetId = asNullableString(row.target_id);
-  const payload = parseJsonObject(row.payload_json) as AuditLogRecord['payload'];
+  const payload = sanitizeAuditPayload(parseJsonObject(row.payload_json)) as AuditLogRecord['payload'];
   const actorAdminUsername = asNullableString(row.actor_admin_username);
 
   return {

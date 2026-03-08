@@ -31,6 +31,7 @@ export interface AdminRecord extends TimestampedRecord {
   username: string;
   role: AdminRole;
   status: AdminStatus;
+  sessionNotBefore?: string | null;
 }
 
 export interface UserRecord extends TimestampedRecord {

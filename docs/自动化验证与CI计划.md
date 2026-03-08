@@ -1,0 +1,257 @@
+# SubForge 自动化验证与 CI 计划
+
+## 1. 文档目的
+
+本文档用于把“补测试 / 补 CI”这件事收敛成一份可执行清单，避免只停留在口头计划。
+
+当前原则：
+
+- 先补最小回归保护，再考虑完整测试矩阵
+- 先覆盖最近修过、最容易回归的路径
+- 优先使用仓库现有能力，避免为测试体系一次性引入过多复杂度
+
+---
+
+## 2. 本轮目标
+
+本轮先补三件事：
+
+1. 为 `packages/core` 增加订阅编译核心测试
+2. 为 `apps/worker` 增加公开订阅关键路径测试
+3. 增加最小 CI，确保提交后至少会执行类型检查、构建、smoke 和测试
+
+当前进展：`done`
+
+- 已增加 `npm test`
+- 已补 `packages/core` 订阅编译核心测试
+- 已补 `apps/worker` 公开订阅缓存命中路径测试
+- 已增加 GitHub Actions `CI`
+
+本轮暂不追求：
+
+- Web 组件级测试
+- 真实 D1 / KV / Cron 集成测试
+- 远程规则源同步的端到端网络测试
+- 覆盖率门槛与测试报告平台接入
+
+---
+
+## 3. 当前约束
+
+落地前仓库现状：
+
+- 已有 `npm run typecheck`
+- 已有 `npm run build`
+- 已有 `npm run test:smoke`
+- 仓库内已存在基于 `node:test` 的单元测试与请求级集成测试文件
+- 当前运行环境 Node 版本支持 `node --test` 和 `--experimental-strip-types`
+
+基于上述约束，第一版测试优先采用：
+
+- Node 内置 `node:test`
+- 直接测试 TypeScript 源文件
+- 少量手写 mock，先覆盖纯逻辑与 Worker handler 关键分支
+
+---
+
+## 4. 第一批测试范围
+
+### 4.1 订阅编译核心
+
+目标文件：
+
+- `packages/core/src/compile.ts`
+- `packages/core/src/renderers.ts`
+
+本轮至少覆盖：
+
+- `compileSubscription` 成功生成 Mihomo 订阅
+- 禁用用户返回 `USER_DISABLED`
+- 过期用户返回 `USER_EXPIRED`
+- 无可用节点返回 `NO_NODES_AVAILABLE`
+- 空规则集时的默认规则兜底
+
+### 4.2 Worker 公开订阅关键路径
+
+目标文件：
+
+- `apps/worker/src/index.ts`
+
+本轮至少覆盖：
+
+- 缓存命中但用户不存在时返回 404，并清理旧缓存
+- 缓存命中但用户已禁用时返回 400，并清理旧缓存
+- 缓存命中但用户已过期时返回 400，并清理旧缓存
+- 缓存命中且用户有效时直接返回缓存内容
+
+说明：
+
+- 第一版只 mock `env.DB` 与 `env.SUB_CACHE` 的最小接口
+- 不在本轮引入真实 D1 / KV 依赖
+
+### 4.3 CI
+
+本轮至少执行：
+
+- `npm ci`
+- `npm run typecheck`
+- `npm run build`
+- `npm run test:smoke`
+- `npm test`
+
+当前已落 GitHub Actions，后续再按需要补：
+
+- PR 级别检查
+- 覆盖率上传
+- deploy 前置检查
+
+---
+
+## 5. 后续扩展顺序
+
+第一批稳定后，建议继续补：
+
+1. 规则源启停与缓存失效回归测试
+2. token 重置与审计脱敏测试
+3. 登录 / 登出语义测试
+4. 同步流程与错误详情测试
+5. 更真实的 Worker 集成测试
+6. 部署前回归场景
+7. 带变更写入的更长链路 Worker 集成测试
+8. 更贴近本地部署前的 wrangler / 初始化回归
+9. 剩余写接口边界场景与能力决策
+
+其中第二批已单独展开为：
+
+- `docs/第二批自动化验证执行清单.md`
+
+当前进展：
+
+- 第二批中的缓存失效 helper、管理员鉴权、审计脱敏测试已落地
+- 后续重点转向同步流程、模板/规则变更失效、以及更真实的 Worker 集成测试
+
+其中第三批已单独展开为：
+
+- `docs/第三批自动化验证执行清单.md`
+
+当前进展：
+
+- 第三批中的模板/规则变更缓存失效测试与规则源同步语义测试已落地
+- 后续重点转向更真实的 Worker 集成测试与同步异常路径覆盖
+
+其中第四批已单独展开为：
+
+- `docs/第四批自动化验证执行清单.md`
+
+当前进展：
+
+- 第四批中的同步失败路径与 `/api/rule-sources/:id/sync` 请求级测试已落地
+- 后续重点转向部署前回归场景与更长链路的 Worker 集成测试
+
+其中第五批已单独展开为：
+
+- `docs/第五批自动化验证执行清单.md`
+
+当前进展：
+
+- 第五批中的 setup/bootstrap 登录闭环、preview/public miss 链路、health/assets/scheduled 基础回归已落地
+- 后续重点转向带变更写入的更长链路 Worker 集成测试，以及更贴近本地部署前的 wrangler 回归场景
+
+其中第六批已单独展开为：
+
+- `docs/第六批自动化验证执行清单.md`
+
+当前进展：
+
+- 第六批中的 user/node/template 写后再读链路测试已落地
+- 已补审计脱敏对 token 相关布尔标记的误伤回归测试
+- 后续重点转向更贴近本地部署前的 wrangler / 初始化回归，以及剩余写接口的边界场景
+
+其中第七批已单独展开为：
+
+- `docs/第七批自动化验证执行清单.md`
+
+当前进展：
+
+- 第七批中的 setup/bootstrap 校验边界、logout/preflight/非 GET 静态回退边界已落地
+- 已补 wrangler、本地 migration、`dev:worker` / `dev:web` / `test:smoke` 的 smoke 配置断言
+- 已顺手修复 Worker 顶层 `fetch` 对异步校验错误未统一转响应的问题
+- 后续重点转向剩余写接口边界场景，以及是否继续补齐删除链路与节点源同步能力的决策
+
+其中第八批已单独展开为：
+
+- `docs/第八批自动化验证执行清单.md`
+
+当前进展：
+
+- 第八批中的 user.update、user.bind_nodes、node/template/rule-source update 边界回归已落地
+- 已修复 `POST /api/users/:id/nodes` 对缺失用户和未知节点未显式拒绝的问题
+- 后续重点转向剩余 create 类写接口边界，以及删除链路 / 节点源同步是否继续实现的决策
+
+其中第九批已单独展开为：
+
+- `docs/第九批自动化验证执行清单.md`
+
+当前进展：
+
+- 第九批中的 user/node/template/rule-source create 请求级边界回归已落地
+- create/update/bind 三类现有写接口已具备最小请求级拒绝保护
+- 后续重点转向删除链路 / 节点源同步 / 部署前回归补强
+
+其中第十批已单独展开为：
+
+- `docs/第十批自动化验证执行清单.md`
+
+当前进展：
+
+- 第十批中的 user/template/rule-source 删除链路与请求级回归已落地
+- create/update/delete/bind 四类现有写接口已具备最小请求级保护
+- 后续重点转向节点源同步能力决策，以及更多发布前回归场景
+
+其中第十一批已单独展开为：
+
+- `docs/第十一批自动化验证执行清单.md`
+
+当前进展：
+
+- 第十一批中的 node.create / node.update 对 `sourceType` / `sourceId` / `credentials` / `params` 语义收紧已落地
+- 当前仓库继续保持“只支持手动节点录入”，未实现的 remote node source 不再通过写接口漏入数据库
+- 已补 `PATCH /api/nodes/:id` 通过 `null` 显式清空 metadata 的请求级回归
+- 后续重点继续保留在节点源同步能力决策，以及更多发布前回归场景
+
+其中第十二批已单独展开为：
+
+- `docs/第十二批自动化验证执行清单.md`
+
+当前进展：
+
+- 第十二批中的 template.create / template.update / template.set_default 默认模板启用态语义收紧已落地
+- 当前仓库不会再接受 disabled 模板被写成默认模板
+- 已补请求级回归，避免“接口成功但实际生效模板未切换”的语义回退
+
+其中第十三批已单独展开为：
+
+- `docs/第十三批自动化验证执行清单.md`
+
+当前进展：
+
+- 第十三批中的“禁用当前默认模板时自动清除默认标记”语义已落地
+- 已补 `PATCH /api/templates/:id` 禁用当前默认模板的请求级回归
+- 当前仓库不会再留下 disabled 模板残留 `is_default=1` 的状态分裂
+
+补充进展：
+
+- 管理员登出已升级为服务端会话撤销，`/api/admin/logout` 会写入 `session_not_before`
+- 已补 logout -> `/api/admin/me` 的请求级回归，验证旧 token 在撤销后返回 `401`
+- smoke 文档与断言已同步到 `npm run db:migrations:apply:local`
+
+---
+
+## 6. 完成标准
+
+满足以下条件，可认为第一阶段“自动化验证”落地：
+
+- 仓库内存在可执行的单元测试文件
+- `npm test` 可在本地直接运行
+- CI 会自动执行安装、类型检查、构建、smoke 与测试
+- 最近修复的关键路径至少具备最小回归保护

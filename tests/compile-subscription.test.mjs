@@ -1,0 +1,181 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { loadTsModule } from './helpers/load-ts-module.mjs';
+
+const { compileSubscription } = await loadTsModule('packages/core/src/compile.ts');
+
+function createCompileInput(overrides = {}) {
+  const baseInput = {
+    target: 'mihomo',
+    user: {
+      id: 'usr_demo',
+      name: 'Demo User',
+      token: 'demo-token',
+      status: 'active'
+    },
+    nodes: [
+      {
+        id: 'node_hk_01',
+        name: 'HK Edge 01',
+        protocol: 'vless',
+        server: 'hk-01.example.com',
+        port: 443,
+        enabled: true,
+        credentials: {
+          uuid: '11111111-1111-1111-1111-111111111111'
+        },
+        params: {
+          tls: true
+        }
+      },
+      {
+        id: 'node_disabled',
+        name: 'Disabled Edge',
+        protocol: 'trojan',
+        server: 'disabled.example.com',
+        port: 443,
+        enabled: false
+      }
+    ],
+    ruleSets: [
+      {
+        id: 'rules_default',
+        name: 'Default Rules',
+        format: 'text',
+        content: 'DOMAIN-SUFFIX,example.com,DIRECT',
+        sourceId: 'rs_default'
+      }
+    ],
+    template: {
+      id: 'tpl_mihomo',
+      name: 'Mihomo Default',
+      target: 'mihomo',
+      content: 'proxies:\n{{proxies}}\nproxy-groups:\n{{proxy_groups}}\nrules:\n{{rules}}',
+      version: 1,
+      isDefault: true
+    }
+  };
+
+  return {
+    ...baseInput,
+    ...overrides,
+    user: {
+      ...baseInput.user,
+      ...(overrides.user ?? {})
+    },
+    nodes: overrides.nodes ?? baseInput.nodes,
+    ruleSets: overrides.ruleSets ?? baseInput.ruleSets,
+    template: {
+      ...baseInput.template,
+      ...(overrides.template ?? {})
+    }
+  };
+}
+
+test('compileSubscription returns compiled mihomo content for active users', () => {
+  const result = compileSubscription(createCompileInput());
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.equal(result.data.mimeType, 'text/yaml; charset=utf-8');
+  assert.equal(result.data.cacheKey, 'sub:mihomo:demo-token');
+  assert.equal(result.data.metadata.userId, 'usr_demo');
+  assert.equal(result.data.metadata.nodeCount, 1);
+  assert.equal(result.data.metadata.ruleSetCount, 1);
+  assert.match(result.data.content, /HK Edge 01/);
+  assert.match(result.data.content, /DOMAIN-SUFFIX,example\.com,DIRECT/);
+  assert.doesNotMatch(result.data.content, /Disabled Edge/);
+});
+
+test('compileSubscription rejects disabled users', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      user: {
+        status: 'disabled'
+      }
+    })
+  );
+
+  assert.equal(result.ok, false);
+
+  if (result.ok) {
+    throw new Error('expected failure for disabled user');
+  }
+
+  assert.equal(result.error.code, 'USER_DISABLED');
+  assert.deepEqual(result.error.details, { userId: 'usr_demo' });
+});
+
+test('compileSubscription rejects expired users', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      user: {
+        expiresAt: '2000-01-01T00:00:00.000Z'
+      }
+    })
+  );
+
+  assert.equal(result.ok, false);
+
+  if (result.ok) {
+    throw new Error('expected failure for expired user');
+  }
+
+  assert.equal(result.error.code, 'USER_EXPIRED');
+  assert.equal(result.error.details?.userId, 'usr_demo');
+  assert.equal(result.error.details?.expiresAt, '2000-01-01T00:00:00.000Z');
+});
+
+test('compileSubscription rejects subscriptions without enabled nodes', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_disabled_only',
+          name: 'Disabled Only',
+          protocol: 'vless',
+          server: 'disabled-only.example.com',
+          port: 443,
+          enabled: false
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.ok, false);
+
+  if (result.ok) {
+    throw new Error('expected failure for missing enabled nodes');
+  }
+
+  assert.equal(result.error.code, 'NO_NODES_AVAILABLE');
+  assert.deepEqual(result.error.details, { userId: 'usr_demo' });
+});
+
+test('compileSubscription falls back to MATCH,DIRECT when rules are empty', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      ruleSets: [
+        {
+          id: 'rules_empty',
+          name: 'Empty Rules',
+          format: 'text',
+          content: '\n   \n',
+          sourceId: 'rs_empty'
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /MATCH,DIRECT/);
+});

@@ -7,6 +7,7 @@ export interface AdminSessionPayload {
   sub: string;
   username: string;
   role: AdminRole;
+  iat: number;
   exp: number;
 }
 
@@ -20,11 +21,11 @@ function toBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function fromBase64Url(value: string): Uint8Array {
+function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
   const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
 
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index);
@@ -130,13 +131,15 @@ async function hashPasswordWithSalt(password: string, salt: string, iterations: 
 }
 
 export async function signAdminSessionToken(
-  payload: Omit<AdminSessionPayload, 'exp'>,
+  payload: Omit<AdminSessionPayload, 'exp' | 'iat'>,
   secret: string,
   ttlSeconds = 24 * 60 * 60
 ): Promise<string> {
+  const issuedAt = Date.now();
   const sessionPayload: AdminSessionPayload = {
     ...payload,
-    exp: Math.floor(Date.now() / 1000) + ttlSeconds
+    iat: issuedAt,
+    exp: Math.floor(issuedAt / 1000) + ttlSeconds
   };
   const encodedPayload = toBase64Url(encoder.encode(JSON.stringify(sessionPayload)));
   const key = await importHmacKey(secret);
@@ -149,29 +152,43 @@ export async function verifyAdminSessionToken(
   token: string,
   secret: string
 ): Promise<AdminSessionPayload | null> {
-  const [encodedPayload, encodedSignature] = token.split('.');
+  try {
+    const [encodedPayload, encodedSignature] = token.split('.');
 
-  if (!encodedPayload || !encodedSignature) {
+    if (!encodedPayload || !encodedSignature) {
+      return null;
+    }
+
+    const key = await importHmacKey(secret);
+    const verified = await crypto.subtle.verify(
+      'HMAC',
+      key,
+      fromBase64Url(encodedSignature),
+      encoder.encode(encodedPayload)
+    );
+
+    if (!verified) {
+      return null;
+    }
+
+    const rawPayload = JSON.parse(decoder.decode(fromBase64Url(encodedPayload))) as Partial<AdminSessionPayload>;
+
+    if (typeof rawPayload.exp !== 'number' || !Number.isFinite(rawPayload.exp)) {
+      return null;
+    }
+
+    if (rawPayload.exp <= Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+
+    return {
+      sub: String(rawPayload.sub ?? ''),
+      username: String(rawPayload.username ?? ''),
+      role: rawPayload.role as AdminRole,
+      iat: typeof rawPayload.iat === 'number' && Number.isFinite(rawPayload.iat) ? rawPayload.iat : 0,
+      exp: rawPayload.exp
+    };
+  } catch {
     return null;
   }
-
-  const key = await importHmacKey(secret);
-  const verified = await crypto.subtle.verify(
-    'HMAC',
-    key,
-    fromBase64Url(encodedSignature),
-    encoder.encode(encodedPayload)
-  );
-
-  if (!verified) {
-    return null;
-  }
-
-  const payload = JSON.parse(decoder.decode(fromBase64Url(encodedPayload))) as AdminSessionPayload;
-
-  if (payload.exp <= Math.floor(Date.now() / 1000)) {
-    return null;
-  }
-
-  return payload;
 }

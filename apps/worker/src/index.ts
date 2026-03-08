@@ -1,18 +1,23 @@
 import { compileSubscription } from '@subforge/core';
 import {
   API_PREFIX,
+  APP_ERROR_CODES,
   APP_NAME,
   buildPreviewCacheKey,
   buildSubscriptionCacheKey,
   createAppError,
   HEALTH_ENDPOINT,
+  NODE_SOURCE_TYPES,
   RULE_SOURCE_FORMATS,
   SUBSCRIPTION_TARGETS,
   USER_STATUSES,
+  type NodeSourceType,
+  type AppErrorShape,
   type RuleSourceFormat,
   type SubscriptionTarget,
   type UserStatus
 } from '@subforge/shared';
+import { sanitizeAuditPayload } from './audit';
 import type { Env } from './env';
 import { fail, json, notFound, ok, parseJsonBody, preflight, readBearerToken, text, isRecord } from './http';
 import {
@@ -21,16 +26,22 @@ import {
   createRuleSource,
   createTemplate,
   createUser,
+  deleteRuleSource,
+  deleteTemplate,
+  deleteUser,
   deleteNode,
   countAdmins,
   getAdminById,
   getAdminLoginRowByUsername,
   getDefaultTemplateByTarget,
+  getNodeById,
   getRuleSourceById,
   getTemplateById,
   getSubscriptionCompileInputByToken,
   getSubscriptionCompileInputByUserId,
+  revokeAdminSessions,
   getUserById,
+  getUserByToken,
   listAuditLogs,
   listNodes,
   listRuleSources,
@@ -80,6 +91,10 @@ function isUserStatus(value: string): value is UserStatus {
   return USER_STATUSES.includes(value as UserStatus);
 }
 
+function isNodeSourceType(value: string): value is NodeSourceType {
+  return NODE_SOURCE_TYPES.includes(value as NodeSourceType);
+}
+
 function isRuleSourceFormat(value: string): value is RuleSourceFormat {
   return RULE_SOURCE_FORMATS.includes(value as RuleSourceFormat);
 }
@@ -103,15 +118,146 @@ function isValidHttpUrl(value: string | undefined): boolean {
   }
 }
 
-function isAppErrorShape(error: unknown): error is { code: string; message: string; details?: Record<string, unknown> } {
+function isAppErrorShape(error: unknown): error is AppErrorShape {
+  const code = error && typeof error === 'object' && 'code' in error ? (error as { code: unknown }).code : null;
+
   return Boolean(
     error &&
       typeof error === 'object' &&
       'code' in error &&
       'message' in error &&
-      typeof (error as { code: unknown }).code === 'string' &&
+      typeof code === 'string' &&
+      Object.values(APP_ERROR_CODES).includes(code as (typeof APP_ERROR_CODES)[keyof typeof APP_ERROR_CODES]) &&
       typeof (error as { message: unknown }).message === 'string'
   );
+}
+
+function readNullableObjectField(
+  body: Record<string, unknown>,
+  key: 'credentials' | 'params'
+): { present: boolean; value?: Record<string, unknown> | null; error?: string } {
+  if (!(key in body)) {
+    return { present: false };
+  }
+
+  const value = body[key];
+
+  if (value === null) {
+    return { present: true, value: null };
+  }
+
+  if (isRecord(value)) {
+    return { present: true, value };
+  }
+
+  return {
+    present: true,
+    error: `${key} must be a JSON object or null`
+  };
+}
+
+function readNullableSourceIdField(
+  body: Record<string, unknown>
+): { present: boolean; value?: string | null; error?: string } {
+  if (!('sourceId' in body)) {
+    return { present: false };
+  }
+
+  const value = body.sourceId;
+
+  if (value === null) {
+    return { present: true, value: null };
+  }
+
+  if (typeof value !== 'string') {
+    return {
+      present: true,
+      error: 'sourceId must be a string or null'
+    };
+  }
+
+  const normalized = value.trim();
+  return {
+    present: true,
+    value: normalized ? normalized : null
+  };
+}
+
+function validateDefaultTemplateState(input: {
+  isDefault: boolean | undefined;
+  enabled?: boolean | undefined;
+  currentStatus?: 'enabled' | 'disabled' | undefined;
+}): AppErrorShape | null {
+  if (!input.isDefault) {
+    return null;
+  }
+
+  const willBeEnabled =
+    input.enabled ?? (input.currentStatus === undefined || input.currentStatus === 'enabled');
+
+  if (!willBeEnabled) {
+    return createAppError('VALIDATION_FAILED', 'default template must be enabled');
+  }
+
+  return null;
+}
+
+interface PublicSubscriptionAccessFailure {
+  error: AppErrorShape;
+  status: number;
+}
+
+function isExpiredDateTime(value: string | null | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const expiresAtMs = Date.parse(value);
+
+  if (Number.isNaN(expiresAtMs)) {
+    return false;
+  }
+
+  return expiresAtMs <= Date.now();
+}
+
+async function validatePublicSubscriptionAccess(
+  env: Env,
+  token: string,
+  cacheKey: string
+): Promise<PublicSubscriptionAccessFailure | null> {
+  const user = await getUserByToken(env.DB, token);
+
+  if (!user) {
+    await env.SUB_CACHE.delete(cacheKey);
+    return {
+      error: createAppError(APP_ERROR_CODES.subscriptionUserNotFound, 'subscription token or template not found'),
+      status: 404
+    };
+  }
+
+  if (user.status !== 'active') {
+    await env.SUB_CACHE.delete(cacheKey);
+    return {
+      error: createAppError(APP_ERROR_CODES.userDisabled, undefined, {
+        userId: user.id
+      }),
+      status: 400
+    };
+  }
+
+  if (isExpiredDateTime(user.expiresAt)) {
+    await env.SUB_CACHE.delete(cacheKey);
+    return {
+      error: createAppError(APP_ERROR_CODES.userExpired, undefined, {
+        userId: user.id,
+        expiresAt: user.expiresAt
+      }),
+      status: 400
+    };
+  }
+
+  return null;
 }
 
 function getErrorStatus(code: string): number {
@@ -129,10 +275,10 @@ function withAuditPayload(request: Request, payload?: Record<string, unknown> | 
     userAgent: request.headers.get('user-agent') ?? null
   };
 
-  return {
+  return sanitizeAuditPayload({
     ...(payload ?? {}),
     _request: requestMeta
-  };
+  }) as Record<string, unknown>;
 }
 
 async function writeAuditLog(
@@ -172,6 +318,14 @@ async function requireAdmin(request: Request, env: Env) {
     return { error: createAppError('FORBIDDEN', 'admin account is unavailable') };
   }
 
+  if (admin.sessionNotBefore) {
+    const sessionNotBeforeMs = Date.parse(admin.sessionNotBefore);
+
+    if (!Number.isNaN(sessionNotBeforeMs) && session.iat <= sessionNotBeforeMs) {
+      return { error: createAppError('UNAUTHORIZED', 'admin session has been revoked') };
+    }
+  }
+
   return { admin };
 }
 
@@ -199,6 +353,10 @@ async function handleAdminLogin(request: Request, env: Env): Promise<Response> {
 
   if (!verified) {
     return fail(createAppError('UNAUTHORIZED', 'invalid username or password'), 401);
+  }
+
+  if (admin.status !== 'active') {
+    return fail(createAppError('FORBIDDEN', 'admin account is unavailable'), 403);
   }
 
   const token = await signAdminSessionToken(
@@ -312,10 +470,11 @@ async function handleUsers(request: Request, env: Env, adminId: string): Promise
       return fail(createAppError('VALIDATION_FAILED', 'expiresAt must be a valid datetime string'), 400);
     }
 
+    const remark = asNullableString(body.remark) ?? null;
     const user = await createUser(env.DB, {
       name,
-      expiresAt,
-      remark: asNullableString(body.remark)
+      expiresAt: expiresAt ?? null,
+      remark
     });
 
     await writeAuditLog(request, env, {
@@ -355,11 +514,14 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
       return fail(createAppError('VALIDATION_FAILED', 'expiresAt must be a valid datetime string'), 400);
     }
 
+    const nextName = asString(body.name);
+    const nextRemark = 'remark' in body ? asNullableString(body.remark) ?? null : undefined;
+
     const user = await updateUser(env.DB, userId, {
-      ...(asString(body.name) ? { name: asString(body.name) } : {}),
+      ...(nextName ? { name: nextName } : {}),
       ...(status ? { status } : {}),
-      ...('expiresAt' in body ? { expiresAt } : {}),
-      ...('remark' in body ? { remark: asNullableString(body.remark) } : {})
+      ...('expiresAt' in body ? { expiresAt: expiresAt ?? null } : {}),
+      ...(nextRemark !== undefined ? { remark: nextRemark } : {})
     });
 
     if (!user) {
@@ -397,7 +559,11 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
       action: 'user.reset_token',
       targetType: 'user',
       targetId: user.id,
-      payload: { previousToken: previous.token, currentToken: user.token }
+      payload: {
+        tokenReset: true,
+        previousTokenRedacted: true,
+        currentTokenRedacted: true
+      }
     });
     return ok(user);
   }
@@ -409,15 +575,33 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
       return fail(createAppError('VALIDATION_FAILED', 'nodeIds must be an array'), 400);
     }
 
-    const nodeIds = [...new Set(body.nodeIds.filter((value): value is string => typeof value === 'string' && value.length > 0))];
-    await replaceUserNodes(env.DB, userId, nodeIds);
-
     const user = await getUserById(env.DB, userId);
 
-    if (user) {
-      await invalidateUserCaches(env, { token: user.token, id: user.id });
+    if (!user) {
+      return fail(createAppError('NOT_FOUND', 'user not found'), 404);
     }
 
+    const nodeIds = [...new Set(body.nodeIds.filter((value): value is string => typeof value === 'string' && value.length > 0))];
+    const missingNodeIds = (
+      await Promise.all(
+        nodeIds.map(async (nodeId) => ({
+          nodeId,
+          exists: Boolean(await getNodeById(env.DB, nodeId))
+        }))
+      )
+    )
+      .filter((entry) => !entry.exists)
+      .map((entry) => entry.nodeId);
+
+    if (missingNodeIds.length > 0) {
+      return fail(
+        createAppError('VALIDATION_FAILED', `nodeIds must reference existing nodes: ${missingNodeIds.join(', ')}`),
+        400
+      );
+    }
+
+    await replaceUserNodes(env.DB, userId, nodeIds);
+    await invalidateUserCaches(env, { token: user.token, id: user.id });
     await writeAuditLog(request, env, {
       actorAdminId: adminId,
       action: 'user.bind_nodes',
@@ -427,6 +611,31 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
     });
 
     return ok({ userId, nodeIds });
+  }
+
+  if (request.method === 'DELETE' && !action) {
+    const current = await getUserById(env.DB, userId);
+
+    if (!current) {
+      return fail(createAppError('NOT_FOUND', 'user not found'), 404);
+    }
+
+    const deleted = await deleteUser(env.DB, userId);
+
+    if (!deleted) {
+      return fail(createAppError('NOT_FOUND', 'user not found'), 404);
+    }
+
+    await invalidateUserCaches(env, { token: current.token, id: current.id });
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'user.delete',
+      targetType: 'user',
+      targetId: userId,
+      payload: { name: current.name }
+    });
+
+    return ok({ deleted: true, userId });
   }
 
   return notFound(`/api/users/${userId}`);
@@ -457,16 +666,48 @@ async function handleNodes(request: Request, env: Env, adminId: string): Promise
       return fail(createAppError('VALIDATION_FAILED', 'port must be an integer between 1 and 65535'), 400);
     }
 
+    const sourceType = 'sourceType' in body ? asString(body.sourceType) : undefined;
+
+    if ('sourceType' in body && (!sourceType || !isNodeSourceType(sourceType))) {
+      return fail(createAppError('VALIDATION_FAILED', 'sourceType must be manual or remote'), 400);
+    }
+
+    if (sourceType === 'remote') {
+      return fail(createAppError('VALIDATION_FAILED', 'remote sourceType is not supported yet'), 400);
+    }
+
+    const sourceIdInput = readNullableSourceIdField(body);
+
+    if (sourceIdInput.error) {
+      return fail(createAppError('VALIDATION_FAILED', sourceIdInput.error), 400);
+    }
+
+    if (sourceIdInput.value) {
+      return fail(createAppError('VALIDATION_FAILED', 'sourceId is not supported for manual nodes'), 400);
+    }
+
+    const enabled = asBoolean(body.enabled);
+    const credentialsInput = readNullableObjectField(body, 'credentials');
+    const paramsInput = readNullableObjectField(body, 'params');
+
+    if (credentialsInput.error) {
+      return fail(createAppError('VALIDATION_FAILED', credentialsInput.error), 400);
+    }
+
+    if (paramsInput.error) {
+      return fail(createAppError('VALIDATION_FAILED', paramsInput.error), 400);
+    }
+
     const node = await createNode(env.DB, {
       name,
       protocol,
       server,
       port,
-      sourceType: asString(body.sourceType),
-      sourceId: asNullableString(body.sourceId),
-      enabled: asBoolean(body.enabled),
-      credentials: isRecord(body.credentials) ? body.credentials : undefined,
-      params: isRecord(body.params) ? body.params : undefined
+      ...(sourceType ? { sourceType } : {}),
+      ...(sourceIdInput.present ? { sourceId: sourceIdInput.value ?? null } : {}),
+      ...(enabled !== undefined ? { enabled } : {}),
+      ...(credentialsInput.present ? { credentials: credentialsInput.value ?? null } : {}),
+      ...(paramsInput.present ? { params: paramsInput.value ?? null } : {})
     });
 
     await writeAuditLog(request, env, {
@@ -496,16 +737,64 @@ async function handleNodeById(request: Request, env: Env, adminId: string, nodeI
       return fail(createAppError('VALIDATION_FAILED', 'port must be an integer between 1 and 65535'), 400);
     }
 
+    const currentNode = await getNodeById(env.DB, nodeId);
+
+    if (!currentNode) {
+      return fail(createAppError('NOT_FOUND', 'node not found'), 404);
+    }
+
+    const nextName = asString(body.name);
+    const nextProtocol = asString(body.protocol);
+    const nextServer = asString(body.server);
+    const nextSourceType = 'sourceType' in body ? asString(body.sourceType) : undefined;
+    const nextEnabled = asBoolean(body.enabled);
+
+    if ('sourceType' in body && (!nextSourceType || !isNodeSourceType(nextSourceType))) {
+      return fail(createAppError('VALIDATION_FAILED', 'sourceType must be manual or remote'), 400);
+    }
+
+    if (nextSourceType === 'remote') {
+      return fail(createAppError('VALIDATION_FAILED', 'remote sourceType is not supported yet'), 400);
+    }
+
+    const nextSourceId = readNullableSourceIdField(body);
+
+    if (nextSourceId.error) {
+      return fail(createAppError('VALIDATION_FAILED', nextSourceId.error), 400);
+    }
+
+    if (nextSourceId.value) {
+      return fail(createAppError('VALIDATION_FAILED', 'sourceId is not supported for manual nodes'), 400);
+    }
+
+    const nextCredentials = readNullableObjectField(body, 'credentials');
+    const nextParams = readNullableObjectField(body, 'params');
+
+    if (nextCredentials.error) {
+      return fail(createAppError('VALIDATION_FAILED', nextCredentials.error), 400);
+    }
+
+    if (nextParams.error) {
+      return fail(createAppError('VALIDATION_FAILED', nextParams.error), 400);
+    }
+
+    const shouldClearSourceIdOnManualSwitch =
+      nextSourceType === 'manual' && currentNode.sourceType !== 'manual' && !nextSourceId.present;
+
     const node = await updateNode(env.DB, nodeId, {
-      ...(asString(body.name) ? { name: asString(body.name) } : {}),
-      ...(asString(body.protocol) ? { protocol: asString(body.protocol) } : {}),
-      ...(asString(body.server) ? { server: asString(body.server) } : {}),
+      ...(nextName ? { name: nextName } : {}),
+      ...(nextProtocol ? { protocol: nextProtocol } : {}),
+      ...(nextServer ? { server: nextServer } : {}),
       ...(port !== undefined ? { port } : {}),
-      ...(asString(body.sourceType) ? { sourceType: asString(body.sourceType) } : {}),
-      ...('sourceId' in body ? { sourceId: asNullableString(body.sourceId) } : {}),
-      ...(asBoolean(body.enabled) !== undefined ? { enabled: asBoolean(body.enabled) } : {}),
-      ...(isRecord(body.credentials) ? { credentials: body.credentials } : {}),
-      ...(isRecord(body.params) ? { params: body.params } : {})
+      ...(nextSourceType ? { sourceType: nextSourceType } : {}),
+      ...(nextSourceId.present
+        ? { sourceId: nextSourceId.value ?? null }
+        : shouldClearSourceIdOnManualSwitch
+          ? { sourceId: null }
+          : {}),
+      ...(nextEnabled !== undefined ? { enabled: nextEnabled } : {}),
+      ...(nextCredentials.present ? { credentials: nextCredentials.value ?? null } : {}),
+      ...(nextParams.present ? { params: nextParams.value ?? null } : {})
     });
 
     if (!node) {
@@ -568,18 +857,28 @@ async function handleTemplates(request: Request, env: Env, adminId: string): Pro
       return fail(createAppError('VALIDATION_FAILED', 'targetType must be mihomo or singbox'), 400);
     }
 
-    if (asNumber(body.version) !== undefined && (!Number.isInteger(asNumber(body.version)) || asNumber(body.version) <= 0)) {
+    const version = asNumber(body.version);
+
+    if (version !== undefined && (!Number.isInteger(version) || version <= 0)) {
       return fail(createAppError('VALIDATION_FAILED', 'version must be a positive integer'), 400);
     }
 
     const previousEffectiveTemplate = await getDefaultTemplateByTarget(env.DB, targetType);
+    const isDefault = asBoolean(body.isDefault);
+    const enabled = asBoolean(body.enabled);
+    const defaultTemplateValidation = validateDefaultTemplateState({ isDefault, enabled });
+
+    if (defaultTemplateValidation) {
+      return fail(defaultTemplateValidation, 400);
+    }
+
     const template = await createTemplate(env.DB, {
       name,
       targetType,
       content,
-      version: asNumber(body.version),
-      isDefault: asBoolean(body.isDefault),
-      enabled: asBoolean(body.enabled)
+      ...(version !== undefined ? { version } : {}),
+      ...(isDefault !== undefined ? { isDefault } : {}),
+      ...(enabled !== undefined ? { enabled } : {})
     });
     const nextEffectiveTemplate = await getDefaultTemplateByTarget(env.DB, template.targetType);
 
@@ -613,7 +912,9 @@ async function handleTemplateById(
       return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
     }
 
-    if (asNumber(body.version) !== undefined && (!Number.isInteger(asNumber(body.version)) || asNumber(body.version) <= 0)) {
+    const version = asNumber(body.version);
+
+    if (version !== undefined && (!Number.isInteger(version) || version <= 0)) {
       return fail(createAppError('VALIDATION_FAILED', 'version must be a positive integer'), 400);
     }
 
@@ -623,13 +924,25 @@ async function handleTemplateById(
       return fail(createAppError('NOT_FOUND', 'template not found'), 404);
     }
 
+    const nextEnabled = asBoolean(body.enabled);
+    const nextIsDefault = asBoolean(body.isDefault);
+    const defaultTemplateValidation = validateDefaultTemplateState({
+      isDefault: nextIsDefault,
+      enabled: nextEnabled,
+      currentStatus: currentTemplate.status
+    });
+
+    if (defaultTemplateValidation) {
+      return fail(defaultTemplateValidation, 400);
+    }
+
     const previousEffectiveTemplate = await getDefaultTemplateByTarget(env.DB, currentTemplate.targetType);
     const template = await updateTemplate(env.DB, templateId, {
       ...(asString(body.name) ? { name: asString(body.name) } : {}),
       ...(asString(body.content) ? { content: asString(body.content) } : {}),
-      ...(asNumber(body.version) !== undefined ? { version: asNumber(body.version) } : {}),
-      ...(asBoolean(body.enabled) !== undefined ? { enabled: asBoolean(body.enabled) } : {}),
-      ...(asBoolean(body.isDefault) !== undefined ? { isDefault: asBoolean(body.isDefault) } : {})
+      ...(version !== undefined ? { version } : {}),
+      ...(nextEnabled !== undefined ? { enabled: nextEnabled } : {}),
+      ...(nextIsDefault !== undefined ? { isDefault: nextIsDefault } : {})
     });
 
     if (!template) {
@@ -662,6 +975,15 @@ async function handleTemplateById(
       return fail(createAppError('NOT_FOUND', 'template not found'), 404);
     }
 
+    const defaultTemplateValidation = validateDefaultTemplateState({
+      isDefault: true,
+      currentStatus: currentTemplate.status
+    });
+
+    if (defaultTemplateValidation) {
+      return fail(defaultTemplateValidation, 400);
+    }
+
     const previousEffectiveTemplate = await getDefaultTemplateByTarget(env.DB, currentTemplate.targetType);
     const template = await setDefaultTemplate(env.DB, templateId);
 
@@ -682,6 +1004,35 @@ async function handleTemplateById(
       payload: { targetType: template.targetType }
     });
     return ok(template);
+  }
+
+  if (request.method === 'DELETE' && !action) {
+    const currentTemplate = await getTemplateById(env.DB, templateId);
+
+    if (!currentTemplate) {
+      return fail(createAppError('NOT_FOUND', 'template not found'), 404);
+    }
+
+    const previousEffectiveTemplate = await getDefaultTemplateByTarget(env.DB, currentTemplate.targetType);
+    const deleted = await deleteTemplate(env.DB, templateId);
+
+    if (!deleted) {
+      return fail(createAppError('NOT_FOUND', 'template not found'), 404);
+    }
+
+    const nextEffectiveTemplate = await getDefaultTemplateByTarget(env.DB, currentTemplate.targetType);
+
+    if (previousEffectiveTemplate?.id !== nextEffectiveTemplate?.id) {
+      await invalidateAllUserCaches(env, [currentTemplate.targetType]);
+    }
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'template.delete',
+      targetType: 'template',
+      targetId: templateId,
+      payload: { targetType: currentTemplate.targetType }
+    });
+    return ok({ deleted: true, templateId });
   }
 
   return notFound(`/api/templates/${templateId}`);
@@ -715,11 +1066,13 @@ async function handleRuleSources(request: Request, env: Env, adminId: string): P
       return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http/https URL'), 400);
     }
 
+    const enabled = asBoolean(body.enabled);
+
     const ruleSource = await createRuleSource(env.DB, {
       name,
       sourceUrl,
       format,
-      enabled: asBoolean(body.enabled)
+      ...(enabled !== undefined ? { enabled } : {})
     });
 
     await writeAuditLog(request, env, {
@@ -744,6 +1097,12 @@ async function handleRuleSourceById(
   action?: string
 ): Promise<Response> {
   if (request.method === 'PATCH' && !action) {
+    const current = await getRuleSourceById(env.DB, ruleSourceId);
+
+    if (!current) {
+      return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
+    }
+
     const body = await parseJsonBody(request);
 
     if (!isRecord(body)) {
@@ -761,15 +1120,22 @@ async function handleRuleSourceById(
       return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http/https URL'), 400);
     }
 
+    const nextName = asString(body.name);
+    const nextEnabled = asBoolean(body.enabled);
+
     const ruleSource = await updateRuleSource(env.DB, ruleSourceId, {
-      ...(asString(body.name) ? { name: asString(body.name) } : {}),
+      ...(nextName ? { name: nextName } : {}),
       ...(sourceUrl ? { sourceUrl } : {}),
       ...(format ? { format: format as RuleSourceFormat } : {}),
-      ...(asBoolean(body.enabled) !== undefined ? { enabled: asBoolean(body.enabled) } : {})
+      ...(nextEnabled !== undefined ? { enabled: nextEnabled } : {})
     });
 
     if (!ruleSource) {
       return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
+    }
+
+    if (current.enabled !== ruleSource.enabled) {
+      await invalidateAllUserCaches(env);
     }
 
     await writeAuditLog(request, env, {
@@ -799,6 +1165,30 @@ async function handleRuleSourceById(
       payload: { status: result.status, changed: result.changed, ruleCount: result.ruleCount, details: result.details ?? null }
     });
     return ok(result);
+  }
+
+  if (request.method === 'DELETE' && !action) {
+    const current = await getRuleSourceById(env.DB, ruleSourceId);
+
+    if (!current) {
+      return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
+    }
+
+    const deleted = await deleteRuleSource(env.DB, ruleSourceId);
+
+    if (!deleted) {
+      return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
+    }
+
+    await invalidateAllUserCaches(env);
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'rule_source.delete',
+      targetType: 'rule_source',
+      targetId: ruleSourceId,
+      payload: { name: current.name, format: current.format }
+    });
+    return ok({ deleted: true, ruleSourceId });
   }
 
   return notFound(`/api/rule-sources/${ruleSourceId}`);
@@ -877,6 +1267,12 @@ async function handlePublicSubscription(
   }
 
   const cacheKey = buildSubscriptionCacheKey(targetRaw, token);
+  const accessFailure = await validatePublicSubscriptionAccess(env, token, cacheKey);
+
+  if (accessFailure) {
+    return fail(accessFailure.error, accessFailure.status);
+  }
+
   const cached = await env.SUB_CACHE.get(cacheKey);
 
   if (cached) {
@@ -948,7 +1344,14 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
   }
 
   if (resource === 'admin' && resourceId === 'logout' && request.method === 'POST') {
-    return ok({ loggedOut: true });
+    const revokedAdmin = await revokeAdminSessions(env.DB, auth.admin.id);
+
+    return ok({
+      loggedOut: true,
+      serverRevocation: true,
+      mode: 'server_revoked',
+      ...(revokedAdmin?.sessionNotBefore ? { revokedAt: revokedAdmin.sessionNotBefore } : {})
+    });
   }
 
   if (resource === 'users' && !resourceId) {
@@ -1019,15 +1422,15 @@ export default {
       }
 
       if (segments[0] === 'api') {
-        return handleApiRequest(request, env, segments.slice(1));
+        return await handleApiRequest(request, env, segments.slice(1));
       }
 
       if (request.method === 'GET' && segments[0] === 's' && segments[1] && segments[2]) {
-        return handlePublicSubscription(request, env, segments[1], segments[2]);
+        return await handlePublicSubscription(request, env, segments[1], segments[2]);
       }
 
       if (request.method === 'GET' || request.method === 'HEAD') {
-        return env.ASSETS.fetch(request);
+        return await env.ASSETS.fetch(request);
       }
 
       return notFound(url.pathname);
