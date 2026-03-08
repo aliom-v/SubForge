@@ -16,3 +16,7 @@ Thumbs.db
 .idea/
 .vscode/
 
+.omx/context/
+.omx/logs/
+.omx/state/
+.omx/metrics.json
