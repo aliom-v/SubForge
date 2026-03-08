@@ -1,5 +1,5 @@
 # Dashboard / Git 部署默认依赖 Wrangler 4.45+ 自动 provision 绑定资源，无需在仓库里写死资源 ID。
-name = "subforge-worker"
+name = "subforge"
 main = "apps/worker/src/index.ts"
 compatibility_date = "2026-03-07"
 
