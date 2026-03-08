@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { getServiceMetadata } from '@subforge/core';
+import {
+  getServiceMetadata
+} from '@subforge/core';
 import {
   SUBSCRIPTION_TARGETS,
   type AuditLogRecord,
@@ -32,6 +34,7 @@ import {
   fetchUsers,
   login,
   logout,
+  previewNodeImportFromUrl,
   replaceUserNodeBindings,
   resetUserToken,
   setDefaultTemplate,
@@ -41,10 +44,25 @@ import {
   updateTemplate,
   updateUser,
   type AdminSession,
+  type NodeImportPreviewPayload,
   type PreviewPayload,
   type RuleSourceSyncPayload,
   type SetupStatusPayload
 } from './api';
+import {
+  COMMON_NODE_PROTOCOLS,
+  createNodeProtocolGuideState,
+  detectNodeProtocolPreset,
+  formatNodeMetadataText,
+  getNodeMetadataExamples,
+  parseNodeMetadataText,
+  serializeNodeProtocolGuideState,
+  summarizeNodeMetadata,
+  summarizeNodeMetadataParts,
+  type NodeProtocolGuideState
+} from './node-metadata';
+import { parseNodeImportText, type ImportedNodePayload, type NodeImportContentEncoding } from './node-import';
+import { canonicalizeNodeProtocol, validateNodeProtocolMetadata } from './node-protocol-validation';
 
 const metadata = getServiceMetadata();
 const sessionStorageKey = 'subforge.admin.token';
@@ -76,12 +94,17 @@ interface UserEditForm {
   expiresAt: string;
 }
 
-interface NodeEditForm {
-  id: string;
+interface NodeDraftForm {
   name: string;
   protocol: string;
   server: string;
   port: number;
+  credentialsText: string;
+  paramsText: string;
+}
+
+interface NodeEditForm extends NodeDraftForm {
+  id: string;
   enabled: boolean;
 }
 
@@ -112,9 +135,21 @@ const emptyResources: ResourceState = {
 };
 
 const emptyUserEditForm: UserEditForm = { id: '', name: '', status: 'active', remark: '', expiresAt: '' };
-const emptyNodeEditForm: NodeEditForm = { id: '', name: '', protocol: '', server: '', port: 443, enabled: true };
+const emptyNodeDraftForm: NodeDraftForm = {
+  name: '',
+  protocol: 'vless',
+  server: '',
+  port: 443,
+  credentialsText: '',
+  paramsText: ''
+};
+const emptyNodeEditForm: NodeEditForm = { id: '', ...emptyNodeDraftForm, enabled: true };
 const emptyTemplateEditForm: TemplateEditForm = { id: '', name: '', content: '', version: 1, enabled: true, isDefault: false };
 const emptyRuleSourceEditForm: RuleSourceEditForm = { id: '', name: '', sourceUrl: '', format: 'text', enabled: true };
+
+function formatNodeImportContentEncoding(value: NodeImportContentEncoding): string {
+  return value === 'base64_text' ? 'Base64 订阅文本' : '明文分享链接';
+}
 
 export function App(): JSX.Element {
   const [token, setToken] = useState<string>(() => localStorage.getItem(sessionStorageKey) ?? '');
@@ -131,7 +166,10 @@ export function App(): JSX.Element {
   const [loginForm, setLoginForm] = useState({ username: 'admin', password: '' });
   const [setupForm, setSetupForm] = useState({ username: 'admin', password: '', confirmPassword: '' });
   const [userForm, setUserForm] = useState({ name: '', remark: '', expiresAt: '' });
-  const [nodeForm, setNodeForm] = useState({ name: '', protocol: 'vless', server: '', port: 443 });
+  const [nodeForm, setNodeForm] = useState<NodeDraftForm>(emptyNodeDraftForm);
+  const [nodeImportText, setNodeImportText] = useState('');
+  const [nodeImportSourceUrl, setNodeImportSourceUrl] = useState('');
+  const [remoteNodeImportPreview, setRemoteNodeImportPreview] = useState<NodeImportPreviewPayload | null>(null);
   const [templateForm, setTemplateForm] = useState({
     name: '',
     targetType: 'mihomo' as SubscriptionTarget,
@@ -160,6 +198,11 @@ export function App(): JSX.Element {
     ],
     [resources]
   );
+  const nodeCreateExamples = useMemo(() => getNodeMetadataExamples(nodeForm.protocol), [nodeForm.protocol]);
+  const nodeEditExamples = useMemo(() => getNodeMetadataExamples(nodeEditForm.protocol), [nodeEditForm.protocol]);
+  const parsedNodeImport = useMemo(() => parseNodeImportText(nodeImportText), [nodeImportText]);
+  const firstImportedNode = parsedNodeImport.nodes[0];
+  const firstRemoteImportedNode = remoteNodeImportPreview?.nodes[0];
 
   function reportValidationError(messageText: string): void {
     setMessage('');
@@ -216,6 +259,8 @@ export function App(): JSX.Element {
       protocol: node.protocol,
       server: node.server,
       port: node.port,
+      credentialsText: formatNodeMetadataText(node.credentials),
+      paramsText: formatNodeMetadataText(node.params),
       enabled: node.enabled
     });
   }, [resources.nodes, nodeEditForm.id]);
@@ -484,10 +529,130 @@ export function App(): JSX.Element {
       return;
     }
 
+    const nodePayload = buildNodeMutationInput(nodeForm);
+
+    if (nodePayload.error) {
+      reportValidationError(nodePayload.error);
+      return;
+    }
+
     await withAction(async () => {
-      await createNode(token, nodeForm);
-      setNodeForm({ name: '', protocol: 'vless', server: '', port: 443 });
-    }, '节点已创建');
+      await createNode(token, nodePayload.payload);
+      setNodeForm(emptyNodeDraftForm);
+    }, '节点已创建，请到“用户”页完成绑定并在“预览”页验证输出');
+  }
+
+  function loadImportedNodeToCreateForm(importedNode: ImportedNodePayload): void {
+    setNodeForm({
+      name: importedNode.name,
+      protocol: importedNode.protocol,
+      server: importedNode.server,
+      port: importedNode.port,
+      credentialsText: formatNodeMetadataText(importedNode.credentials),
+      paramsText: formatNodeMetadataText(importedNode.params)
+    });
+    setError('');
+    setMessage(`已将 ${importedNode.name} 载入创建表单`);
+  }
+
+  async function createImportedNodes(input: {
+    importedNodes: ImportedNodePayload[];
+    errorCount: number;
+    onSuccess?: () => void;
+  }): Promise<void> {
+    if (!token) return;
+
+    if (input.importedNodes.length === 0) {
+      reportValidationError('没有可导入的节点');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      for (const importedNode of input.importedNodes) {
+        await createNode(token, {
+          name: importedNode.name,
+          protocol: importedNode.protocol,
+          server: importedNode.server,
+          port: importedNode.port,
+          credentials: importedNode.credentials,
+          params: importedNode.params
+        });
+      }
+
+      await refreshResources();
+      input.onSuccess?.();
+      setMessage(
+        `已导入 ${input.importedNodes.length} 个节点${
+          input.errorCount > 0 ? `，另有 ${input.errorCount} 条解析失败未导入` : ''
+        }，请到“用户”页完成绑定并在“预览”页验证输出`
+      );
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleImportNodes(): Promise<void> {
+    if (!token) return;
+
+    if (!nodeImportText.trim()) {
+      reportValidationError('请先粘贴分享链接');
+      return;
+    }
+
+    await createImportedNodes({
+      importedNodes: parsedNodeImport.nodes,
+      errorCount: parsedNodeImport.errors.length,
+      ...(parsedNodeImport.errors.length === 0 ? { onSuccess: () => setNodeImportText('') } : {})
+    });
+  }
+
+  async function handlePreviewNodeImportFromUrl(): Promise<void> {
+    if (!token) return;
+
+    if (!nodeImportSourceUrl.trim()) {
+      reportValidationError('请先填写订阅 URL');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setRemoteNodeImportPreview(null);
+
+    try {
+      const result = await previewNodeImportFromUrl(token, nodeImportSourceUrl.trim());
+      setRemoteNodeImportPreview(result);
+      setMessage(
+        result.nodes.length > 0
+          ? `远程订阅已抓取，可导入 ${result.nodes.length} 个节点${
+              result.errors.length > 0 ? `，另有 ${result.errors.length} 条解析失败` : ''
+            }`
+          : '远程订阅已抓取，但当前没有解析出可导入节点'
+      );
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleImportRemoteNodes(): Promise<void> {
+    if (!token) return;
+
+    if (!remoteNodeImportPreview) {
+      reportValidationError('请先抓取并预览订阅 URL');
+      return;
+    }
+
+    await createImportedNodes({
+      importedNodes: remoteNodeImportPreview.nodes,
+      errorCount: remoteNodeImportPreview.errors.length,
+      onSuccess: () => setRemoteNodeImportPreview(null)
+    });
   }
 
   async function handleUpdateNode(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -501,16 +666,20 @@ export function App(): JSX.Element {
       return;
     }
 
+    const nodePayload = buildNodeMutationInput(nodeEditForm);
+
+    if (nodePayload.error) {
+      reportValidationError(nodePayload.error);
+      return;
+    }
+
     await withAction(
       () =>
         updateNode(token, nodeEditForm.id, {
-          name: nodeEditForm.name,
-          protocol: nodeEditForm.protocol,
-          server: nodeEditForm.server,
-          port: nodeEditForm.port,
+          ...nodePayload.payload,
           enabled: nodeEditForm.enabled
         }),
-      '节点已更新'
+      '节点已更新，可到“预览”页重新验证订阅输出'
     );
   }
 
@@ -908,12 +1077,232 @@ export function App(): JSX.Element {
       {activeTab === 'nodes' ? (
         <section className="panel-grid users-grid">
           <article className="panel">
+            <h2>节点录入说明</h2>
+            <ul className="overview-list">
+              <li>当前支持手动录入、`vless://` / `trojan://` / `vmess://` / `ss://` / `hysteria2://` 分享链接导入，以及订阅 URL 远程抓取预览导入。</li>
+              <li>节点创建后还需要到“用户”页完成绑定，否则订阅不会包含该节点。</li>
+              <li>要生成真实可用节点，通常还需要补齐 `credentials` 与 `params`。</li>
+              <li>常见协议 `vless` / `trojan` / `vmess` / `ss` / `hysteria2` 已提供结构化向导；更复杂变体继续使用原始 JSON。</li>
+              <li>表单里的 JSON 留空或填写 `null` 表示不写入或清空 metadata。</li>
+            </ul>
+            <div className="metadata-grid">
+              <div className="result-card">
+                <strong>凭据示例</strong>
+                <pre>{nodeCreateExamples.credentials}</pre>
+              </div>
+              <div className="result-card">
+                <strong>参数示例</strong>
+                <pre>{nodeCreateExamples.params}</pre>
+              </div>
+            </div>
+            <p className="helper">
+              当前支持“分享链接导入 + 订阅 URL 远程预览导入 + 手动录入”三条路径；远程节点源同步仍未实现。
+            </p>
+          </article>
+
+          <article className="panel">
+            <h2>导入分享链接</h2>
+            <div className="form-grid">
+              <Field label="分享链接">
+                <textarea
+                  value={nodeImportText}
+                  onChange={(event) => setNodeImportText(event.target.value)}
+                  rows={8}
+                  placeholder={[
+                    'vless://uuid@host:443?security=tls&type=ws&sni=sub.example.com&path=%2Fws#HK%20VLESS',
+                    'trojan://password@host:443?sni=sub.example.com#JP%20Trojan',
+                    'vmess://eyJhZGQiOiJ2bWVzcy5leGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjExMTExMTExLTExMTEtMTExMS0xMTExLTExMTExMTExMTExMSIsImFpZCI6IjAiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsInBzIjoiVkdNZXNzIn0=',
+                    'ss://YWVzLTI1Ni1nY206cGFzc3cwcmQ=@ss.example.com:8388#SS%20Node',
+                    'hysteria2://password@hy2.example.com:443?sni=sub.example.com&obfs=salamander&obfs-password=replace-me#HY2%20Node'
+                  ].join('\n')}
+                />
+              </Field>
+              <p className="helper full-span">
+                每行一条分享链接。当前支持 `vless://`、`trojan://`、`vmess://`、`ss://`、`hysteria2://` / `hy2://`，也支持直接粘贴整段 Base64 订阅文本；如果你拿到的是订阅 URL，请使用下方远程抓取预览。
+              </p>
+              {parsedNodeImport.lineCount > 0 ? (
+                <p className="helper full-span">
+                  当前识别内容：{formatNodeImportContentEncoding(parsedNodeImport.contentEncoding)}，有效行 {parsedNodeImport.lineCount}
+                </p>
+              ) : null}
+              <div className="inline-actions full-span">
+                <button
+                  type="button"
+                  disabled={loading || parsedNodeImport.nodes.length === 0}
+                  onClick={() => void handleImportNodes()}
+                >
+                  批量创建 {parsedNodeImport.nodes.length} 个节点
+                </button>
+                {firstImportedNode ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => loadImportedNodeToCreateForm(firstImportedNode)}
+                  >
+                    载入首条到创建表单
+                  </button>
+                ) : null}
+              </div>
+              {parsedNodeImport.errors.length > 0 ? (
+                <div className="import-errors full-span">
+                  <strong>解析错误</strong>
+                  <ul className="overview-list">
+                    {parsedNodeImport.errors.map((errorText) => <li key={errorText}>{errorText}</li>)}
+                  </ul>
+                </div>
+              ) : null}
+              {parsedNodeImport.nodes.length > 0 ? (
+                <div className="full-span">
+                  <ResourceTable
+                    columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
+                    rows={parsedNodeImport.nodes.map((node, index) => [
+                      node.name,
+                      node.protocol,
+                      node.server,
+                      node.port,
+                      summarizeNodeMetadataParts(node.credentials, node.params),
+                      <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
+                    ])}
+                  />
+                </div>
+              ) : null}
+            </div>
+          </article>
+
+          <article className="panel">
+            <h2>导入订阅 URL</h2>
+            <div className="form-grid">
+              <Field label="订阅 URL">
+                <input
+                  value={nodeImportSourceUrl}
+                  onChange={(event) => {
+                    setNodeImportSourceUrl(event.target.value);
+                    setRemoteNodeImportPreview(null);
+                  }}
+                  placeholder="https://example.com/subscription.txt"
+                />
+              </Field>
+              <p className="helper full-span">
+                Worker 会以管理员身份发起一次远程抓取并解析预览，不会把该 URL 保存成远程节点源，也不会自动持续同步。
+              </p>
+              <div className="inline-actions full-span">
+                <button
+                  type="button"
+                  disabled={loading || !nodeImportSourceUrl.trim()}
+                  onClick={() => void handlePreviewNodeImportFromUrl()}
+                >
+                  抓取并预览
+                </button>
+                {firstRemoteImportedNode ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => loadImportedNodeToCreateForm(firstRemoteImportedNode)}
+                  >
+                    载入首条到创建表单
+                  </button>
+                ) : null}
+                {remoteNodeImportPreview ? (
+                  <button
+                    type="button"
+                    disabled={loading || remoteNodeImportPreview.nodes.length === 0}
+                    onClick={() => void handleImportRemoteNodes()}
+                  >
+                    批量创建 {remoteNodeImportPreview.nodes.length} 个节点
+                  </button>
+                ) : null}
+              </div>
+              {remoteNodeImportPreview ? (
+                <>
+                  <div className="metadata-grid full-span">
+                    <div className="result-card">
+                      <strong>远程来源</strong>
+                      <pre>{remoteNodeImportPreview.sourceUrl}</pre>
+                    </div>
+                    <div className="result-card">
+                      <strong>抓取摘要</strong>
+                      <pre>{[
+                        `HTTP ${remoteNodeImportPreview.upstreamStatus}`,
+                        `耗时 ${remoteNodeImportPreview.durationMs} ms`,
+                        `体积 ${remoteNodeImportPreview.fetchedBytes} bytes`,
+                        `内容 ${formatNodeImportContentEncoding(remoteNodeImportPreview.contentEncoding)}`,
+                        `有效行 ${remoteNodeImportPreview.lineCount}`
+                      ].join('\n')}</pre>
+                    </div>
+                  </div>
+                  {remoteNodeImportPreview.errors.length > 0 ? (
+                    <div className="import-errors full-span">
+                      <strong>解析错误</strong>
+                      <ul className="overview-list">
+                        {remoteNodeImportPreview.errors.map((errorText) => <li key={errorText}>{errorText}</li>)}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {remoteNodeImportPreview.nodes.length > 0 ? (
+                    <div className="full-span">
+                      <ResourceTable
+                        columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
+                        rows={remoteNodeImportPreview.nodes.map((node, index) => [
+                          node.name,
+                          node.protocol,
+                          node.server,
+                          node.port,
+                          summarizeNodeMetadataParts(node.credentials, node.params),
+                          <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
+                        ])}
+                      />
+                    </div>
+                  ) : (
+                    <p className="helper full-span">
+                      当前没有解析出可导入节点。远程内容需要是每行一条的 `vless://`、`trojan://`、`vmess://`、`ss://`、`hysteria2://` / `hy2://` 分享链接。
+                    </p>
+                  )}
+                </>
+              ) : null}
+            </div>
+          </article>
+
+          <article className="panel">
             <h2>创建节点</h2>
             <form className="form-grid" onSubmit={handleCreateNode}>
               <Field label="名称"><input value={nodeForm.name} onChange={(event) => setNodeForm((current) => ({ ...current, name: event.target.value }))} /></Field>
-              <Field label="协议"><input value={nodeForm.protocol} onChange={(event) => setNodeForm((current) => ({ ...current, protocol: event.target.value }))} /></Field>
+              <Field label="协议">
+                <input
+                  list="node-protocol-options"
+                  value={nodeForm.protocol}
+                  onChange={(event) => setNodeForm((current) => ({ ...current, protocol: event.target.value }))}
+                  placeholder="vless / trojan / vmess / ss / hysteria2"
+                />
+              </Field>
               <Field label="地址"><input value={nodeForm.server} onChange={(event) => setNodeForm((current) => ({ ...current, server: event.target.value }))} /></Field>
               <Field label="端口"><input type="number" value={nodeForm.port} onChange={(event) => setNodeForm((current) => ({ ...current, port: Number(event.target.value) }))} /></Field>
+              <NodeProtocolAssistant
+                protocol={nodeForm.protocol}
+                credentialsText={nodeForm.credentialsText}
+                paramsText={nodeForm.paramsText}
+                onMetadataChange={({ credentialsText, paramsText }) =>
+                  setNodeForm((current) => ({ ...current, credentialsText, paramsText }))
+                }
+              />
+              <Field label="凭据 JSON" full>
+                <textarea
+                  value={nodeForm.credentialsText}
+                  onChange={(event) => setNodeForm((current) => ({ ...current, credentialsText: event.target.value }))}
+                  rows={6}
+                  placeholder={nodeCreateExamples.credentials}
+                />
+              </Field>
+              <Field label="参数 JSON" full>
+                <textarea
+                  value={nodeForm.paramsText}
+                  onChange={(event) => setNodeForm((current) => ({ ...current, paramsText: event.target.value }))}
+                  rows={6}
+                  placeholder={nodeCreateExamples.params}
+                />
+              </Field>
+              <p className="helper full-span">
+                可直接手动录入，也可先用上方分享链接导入。`ss` / `hysteria2` 已支持常见字段回填；复杂变体和高级参数仍建议继续核对 JSON，再完成用户绑定。
+              </p>
               <button type="submit" disabled={loading}>创建节点</button>
             </form>
           </article>
@@ -928,23 +1317,62 @@ export function App(): JSX.Element {
                 </select>
               </Field>
               <Field label="名称"><input value={nodeEditForm.name} onChange={(event) => setNodeEditForm((current) => ({ ...current, name: event.target.value }))} /></Field>
-              <Field label="协议"><input value={nodeEditForm.protocol} onChange={(event) => setNodeEditForm((current) => ({ ...current, protocol: event.target.value }))} /></Field>
+              <Field label="协议">
+                <input
+                  list="node-protocol-options"
+                  value={nodeEditForm.protocol}
+                  onChange={(event) => setNodeEditForm((current) => ({ ...current, protocol: event.target.value }))}
+                  placeholder="vless / trojan / vmess / ss / hysteria2"
+                />
+              </Field>
               <Field label="地址"><input value={nodeEditForm.server} onChange={(event) => setNodeEditForm((current) => ({ ...current, server: event.target.value }))} /></Field>
               <Field label="端口"><input type="number" value={nodeEditForm.port} onChange={(event) => setNodeEditForm((current) => ({ ...current, port: Number(event.target.value) }))} /></Field>
+              <NodeProtocolAssistant
+                protocol={nodeEditForm.protocol}
+                credentialsText={nodeEditForm.credentialsText}
+                paramsText={nodeEditForm.paramsText}
+                onMetadataChange={({ credentialsText, paramsText }) =>
+                  setNodeEditForm((current) => ({ ...current, credentialsText, paramsText }))
+                }
+              />
+              <Field label="凭据 JSON" full>
+                <textarea
+                  value={nodeEditForm.credentialsText}
+                  onChange={(event) => setNodeEditForm((current) => ({ ...current, credentialsText: event.target.value }))}
+                  rows={6}
+                  placeholder={nodeEditExamples.credentials}
+                />
+              </Field>
+              <Field label="参数 JSON" full>
+                <textarea
+                  value={nodeEditForm.paramsText}
+                  onChange={(event) => setNodeEditForm((current) => ({ ...current, paramsText: event.target.value }))}
+                  rows={6}
+                  placeholder={nodeEditExamples.params}
+                />
+              </Field>
               <label className="checkbox-row"><input type="checkbox" checked={nodeEditForm.enabled} onChange={(event) => setNodeEditForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用节点</span></label>
+              <p className="helper full-span">
+                这里会回显当前 metadata。留空或填写 `null` 表示清空已有的 `credentials` / `params`。
+              </p>
               <button type="submit" disabled={loading || !nodeEditForm.id}>保存节点</button>
             </form>
           </article>
 
+          <datalist id="node-protocol-options">
+            {COMMON_NODE_PROTOCOLS.map((protocol) => <option key={protocol} value={protocol} />)}
+          </datalist>
+
           <article className="panel full-width">
             <h2>节点列表</h2>
             <ResourceTable
-              columns={['名称', '协议', '地址', '端口', '状态', '操作']}
+              columns={['名称', '协议', '地址', '端口', '元数据', '状态', '操作']}
               rows={resources.nodes.map((node) => [
                 node.name,
                 node.protocol,
                 node.server,
                 node.port,
+                summarizeNodeMetadata(node),
                 node.enabled ? 'enabled' : 'disabled',
                 <div className="inline-actions" key={node.id}>
                   <button type="button" onClick={() => setNodeEditForm((current) => ({ ...current, id: node.id }))}>编辑</button>
@@ -1205,6 +1633,82 @@ function validateNodeDraft(input: { name: string; protocol: string; server: stri
   return null;
 }
 
+function buildNodeMutationInput(input: NodeDraftForm): {
+  payload: {
+    name: string;
+    protocol: string;
+    server: string;
+    port: number;
+    credentials: Record<string, unknown> | null;
+    params: Record<string, unknown> | null;
+  };
+  error?: string;
+} {
+  const protocol = canonicalizeNodeProtocol(input.protocol);
+  const credentials = parseNodeMetadataText(input.credentialsText, 'credentials');
+
+  if (credentials.error) {
+    return {
+      payload: {
+        name: input.name.trim(),
+        protocol,
+        server: input.server.trim(),
+        port: input.port,
+        credentials: null,
+        params: null
+      },
+      error: credentials.error
+    };
+  }
+
+  const params = parseNodeMetadataText(input.paramsText, 'params');
+
+  if (params.error) {
+    return {
+      payload: {
+        name: input.name.trim(),
+        protocol,
+        server: input.server.trim(),
+        port: input.port,
+        credentials: credentials.value,
+        params: null
+      },
+      error: params.error
+    };
+  }
+
+  const metadataValidationError = validateNodeProtocolMetadata({
+    protocol,
+    credentials: credentials.value,
+    params: params.value
+  });
+
+  if (metadataValidationError) {
+    return {
+      payload: {
+        name: input.name.trim(),
+        protocol,
+        server: input.server.trim(),
+        port: input.port,
+        credentials: credentials.value,
+        params: params.value
+      },
+      error: metadataValidationError
+    };
+  }
+
+  return {
+    payload: {
+      name: input.name.trim(),
+      protocol,
+      server: input.server.trim(),
+      port: input.port,
+      credentials: credentials.value,
+      params: params.value
+    }
+  };
+}
+
 function validateTemplateDraft(input: { name: string; content: string; version: number }): string | null {
   if (!input.name.trim()) return '模板名称不能为空';
   if (!input.content.trim()) return '模板内容不能为空';
@@ -1256,6 +1760,234 @@ function OverviewPanel(props: ResourceState): JSX.Element {
         {latestAudit ? <p className="helper">最近审计：{latestAudit.action} / {latestAudit.targetType}</p> : null}
       </article>
     </section>
+  );
+}
+
+function NodeProtocolAssistant(props: {
+  protocol: string;
+  credentialsText: string;
+  paramsText: string;
+  onMetadataChange: (value: { credentialsText: string; paramsText: string }) => void;
+}): JSX.Element {
+  const preset = detectNodeProtocolPreset(props.protocol);
+  const parsedCredentials = useMemo(
+    () => parseNodeMetadataText(props.credentialsText, 'credentials'),
+    [props.credentialsText]
+  );
+  const parsedParams = useMemo(() => parseNodeMetadataText(props.paramsText, 'params'), [props.paramsText]);
+  const [guideState, setGuideState] = useState<NodeProtocolGuideState>(() =>
+    createNodeProtocolGuideState(props.protocol, {
+      credentials: parsedCredentials.value,
+      params: parsedParams.value
+    })
+  );
+
+  useEffect(() => {
+    if (parsedCredentials.error || parsedParams.error) {
+      return;
+    }
+
+    setGuideState(
+      createNodeProtocolGuideState(props.protocol, {
+        credentials: parsedCredentials.value,
+        params: parsedParams.value
+      })
+    );
+  }, [parsedCredentials.error, parsedCredentials.value, parsedParams.error, parsedParams.value, props.protocol]);
+
+  function updateGuideState(patch: Partial<NodeProtocolGuideState>): void {
+    setGuideState((current) => {
+      const next = { ...current, ...patch };
+      const serialized = serializeNodeProtocolGuideState(props.protocol, next);
+
+      props.onMetadataChange({
+        credentialsText: formatNodeMetadataText(serialized.credentials),
+        paramsText: formatNodeMetadataText(serialized.params)
+      });
+
+      return next;
+    });
+  }
+
+  if (preset === 'custom') {
+    return (
+      <div className="protocol-assistant full-span">
+        <div className="assistant-header">
+          <strong>协议字段向导</strong>
+          <span className="assistant-badge">custom</span>
+        </div>
+        <p className="helper">
+          当前协议暂无结构化字段向导，请继续使用下方 JSON 字段。常见的 `vless`、`trojan`、`vmess`、`ss`、`hysteria2`
+          已支持自动回填。
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="protocol-assistant full-span">
+      <div className="assistant-header">
+        <strong>协议字段向导</strong>
+        <span className="assistant-badge">{preset}</span>
+      </div>
+      <p className="helper">
+        修改下列字段会自动回填到下方 JSON 文本框；更多高级参数仍可直接编辑原始 JSON。
+      </p>
+      {preset === 'hysteria2' ? (
+        <p className="helper">
+          `hysteria2` 向导当前优先覆盖 `password`、`sni`、`obfs`、`obfs-password`、`alpn`、`insecure`；多端口和更复杂组合仍请直接核对 JSON。
+        </p>
+      ) : null}
+      {parsedCredentials.error || parsedParams.error ? (
+        <p className="helper">
+          当前 JSON 不是合法对象，协议向导会在你修正 JSON 后重新同步。
+        </p>
+      ) : null}
+      <div className="assistant-grid">
+        {preset === 'ss' ? (
+          <>
+            <Field label="Cipher">
+              <input
+                value={guideState.primaryCredential}
+                onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
+                placeholder="aes-256-gcm"
+              />
+            </Field>
+            <Field label="Password">
+              <input
+                value={guideState.secondaryCredential}
+                onChange={(event) => updateGuideState({ secondaryCredential: event.target.value })}
+                placeholder="replace-me"
+              />
+            </Field>
+            <Field label="Plugin">
+              <input
+                value={guideState.plugin}
+                onChange={(event) => updateGuideState({ plugin: event.target.value })}
+                placeholder="v2ray-plugin"
+              />
+            </Field>
+          </>
+        ) : preset === 'hysteria2' ? (
+          <>
+            <Field label="Password">
+              <input
+                value={guideState.primaryCredential}
+                onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
+                placeholder="replace-me"
+              />
+            </Field>
+            <Field label="SNI">
+              <input
+                value={guideState.sni}
+                onChange={(event) => updateGuideState({ sni: event.target.value })}
+                placeholder="sub.example.com"
+              />
+            </Field>
+            <Field label="Obfs">
+              <input
+                value={guideState.obfs}
+                onChange={(event) => updateGuideState({ obfs: event.target.value })}
+                placeholder="salamander"
+              />
+            </Field>
+            <Field label="Obfs Password">
+              <input
+                value={guideState.obfsPassword}
+                onChange={(event) => updateGuideState({ obfsPassword: event.target.value })}
+                placeholder="replace-me"
+              />
+            </Field>
+            <Field label="ALPN">
+              <input
+                value={guideState.alpn}
+                onChange={(event) => updateGuideState({ alpn: event.target.value })}
+                placeholder="h3"
+              />
+            </Field>
+            <Field label="Skip Verify">
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={guideState.insecure}
+                  onChange={(event) => updateGuideState({ insecure: event.target.checked })}
+                />
+                <span>写入 `params.insecure = true`</span>
+              </label>
+            </Field>
+          </>
+        ) : (
+          <Field label={preset === 'trojan' ? 'Password' : 'UUID'}>
+            <input
+              value={guideState.primaryCredential}
+              onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
+              placeholder={preset === 'trojan' ? 'replace-me' : '11111111-1111-1111-1111-111111111111'}
+            />
+          </Field>
+        )}
+        {preset === 'vmess' ? (
+          <Field label="Alter ID">
+            <input
+              type="number"
+              value={guideState.alterId}
+              onChange={(event) => updateGuideState({ alterId: event.target.value })}
+              placeholder="0"
+            />
+          </Field>
+        ) : null}
+        {(preset === 'vless' || preset === 'vmess') ? (
+          <Field label="Network">
+            <select
+              value={guideState.network}
+              onChange={(event) => updateGuideState({ network: event.target.value })}
+            >
+              <option value="">未设置</option>
+              <option value="ws">ws</option>
+              <option value="tcp">tcp</option>
+              <option value="grpc">grpc</option>
+              <option value="http">http</option>
+            </select>
+          </Field>
+        ) : null}
+        {(preset === 'vless' || preset === 'vmess') ? (
+          <Field label="Server Name">
+            <input
+              value={guideState.servername}
+              onChange={(event) => updateGuideState({ servername: event.target.value })}
+              placeholder="sub.example.com"
+            />
+          </Field>
+        ) : null}
+        {(preset === 'vless' || preset === 'vmess') ? (
+          <Field label="Path">
+            <input
+              value={guideState.path}
+              onChange={(event) => updateGuideState({ path: event.target.value })}
+              placeholder={preset === 'vmess' ? '/vmess' : '/ws'}
+            />
+          </Field>
+        ) : null}
+        {preset === 'trojan' ? (
+          <Field label="SNI">
+            <input
+              value={guideState.sni}
+              onChange={(event) => updateGuideState({ sni: event.target.value })}
+              placeholder="sub.example.com"
+            />
+          </Field>
+        ) : null}
+        {preset !== 'ss' ? (
+          <label className="checkbox-row assistant-checkbox">
+            <input
+              type="checkbox"
+              checked={guideState.tls}
+              onChange={(event) => updateGuideState({ tls: event.target.checked })}
+            />
+            <span>启用 TLS</span>
+          </label>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

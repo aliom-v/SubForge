@@ -1,4 +1,9 @@
-import { compileSubscription } from '@subforge/core';
+import {
+  canonicalizeNodeProtocol,
+  compileSubscription,
+  parseNodeImportText,
+  validateNodeProtocolMetadata
+} from '@subforge/core';
 import {
   API_PREFIX,
   APP_ERROR_CODES,
@@ -61,7 +66,7 @@ import {
 } from './repository';
 import { hashPassword, signAdminSessionToken, verifyAdminSessionToken, verifyPassword } from './security';
 import { invalidateAllUserCaches, invalidateNodeAffectedCaches, invalidateUserCaches, invalidateUsersCaches } from './cache';
-import { runEnabledRuleSourceSync, syncRuleSourceNow } from './sync';
+import { fetchText, runEnabledRuleSourceSync, syncRuleSourceNow } from './sync';
 
 function isSubscriptionTarget(value: string): value is SubscriptionTarget {
   return SUBSCRIPTION_TARGETS.includes(value as SubscriptionTarget);
@@ -641,6 +646,56 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
   return notFound(`/api/users/${userId}`);
 }
 
+async function handleNodeImportPreview(request: Request, env: Env, adminId: string): Promise<Response> {
+  const body = await parseJsonBody(request);
+
+  if (!isRecord(body)) {
+    return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
+  }
+
+  const sourceUrl = asString(body.sourceUrl);
+
+  if (!sourceUrl || !isValidHttpUrl(sourceUrl)) {
+    return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http/https URL'), 400);
+  }
+
+  const upstream = await fetchText(sourceUrl, Number(env.SYNC_HTTP_TIMEOUT_MS || '10000'));
+
+  if (!upstream.text) {
+    return fail(createAppError('VALIDATION_FAILED', 'upstream content is empty'), 400);
+  }
+
+  const parsed = parseNodeImportText(upstream.text);
+  const payload = {
+    sourceUrl,
+    upstreamStatus: upstream.status,
+    durationMs: upstream.durationMs,
+    fetchedBytes: upstream.fetchedBytes,
+    lineCount: parsed.lineCount,
+    contentEncoding: parsed.contentEncoding,
+    nodes: parsed.nodes,
+    errors: parsed.errors
+  };
+
+  await writeAuditLog(request, env, {
+    actorAdminId: adminId,
+    action: 'node_import.preview',
+    targetType: 'node_import',
+    payload: {
+      sourceUrl,
+      upstreamStatus: upstream.status,
+      durationMs: upstream.durationMs,
+      fetchedBytes: upstream.fetchedBytes,
+      lineCount: payload.lineCount,
+      contentEncoding: payload.contentEncoding,
+      nodeCount: payload.nodes.length,
+      errorCount: payload.errors.length
+    }
+  });
+
+  return ok(payload);
+}
+
 async function handleNodes(request: Request, env: Env, adminId: string): Promise<Response> {
   if (request.method === 'GET') {
     return ok(await listNodes(env.DB));
@@ -654,7 +709,8 @@ async function handleNodes(request: Request, env: Env, adminId: string): Promise
     }
 
     const name = asString(body.name);
-    const protocol = asString(body.protocol);
+    const protocolInput = asString(body.protocol);
+    const protocol = protocolInput ? canonicalizeNodeProtocol(protocolInput) : undefined;
     const server = asString(body.server);
     const port = asNumber(body.port);
 
@@ -696,6 +752,16 @@ async function handleNodes(request: Request, env: Env, adminId: string): Promise
 
     if (paramsInput.error) {
       return fail(createAppError('VALIDATION_FAILED', paramsInput.error), 400);
+    }
+
+    const metadataValidationError = validateNodeProtocolMetadata({
+      protocol: protocol ?? '',
+      credentials: credentialsInput.value ?? null,
+      params: paramsInput.value ?? null
+    });
+
+    if (metadataValidationError) {
+      return fail(createAppError('VALIDATION_FAILED', metadataValidationError), 400);
     }
 
     const node = await createNode(env.DB, {
@@ -744,7 +810,8 @@ async function handleNodeById(request: Request, env: Env, adminId: string, nodeI
     }
 
     const nextName = asString(body.name);
-    const nextProtocol = asString(body.protocol);
+    const nextProtocolInput = asString(body.protocol);
+    const nextProtocol = nextProtocolInput ? canonicalizeNodeProtocol(nextProtocolInput) : undefined;
     const nextServer = asString(body.server);
     const nextSourceType = 'sourceType' in body ? asString(body.sourceType) : undefined;
     const nextEnabled = asBoolean(body.enabled);
@@ -776,6 +843,16 @@ async function handleNodeById(request: Request, env: Env, adminId: string, nodeI
 
     if (nextParams.error) {
       return fail(createAppError('VALIDATION_FAILED', nextParams.error), 400);
+    }
+
+    const metadataValidationError = validateNodeProtocolMetadata({
+      protocol: nextProtocol ?? currentNode.protocol,
+      credentials: nextCredentials.present ? (nextCredentials.value ?? null) : (currentNode.credentials ?? null),
+      params: nextParams.present ? (nextParams.value ?? null) : (currentNode.params ?? null)
+    });
+
+    if (metadataValidationError) {
+      return fail(createAppError('VALIDATION_FAILED', metadataValidationError), 400);
     }
 
     const shouldClearSourceIdOnManualSwitch =
@@ -1360,6 +1437,10 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
 
   if (resource === 'users' && resourceId) {
     return handleUserById(request, env, auth.admin.id, resourceId, action);
+  }
+
+  if (resource === 'node-import' && resourceId === 'preview' && request.method === 'POST') {
+    return handleNodeImportPreview(request, env, auth.admin.id);
   }
 
   if (resource === 'nodes' && !resourceId) {

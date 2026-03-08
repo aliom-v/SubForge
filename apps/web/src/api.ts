@@ -1,3 +1,4 @@
+import type { ImportedNodePayload, NodeImportContentEncoding } from '@subforge/core';
 import type {
   AppErrorShape,
   AuditLogRecord,
@@ -41,6 +42,17 @@ export interface PreviewPayload {
     ruleSetCount: number;
     templateName: string;
   };
+}
+
+export interface NodeImportPreviewPayload {
+  sourceUrl: string;
+  upstreamStatus: number;
+  durationMs: number;
+  fetchedBytes: number;
+  lineCount: number;
+  contentEncoding: NodeImportContentEncoding;
+  nodes: ImportedNodePayload[];
+  errors: string[];
 }
 
 export interface RuleSourceSyncPayload {
@@ -168,15 +180,41 @@ export async function fetchNodes(token: string): Promise<NodeRecord[]> {
 
 export async function createNode(
   token: string,
-  input: { name: string; protocol: string; server: string; port: number }
+  input: {
+    name: string;
+    protocol: string;
+    server: string;
+    port: number;
+    credentials?: Record<string, unknown> | null;
+    params?: Record<string, unknown> | null;
+  }
 ): Promise<NodeRecord> {
   return request('/api/nodes', { method: 'POST', body: JSON.stringify(input) }, token);
+}
+
+export async function previewNodeImportFromUrl(token: string, sourceUrl: string): Promise<NodeImportPreviewPayload> {
+  return request(
+    '/api/node-import/preview',
+    {
+      method: 'POST',
+      body: JSON.stringify({ sourceUrl })
+    },
+    token
+  );
 }
 
 export async function updateNode(
   token: string,
   nodeId: string,
-  input: { name?: string; protocol?: string; server?: string; port?: number; enabled?: boolean }
+  input: {
+    name?: string;
+    protocol?: string;
+    server?: string;
+    port?: number;
+    enabled?: boolean;
+    credentials?: Record<string, unknown> | null;
+    params?: Record<string, unknown> | null;
+  }
 ): Promise<NodeRecord> {
   return request(`/api/nodes/${nodeId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
 }

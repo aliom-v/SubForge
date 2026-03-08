@@ -1,4 +1,6 @@
 export * from './bootstrap';
 export * from './compile';
 export * from './models';
+export * from './node-import';
+export * from './node-protocol-validation';
 export * from './renderers';

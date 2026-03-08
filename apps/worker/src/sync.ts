@@ -29,7 +29,7 @@ export interface RuleSourceSyncResult {
   details?: RuleSourceSyncDetails;
 }
 
-class SyncFetchError extends Error {
+export class SyncFetchError extends Error {
   status: number | undefined;
   fetchedBytes: number | undefined;
   durationMs: number;
@@ -52,7 +52,7 @@ async function sha256(content: string): Promise<string> {
   return toHex(digest);
 }
 
-async function fetchText(sourceUrl: string, timeoutMs: number): Promise<{
+export async function fetchText(sourceUrl: string, timeoutMs: number): Promise<{
   text: string;
   status: number;
   durationMs: number;
@@ -89,6 +89,14 @@ async function fetchText(sourceUrl: string, timeoutMs: number): Promise<{
       durationMs,
       fetchedBytes
     };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new SyncFetchError('upstream request timed out', {
+        durationMs: Date.now() - start
+      });
+    }
+
+    throw error;
   } finally {
     clearTimeout(timer);
   }

@@ -109,19 +109,94 @@ assertIncludes(readme, 'npm run db:migrations:apply:local', 'README local migrat
 assertIncludes(readme, 'npm run dev:worker', 'README worker dev docs');
 assertIncludes(readme, 'npm run dev:web', 'README web dev docs');
 assertIncludes(readme, 'npm run test:smoke', 'README smoke docs');
+assertIncludes(readme, '节点管理与订阅使用说明', 'README node usage docs');
+assertIncludes(readme, '文档导航与阅读顺序', 'README docs navigation docs');
+assertIncludes(readme, '分享链接粘贴导入', 'README node import docs');
+assertIncludes(readme, '`ss://`', 'README ss import docs');
+assertIncludes(readme, '`hysteria2://`', 'README hysteria2 import docs');
+assertIncludes(readme, '订阅 URL 做一次性远程抓取预览', 'README node import preview docs');
+assertIncludes(readme, 'Base64 包装订阅文本', 'README base64 import docs');
+assertIncludes(readme, '远程节点源持续同步', 'README node import limitation docs');
+assertIncludes(readme, '结构化字段向导', 'README node guided form docs');
+assertIncludes(readme, '多端口 authority 仍未覆盖', 'README hysteria2 multi-port docs');
+assertIncludes(readme, 'npx wrangler versions upload', 'README versions upload warning docs');
+assertIncludes(readme, 'no such table: admins', 'README D1 missing table docs');
+assertIncludes(readme, 'sqlite_master', 'README sqlite_master troubleshooting docs');
+assertIncludes(readme, '首次使用 5 分钟路径', 'README quickstart docs');
+assertIncludes(readme, '抓取并预览', 'README node preview action docs');
+assertIncludes(readme, 'branch preview / non-production build', 'README preview build docs');
+assertIncludes(readme, '节点协议示例库', 'README protocol examples docs');
+assertIncludes(readme, '导入成功但订阅没变化排障指南', 'README node troubleshooting docs');
+assertIncludes(readme, 'API参考与接口约定', 'README api reference docs');
+assertIncludes(readme, '节点字段字典', 'README node field dictionary docs');
+assertIncludes(readme, '常见错误与返回语义', 'README common error docs');
+assertIncludes(readme, '发布前检查清单', 'README release checklist docs');
 
 const deployGuide = readFileSync('docs/部署指南.md', 'utf8');
 assertIncludes(deployGuide, 'wrangler@4.45.0+', 'deploy guide wrangler version docs');
 assertIncludes(deployGuide, 'npm run build', 'deploy guide build docs');
 assertIncludes(deployGuide, 'npm run deploy', 'deploy guide deploy docs');
 assertIncludes(deployGuide, 'npm run db:migrations:apply:local', 'deploy guide local migration docs');
+assertIncludes(deployGuide, 'npm run db:migrations:apply', 'deploy guide remote migration docs');
 assertIncludes(deployGuide, 'npm run dev:worker', 'deploy guide worker dev docs');
 assertIncludes(deployGuide, 'npm run dev:web', 'deploy guide web dev docs');
 assertIncludes(deployGuide, 'npm run test:smoke', 'deploy guide smoke docs');
+assertIncludes(deployGuide, 'npx wrangler versions upload', 'deploy guide versions upload warning docs');
+assertIncludes(deployGuide, 'no such table: admins', 'deploy guide D1 missing table docs');
+assertIncludes(deployGuide, 'SQL Console', 'deploy guide console docs');
+assertIncludes(deployGuide, 'sqlite_master', 'deploy guide sqlite_master docs');
+assertIncludes(deployGuide, '加载安装状态', 'deploy guide setup loading docs');
+assertIncludes(deployGuide, '001_init.sql', 'deploy guide init migration docs');
+assertIncludes(deployGuide, '002_admin_session_revocation.sql', 'deploy guide follow-up migration docs');
+assertIncludes(deployGuide, 'Explore data', 'deploy guide explore data warning docs');
+assertIncludes(deployGuide, 'Preview 构建要不要先开', 'deploy guide preview env docs');
+assertIncludes(deployGuide, '`hy2://`', 'deploy guide hy2 alias docs');
+assertIncludes(deployGuide, 'cipher` / `password` / `plugin`', 'deploy guide ss guide scope docs');
+assertIncludes(deployGuide, '多端口 authority 也还没覆盖', 'deploy guide hysteria2 multi-port docs');
+assertIncludes(deployGuide, '是否完成用户绑定', 'deploy guide subscription troubleshooting docs');
+assertIncludes(deployGuide, '节点协议示例库.md', 'deploy guide protocol examples link docs');
+assertIncludes(deployGuide, '导入成功但订阅没变化排障指南.md', 'deploy guide troubleshooting link docs');
+assertIncludes(deployGuide, '文档导航与阅读顺序.md', 'deploy guide docs navigation link docs');
+assertIncludes(deployGuide, 'API参考与接口约定.md', 'deploy guide api reference link docs');
+assertIncludes(deployGuide, '节点字段字典.md', 'deploy guide node field dictionary link docs');
+assertIncludes(deployGuide, '常见错误与返回语义.md', 'deploy guide common error link docs');
+assertIncludes(deployGuide, '发布前检查清单.md', 'deploy guide release checklist link docs');
 
 const automationPlan = readFileSync('docs/自动化验证与CI计划.md', 'utf8');
 assertIncludes(automationPlan, 'npm test', 'automation plan test command docs');
 assertIncludes(automationPlan, 'GitHub Actions', 'automation plan ci docs');
+assertIncludes(automationPlan, '第二十二批自动化验证执行清单.md', 'automation plan twenty-second batch docs');
+assertIncludes(automationPlan, '第二十三批自动化验证执行清单.md', 'automation plan twenty-third batch docs');
+assertIncludes(automationPlan, '第二十五批自动化验证执行清单.md', 'automation plan twenty-fifth batch docs');
+assertIncludes(automationPlan, '第二十六批自动化验证执行清单.md', 'automation plan twenty-sixth batch docs');
+assertIncludes(automationPlan, '长链路回归', 'automation plan long-chain regression docs');
+
+const implementationPlan = readFileSync('docs/实施方案.md', 'utf8');
+assertIncludes(implementationPlan, '`hysteria2://` / `hy2://`', 'implementation plan hysteria2 import docs');
+assertIncludes(implementationPlan, '`cipher` / `password` / `plugin`', 'implementation plan ss guide scope docs');
+assertIncludes(implementationPlan, '是否已绑定用户', 'implementation plan subscription troubleshooting docs');
+
+const knownIssues = readFileSync('docs/已知问题与修复计划.md', 'utf8');
+assertIncludes(knownIssues, 'docs/第二十二批自动化验证执行清单.md', 'known issues twenty-second batch docs');
+assertIncludes(knownIssues, 'docs/第二十三批自动化验证执行清单.md', 'known issues twenty-third batch docs');
+assertIncludes(knownIssues, 'docs/第二十五批自动化验证执行清单.md', 'known issues twenty-fifth batch docs');
+assertIncludes(knownIssues, 'docs/第二十六批自动化验证执行清单.md', 'known issues twenty-sixth batch docs');
+assertIncludes(knownIssues, '协议级字段校验补强', 'known issues protocol validation docs');
+assertIncludes(knownIssues, '长链路回归', 'known issues long-chain regression docs');
+
+const protocolExamples = readFileSync('docs/节点协议示例库.md', 'utf8');
+assertIncludes(protocolExamples, '分享链接示例', 'protocol examples share-link docs');
+assertIncludes(protocolExamples, '`hysteria2`', 'protocol examples hysteria2 docs');
+assertIncludes(protocolExamples, '结构化字段示例', 'protocol examples structured docs');
+assertIncludes(protocolExamples, '常见报错对照', 'protocol examples error glossary docs');
+assertIncludes(protocolExamples, 'hysteria2 节点当前仅支持 params.obfs = "salamander"', 'protocol examples hysteria2 error docs');
+
+const nodeTroubleshooting = readFileSync('docs/导入成功但订阅没变化排障指南.md', 'utf8');
+assertIncludes(nodeTroubleshooting, '用户”页是否真的完成绑定', 'node troubleshooting binding docs');
+assertIncludes(nodeTroubleshooting, '/s/:token/mihomo', 'node troubleshooting public subscription docs');
+assertIncludes(nodeTroubleshooting, '未知 query 参数会直接报 unsupported', 'node troubleshooting unsupported docs');
+assertIncludes(nodeTroubleshooting, '预览有变化但公开订阅没变化', 'node troubleshooting preview-public branch docs');
+assertIncludes(nodeTroubleshooting, '客户端或浏览器是否缓存了旧内容', 'node troubleshooting client cache docs');
 
 const secondBatchPlan = readFileSync('docs/第二批自动化验证执行清单.md', 'utf8');
 assertIncludes(secondBatchPlan, '缓存失效 helper', 'second batch plan cache scope');
@@ -165,6 +240,172 @@ const thirteenthBatchPlan = readFileSync('docs/第十三批自动化验证执行
 assertIncludes(thirteenthBatchPlan, '禁用中的默认模板不会继续保留默认标记', 'thirteenth batch plan invariant scope');
 assertIncludes(thirteenthBatchPlan, 'PATCH /api/templates/:id', 'thirteenth batch plan patch scope');
 
+const nodeUsageGuide = readFileSync('docs/节点管理与订阅使用说明.md', 'utf8');
+assertIncludes(nodeUsageGuide, '当前仓库中的节点管理能力以“手动录入 + 分享链接导入 + 订阅 URL 远程预览导入” 为主', 'node usage guide manual scope');
+assertIncludes(nodeUsageGuide, '当前支持的是“一次性导入预览”', 'node usage guide import limitation');
+assertIncludes(nodeUsageGuide, 'Base64 包装订阅文本', 'node usage guide base64 import docs');
+assertIncludes(nodeUsageGuide, '`ss://`', 'node usage guide ss import docs');
+assertIncludes(nodeUsageGuide, '`hysteria2://`', 'node usage guide hysteria2 import docs');
+assertIncludes(nodeUsageGuide, '协议都支持了吗', 'node usage guide protocol faq docs');
+assertIncludes(nodeUsageGuide, '后台实际点按顺序', 'node usage guide click path docs');
+assertIncludes(nodeUsageGuide, '模板', 'node usage guide template step docs');
+assertIncludes(nodeUsageGuide, '创建完成后应该看到什么', 'node usage guide expected result docs');
+assertIncludes(nodeUsageGuide, '结构化字段和 JSON 以哪个为准', 'node usage guide guided sync docs');
+assertIncludes(nodeUsageGuide, '抓取并预览', 'node usage guide preview action docs');
+assertIncludes(nodeUsageGuide, '文档导航与阅读顺序.md', 'node usage guide docs navigation link docs');
+assertIncludes(nodeUsageGuide, '批量创建 N 个节点', 'node usage guide batch import docs');
+assertIncludes(nodeUsageGuide, '远程来源', 'node usage guide remote summary docs');
+assertIncludes(nodeUsageGuide, 'Clash / sing-box 全量配置', 'node usage guide unsupported config docs');
+assertIncludes(nodeUsageGuide, '修改 `vless` / `trojan` / `vmess` / `ss` / `hysteria2` 协议向导', 'node usage guide guided sync docs');
+assertIncludes(nodeUsageGuide, '当前向导与导入的实际映射', 'node usage guide protocol mapping docs');
+assertIncludes(nodeUsageGuide, 'authority 里的多端口写法当前还不支持', 'node usage guide hysteria2 multi-port docs');
+assertIncludes(nodeUsageGuide, 'API参考与接口约定.md', 'node usage guide api reference link docs');
+assertIncludes(nodeUsageGuide, '节点字段字典.md', 'node usage guide node field dictionary link docs');
+assertIncludes(nodeUsageGuide, '常见错误与返回语义.md', 'node usage guide common error link docs');
+assertIncludes(nodeUsageGuide, '发布前检查清单.md', 'node usage guide release checklist link docs');
+
+const protocolMatrix = readFileSync('docs/协议支持矩阵与落地计划.md', 'utf8');
+assertIncludes(protocolMatrix, '当前协议支持矩阵', 'protocol matrix current support docs');
+assertIncludes(protocolMatrix, '`hysteria2`', 'protocol matrix hysteria2 docs');
+assertIncludes(protocolMatrix, '结构化协议向导', 'protocol matrix guided scope docs');
+assertIncludes(protocolMatrix, '推荐的下一阶段顺序', 'protocol matrix roadmap docs');
+assertIncludes(protocolMatrix, '后续补协议时的落地清单', 'protocol matrix landing checklist docs');
+assertIncludes(protocolMatrix, '第二十二批自动化验证执行清单.md', 'protocol matrix twenty-second batch docs');
+assertIncludes(protocolMatrix, 'packages/core/src/node-import.ts', 'protocol matrix parser touchpoint docs');
+assertIncludes(protocolMatrix, '文档写法约束', 'protocol matrix wording rules docs');
+assertIncludes(protocolMatrix, '| `ss` | 支持 | 支持 | 支持 | 支持 | 支持 |', 'protocol matrix ss all-layer docs');
+assertIncludes(protocolMatrix, '| `hysteria2` | 支持 | 支持 | 支持 | 支持 | 支持 |', 'protocol matrix hysteria2 all-layer docs');
+assertIncludes(protocolMatrix, '当前已知细粒度限制', 'protocol matrix protocol caveat docs');
+assertIncludes(protocolMatrix, '多端口写法当前还不支持', 'protocol matrix hysteria2 multi-port docs');
+
+const fourteenthBatchPlan = readFileSync('docs/第十四批自动化验证执行清单.md', 'utf8');
+assertIncludes(fourteenthBatchPlan, '节点管理可用性补强', 'fourteenth batch plan node usability scope');
+assertIncludes(fourteenthBatchPlan, 'credentials', 'fourteenth batch plan metadata scope');
+
+const fifteenthBatchPlan = readFileSync('docs/第十五批自动化验证执行清单.md', 'utf8');
+assertIncludes(fifteenthBatchPlan, '节点协议向导补强', 'fifteenth batch plan node guided scope');
+assertIncludes(fifteenthBatchPlan, 'vless', 'fifteenth batch plan protocol scope');
+
+const sixteenthBatchPlan = readFileSync('docs/第十六批自动化验证执行清单.md', 'utf8');
+assertIncludes(sixteenthBatchPlan, '分享链接导入补强', 'sixteenth batch plan node import scope');
+assertIncludes(sixteenthBatchPlan, 'vmess://', 'sixteenth batch plan vmess scope');
+
+const seventeenthBatchPlan = readFileSync('docs/第十七批自动化验证执行清单.md', 'utf8');
+assertIncludes(seventeenthBatchPlan, '订阅 URL 远程抓取预览导入', 'seventeenth batch plan remote import scope');
+assertIncludes(seventeenthBatchPlan, 'node-import/preview', 'seventeenth batch plan route scope');
+
+const eighteenthBatchPlan = readFileSync('docs/第十八批自动化验证执行清单.md', 'utf8');
+assertIncludes(eighteenthBatchPlan, 'Base64 订阅文本解包补强', 'eighteenth batch plan base64 import scope');
+assertIncludes(eighteenthBatchPlan, 'base64_text', 'eighteenth batch plan encoding scope');
+
+const nineteenthBatchPlan = readFileSync('docs/第十九批自动化验证执行清单.md', 'utf8');
+assertIncludes(nineteenthBatchPlan, '`ss://` 分享链接导入补强', 'nineteenth batch plan ss import scope');
+assertIncludes(nineteenthBatchPlan, '`ss://`', 'nineteenth batch plan protocol scope');
+
+const twentiethBatchPlan = readFileSync('docs/第二十批自动化验证执行清单.md', 'utf8');
+assertIncludes(twentiethBatchPlan, '协议支持矩阵与落地路线文档补强', 'twentieth batch plan docs scope');
+assertIncludes(twentiethBatchPlan, '协议支持矩阵', 'twentieth batch plan matrix scope');
+
+const twentyFirstBatchPlan = readFileSync('docs/第二十一批自动化验证执行清单.md', 'utf8');
+assertIncludes(twentyFirstBatchPlan, '`ss` 向导与 `hysteria2` 导入文档细化', 'twenty-first batch plan docs scope');
+assertIncludes(twentyFirstBatchPlan, '字段映射', 'twenty-first batch plan mapping scope');
+assertIncludes(twentyFirstBatchPlan, '多端口', 'twenty-first batch plan multi-port scope');
+
+const twentySecondBatchPlan = readFileSync('docs/第二十二批自动化验证执行清单.md', 'utf8');
+assertIncludes(twentySecondBatchPlan, '实际落地结果', 'twenty-second batch plan docs scope');
+assertIncludes(twentySecondBatchPlan, '`hysteria2` 结构化协议向导', 'twenty-second batch plan hysteria2 guide scope');
+assertIncludes(twentySecondBatchPlan, '协议级字段校验', 'twenty-second batch plan protocol validation scope');
+assertIncludes(twentySecondBatchPlan, '节点协议示例库', 'twenty-second batch plan example library scope');
+assertIncludes(twentySecondBatchPlan, '长链路回归', 'twenty-second batch plan long-chain regression scope');
+assertIncludes(twentySecondBatchPlan, '排障指南', 'twenty-second batch plan troubleshooting scope');
+
+const twentyThirdBatchPlan = readFileSync('docs/第二十三批自动化验证执行清单.md', 'utf8');
+assertIncludes(twentyThirdBatchPlan, '文档增强结果', 'twenty-third batch plan docs scope');
+assertIncludes(twentyThirdBatchPlan, '常见报错对照', 'twenty-third batch plan error glossary scope');
+assertIncludes(twentyThirdBatchPlan, '预览有变化但公开订阅没变化', 'twenty-third batch plan preview-public scope');
+assertIncludes(twentyThirdBatchPlan, '部署指南', 'twenty-third batch plan deploy guide scope');
+
+const twentyFourthBatchPlan = readFileSync('docs/第二十四批自动化验证执行清单.md', 'utf8');
+assertIncludes(twentyFourthBatchPlan, '文档入口优化结果', 'twenty-fourth batch plan docs scope');
+assertIncludes(twentyFourthBatchPlan, '统一文档导航页', 'twenty-fourth batch plan navigation scope');
+assertIncludes(twentyFourthBatchPlan, 'README', 'twenty-fourth batch plan readme scope');
+assertIncludes(twentyFourthBatchPlan, 'smoke', 'twenty-fourth batch plan smoke scope');
+
+const twentyFifthBatchPlan = readFileSync('docs/第二十五批自动化验证执行清单.md', 'utf8');
+assertIncludes(twentyFifthBatchPlan, 'API参考与接口约定.md', 'twenty-fifth batch plan api scope');
+assertIncludes(twentyFifthBatchPlan, '节点字段字典.md', 'twenty-fifth batch plan field dictionary scope');
+assertIncludes(twentyFifthBatchPlan, '常见错误与返回语义.md', 'twenty-fifth batch plan error semantics scope');
+assertIncludes(twentyFifthBatchPlan, '开发 / 运维 / 运营', 'twenty-fifth batch plan role-based navigation scope');
+assertIncludes(twentyFifthBatchPlan, 'smoke', 'twenty-fifth batch plan smoke scope');
+
+const twentySixthBatchPlan = readFileSync('docs/第二十六批自动化验证执行清单.md', 'utf8');
+assertIncludes(twentySixthBatchPlan, '状态码速查', 'twenty-sixth batch plan status code scope');
+assertIncludes(twentySixthBatchPlan, '完整请求 / 响应示例', 'twenty-sixth batch plan api examples scope');
+assertIncludes(twentySixthBatchPlan, '`ss` / `hysteria2` 导入字段映射表', 'twenty-sixth batch plan field mapping scope');
+assertIncludes(twentySixthBatchPlan, '发布前检查清单.md', 'twenty-sixth batch plan release checklist scope');
+assertIncludes(twentySixthBatchPlan, 'smoke', 'twenty-sixth batch plan smoke scope');
+
+const apiReference = readFileSync('docs/API参考与接口约定.md', 'utf8');
+assertIncludes(apiReference, '统一约定', 'api reference conventions docs');
+assertIncludes(apiReference, '按资源分组的状态码速查', 'api reference status code table docs');
+assertIncludes(apiReference, 'GET /api/setup/status', 'api reference setup status route');
+assertIncludes(apiReference, 'POST /api/node-import/preview', 'api reference node import preview route');
+assertIncludes(apiReference, '完整请求 / 响应示例', 'api reference full example docs');
+assertIncludes(apiReference, 'POST /api/nodes', 'api reference create node route');
+assertIncludes(apiReference, 'GET /s/:token/:target', 'api reference public subscription route');
+assertIncludes(apiReference, '整组替换', 'api reference replace binding semantics');
+
+const nodeFieldDictionary = readFileSync('docs/节点字段字典.md', 'utf8');
+assertIncludes(nodeFieldDictionary, '节点统一结构', 'node field dictionary structure docs');
+assertIncludes(nodeFieldDictionary, 'credentials', 'node field dictionary credentials docs');
+assertIncludes(nodeFieldDictionary, 'params', 'node field dictionary params docs');
+assertIncludes(nodeFieldDictionary, '导入字段 -> 最终 metadata 对照', 'node field dictionary mapping table docs');
+assertIncludes(nodeFieldDictionary, '`ss` 导入字段 -> 最终 metadata 对照', 'node field dictionary ss mapping docs');
+assertIncludes(nodeFieldDictionary, '`hysteria2` / `hy2` 导入字段 -> 最终 metadata 对照', 'node field dictionary hysteria2 mapping docs');
+assertIncludes(nodeFieldDictionary, '`hy2` 会归一化为 `hysteria2`', 'node field dictionary hy2 canonicalization docs');
+assertIncludes(nodeFieldDictionary, 'authority 里的多端口写法当前还不支持', 'node field dictionary hysteria2 multi-port docs');
+
+const commonErrors = readFileSync('docs/常见错误与返回语义.md', 'utf8');
+assertIncludes(commonErrors, 'AppErrorShape', 'common errors app error shape docs');
+assertIncludes(commonErrors, '看到这个错误先去看哪份文档', 'common errors doc routing docs');
+assertIncludes(commonErrors, 'missing bearer token', 'common errors auth docs');
+assertIncludes(commonErrors, 'remote sourceType is not supported yet', 'common errors node source docs');
+assertIncludes(commonErrors, '容易误解的成功语义', 'common errors success semantics docs');
+assertIncludes(commonErrors, 'GET /s/:token/:target', 'common errors public subscription docs');
+assertIncludes(commonErrors, 'docs/发布前检查清单.md', 'common errors release checklist link docs');
+
+const releaseChecklist = readFileSync('docs/发布前检查清单.md', 'utf8');
+assertIncludes(releaseChecklist, 'GET /health', 'release checklist health docs');
+assertIncludes(releaseChecklist, 'POST /api/node-import/preview', 'release checklist import preview docs');
+assertIncludes(releaseChecklist, 'x-subforge-preview-cache: miss', 'release checklist preview cache docs');
+assertIncludes(releaseChecklist, 'x-subforge-cache: hit', 'release checklist subscription cache docs');
+assertIncludes(releaseChecklist, '最小发布通过口径', 'release checklist release gate docs');
+
+const docsNavigation = readFileSync('docs/文档导航与阅读顺序.md', 'utf8');
+assertIncludes(docsNavigation, '第一次接手这个项目应该看哪里', 'docs navigation onboarding docs');
+assertIncludes(docsNavigation, '按场景跳转', 'docs navigation scenario docs');
+assertIncludes(docsNavigation, '按角色阅读路径', 'docs navigation role-based docs');
+assertIncludes(docsNavigation, '开发者', 'docs navigation developer docs');
+assertIncludes(docsNavigation, '部署 / 运维', 'docs navigation ops docs');
+assertIncludes(docsNavigation, '运营 / 后台使用', 'docs navigation operator docs');
+assertIncludes(docsNavigation, '核心文档分工', 'docs navigation roles docs');
+assertIncludes(docsNavigation, 'docs/部署指南.md', 'docs navigation deploy link docs');
+assertIncludes(docsNavigation, 'docs/导入成功但订阅没变化排障指南.md', 'docs navigation troubleshooting link docs');
+assertIncludes(docsNavigation, 'docs/API参考与接口约定.md', 'docs navigation api reference link docs');
+assertIncludes(docsNavigation, 'docs/节点字段字典.md', 'docs navigation node field dictionary link docs');
+assertIncludes(docsNavigation, 'docs/常见错误与返回语义.md', 'docs navigation common error link docs');
+assertIncludes(docsNavigation, 'docs/发布前检查清单.md', 'docs navigation release checklist link docs');
+
+const roadmap = readFileSync('.omx/plans/2026-03-07-subforge-roadmap.md', 'utf8');
+assertIncludes(roadmap, 'docs/第二十二批自动化验证执行清单.md', 'roadmap twenty-second batch docs');
+assertIncludes(roadmap, 'docs/第二十三批自动化验证执行清单.md', 'roadmap twenty-third batch docs');
+assertIncludes(roadmap, 'docs/第二十四批自动化验证执行清单.md', 'roadmap twenty-fourth batch docs');
+assertIncludes(roadmap, 'docs/第二十五批自动化验证执行清单.md', 'roadmap twenty-fifth batch docs');
+assertIncludes(roadmap, 'docs/第二十六批自动化验证执行清单.md', 'roadmap twenty-sixth batch docs');
+assertIncludes(roadmap, '协议级校验', 'roadmap protocol validation docs');
+assertIncludes(roadmap, '独立排障文档', 'roadmap troubleshooting docs');
+assertIncludes(roadmap, '发布前检查清单', 'roadmap release checklist docs');
+
 const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8');
 assertIncludes(ciWorkflow, 'npm ci', 'ci install step');
 assertIncludes(ciWorkflow, 'npm run typecheck', 'ci typecheck step');
@@ -186,6 +427,7 @@ assertIncludes(workerIndex, 'handleSetupBootstrap', 'worker setup bootstrap hand
 assertIncludes(workerIndex, 'admin session has been revoked', 'worker revoked-session guard');
 assertIncludes(workerIndex, "mode: 'server_revoked'", 'worker logout response mode');
 assertIncludes(workerIndex, 'remote sourceType is not supported yet', 'worker node source validation');
+assertIncludes(workerIndex, 'handleNodeImportPreview', 'worker node import preview handler');
 assertIncludes(workerIndex, 'must be a JSON object or null', 'worker node metadata validation message');
 assertIncludes(workerIndex, 'readNullableObjectField', 'worker node metadata validation helper');
 assertIncludes(workerIndex, 'default template must be enabled', 'worker template default-state validation');

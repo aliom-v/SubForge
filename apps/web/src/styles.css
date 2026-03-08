@@ -152,6 +152,13 @@ h2 {
   align-items: start;
 }
 
+.metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 16px 0 12px;
+}
+
 .full-width {
   grid-column: 1 / -1;
 }
@@ -246,6 +253,56 @@ h2 {
   line-height: 1.7;
 }
 
+.protocol-assistant {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(124, 184, 255, 0.12);
+  background: rgba(124, 184, 255, 0.06);
+}
+
+.assistant-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(47, 129, 247, 0.18);
+  color: #dbeeff;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.assistant-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.assistant-checkbox {
+  align-self: end;
+  min-height: 48px;
+  padding: 0 4px;
+}
+
+.import-errors {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 107, 107, 0.16);
+  background: rgba(255, 107, 107, 0.08);
+  color: #ffd0d0;
+}
+
 .overview-list {
   margin: 0;
   padding-left: 18px;
@@ -326,6 +383,11 @@ pre {
   border-radius: 14px;
   background: rgba(124, 184, 255, 0.08);
   color: #ddecfb;
+}
+
+.result-card strong {
+  font-size: 14px;
+  color: #eef6ff;
 }
 
 .inline-actions {

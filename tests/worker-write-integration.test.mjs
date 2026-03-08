@@ -4,6 +4,7 @@ import { loadTsModule } from './helpers/load-ts-module.mjs';
 
 const { default: worker } = await loadTsModule('apps/worker/src/index.ts');
 const { signAdminSessionToken } = await loadTsModule('apps/worker/src/security.ts');
+const { parseNodeShareLink } = await loadTsModule('packages/core/src/node-import.ts');
 
 class MockPreparedStatement {
   constructor(db, sql) {
@@ -210,6 +211,26 @@ class MockDatabase {
         node_id: nodeId,
         enabled,
         created_at: createdAt
+      });
+      return { success: true };
+    }
+
+    if (sql.startsWith('INSERT INTO nodes')) {
+      const [id, name, protocol, server, port, credentialsJson, paramsJson, sourceType, sourceId, enabled, lastSyncAt, createdAt, updatedAt] = bindings;
+      this.nodes.set(id, {
+        id,
+        name,
+        protocol,
+        server,
+        port,
+        credentials_json: credentialsJson,
+        params_json: paramsJson,
+        source_type: sourceType,
+        source_id: sourceId,
+        enabled,
+        last_sync_at: lastSyncAt,
+        created_at: createdAt,
+        updated_at: updatedAt
       });
       return { success: true };
     }
@@ -487,6 +508,41 @@ async function requestPreview(env, adminToken, userId = 'usr_demo') {
   );
 }
 
+async function createNodeFromShareLink(env, adminToken, shareLink) {
+  const importedNode = parseNodeShareLink(shareLink);
+
+  return requestJson(
+    'http://127.0.0.1:8787/api/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: importedNode.name,
+        protocol: importedNode.protocol,
+        server: importedNode.server,
+        port: importedNode.port,
+        credentials: importedNode.credentials,
+        params: importedNode.params
+      })
+    },
+    env
+  );
+}
+
+async function withMockFetch(handler, callback) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = handler;
+
+  try {
+    await callback();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 async function createAdminToken(env) {
   const admin = [...env.DB.admins.values()][0];
   return signAdminSessionToken(
@@ -517,6 +573,163 @@ function captureWriteState(db) {
     auditLogs: db.auditLogs.length
   };
 }
+
+test('previewing node import from subscription URL fetches content, parses nodes, and writes audit log', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const ssUserInfo = Buffer.from('aes-256-gcm:passw0rd', 'utf8').toString('base64');
+
+  await withMockFetch(
+    async () =>
+      new Response(
+        [
+          'vless://11111111-1111-1111-1111-111111111111@hk.example.com:443?security=tls&type=ws#HK',
+          `ss://${ssUserInfo}@ss.example.com:8388#SS`,
+          'trojan://replace-me@jp.example.com:443?sni=sub.example.com#JP',
+          'hysteria2://replace-me@hy2.example.com:8443?sni=sub.example.com#HY2'
+        ].join('\n'),
+        { status: 200 }
+      ),
+    async () => {
+      const { response, payload } = await requestJson(
+        'http://127.0.0.1:8787/api/node-import/preview',
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${adminToken}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            sourceUrl: 'https://example.com/subscription.txt'
+          })
+        },
+        env
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.sourceUrl, 'https://example.com/subscription.txt');
+      assert.equal(payload.data.upstreamStatus, 200);
+      assert.equal(payload.data.lineCount, 4);
+      assert.equal(payload.data.nodes.length, 4);
+      assert.equal(payload.data.errors.length, 0);
+      assert.equal(payload.data.nodes[0].protocol, 'vless');
+      assert.equal(payload.data.nodes[1].protocol, 'ss');
+      assert.equal(payload.data.nodes[2].protocol, 'trojan');
+      assert.equal(payload.data.nodes[3].protocol, 'hysteria2');
+      assert.equal(db.auditLogs.length, 1);
+      assert.equal(auditAction(db.auditLogs[0]), 'node_import.preview');
+      assert.equal(parseAuditPayload(db.auditLogs[0]).sourceUrl, 'https://example.com/subscription.txt');
+      assert.equal(parseAuditPayload(db.auditLogs[0]).nodeCount, 4);
+      assert.equal(parseAuditPayload(db.auditLogs[0]).errorCount, 0);
+      assert.deepEqual(kv.deletedKeys, []);
+    }
+  );
+});
+
+test('previewing node import rejects invalid subscription URLs', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/node-import/preview',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        sourceUrl: 'ftp://example.com/subscription.txt'
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'sourceUrl must be a valid http/https URL');
+  assert.deepEqual(captureWriteState(db), initialState);
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
+test('previewing node import surfaces upstream fetch failures', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  await withMockFetch(
+    async () => new Response('bad gateway', { status: 502 }),
+    async () => {
+      const { response, payload } = await requestJson(
+        'http://127.0.0.1:8787/api/node-import/preview',
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${adminToken}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            sourceUrl: 'https://example.com/subscription.txt'
+          })
+        },
+        env
+      );
+
+      assert.equal(response.status, 400);
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'VALIDATION_FAILED');
+      assert.equal(payload.error.message, 'upstream returned 502');
+      assert.deepEqual(captureWriteState(db), initialState);
+      assert.deepEqual(kv.deletedKeys, []);
+    }
+  );
+});
+
+test('previewing node import auto-decodes base64 wrapped subscription responses', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const encodedSubscription = Buffer.from(
+    [
+      'vless://11111111-1111-1111-1111-111111111111@hk.example.com:443#HK',
+      'trojan://replace-me@jp.example.com:443?sni=sub.example.com#JP'
+    ].join('\n'),
+    'utf8'
+  ).toString('base64');
+
+  await withMockFetch(
+    async () => new Response(encodedSubscription, { status: 200 }),
+    async () => {
+      const { response, payload } = await requestJson(
+        'http://127.0.0.1:8787/api/node-import/preview',
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${adminToken}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            sourceUrl: 'https://example.com/base64-subscription.txt'
+          })
+        },
+        env
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.contentEncoding, 'base64_text');
+      assert.equal(payload.data.lineCount, 2);
+      assert.equal(payload.data.nodes.length, 2);
+      assert.equal(payload.data.errors.length, 0);
+      assert.equal(db.auditLogs.length, 1);
+      assert.equal(auditAction(db.auditLogs[0]), 'node_import.preview');
+      assert.equal(parseAuditPayload(db.auditLogs[0]).contentEncoding, 'base64_text');
+      assert.deepEqual(kv.deletedKeys, []);
+    }
+  );
+});
 
 test('creating a user rejects missing names', async () => {
   const { env, kv, db } = createEnv();
@@ -760,6 +973,123 @@ test('creating a node rejects non-object credentials payloads', async () => {
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'VALIDATION_FAILED');
   assert.equal(payload.error.message, 'credentials must be a JSON object or null');
+  assert.deepEqual(captureWriteState(db), initialState);
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
+test('creating a node accepts credentials and params objects', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'Manual VLESS Node',
+        protocol: 'vless',
+        server: 'vless.example.com',
+        port: 443,
+        credentials: {
+          uuid: '11111111-1111-1111-1111-111111111111'
+        },
+        params: {
+          tls: true,
+          network: 'ws'
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.name, 'Manual VLESS Node');
+  assert.equal(payload.data.credentials.uuid, '11111111-1111-1111-1111-111111111111');
+  assert.equal(payload.data.params.network, 'ws');
+  assert.equal(db.nodes.size, 3);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'node.create');
+  assert.equal(parseAuditPayload(db.auditLogs[0]).name, 'Manual VLESS Node');
+  assert.equal(parseAuditPayload(db.auditLogs[0]).protocol, 'vless');
+  const createdNode = [...db.nodes.values()].find((node) => node.name === 'Manual VLESS Node');
+  assert.ok(createdNode);
+  assert.equal(createdNode.credentials_json, JSON.stringify({ uuid: '11111111-1111-1111-1111-111111111111' }));
+  assert.equal(createdNode.params_json, JSON.stringify({ tls: true, network: 'ws' }));
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
+test('creating a node rejects ss metadata that misses password', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'Broken SS Node',
+        protocol: 'ss',
+        server: 'ss.example.com',
+        port: 8388,
+        credentials: {
+          cipher: 'aes-256-gcm'
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'ss 节点需要 credentials.cipher 和 credentials.password');
+  assert.deepEqual(captureWriteState(db), initialState);
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
+test('creating a node rejects hysteria2 metadata with unsupported obfs values', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'Broken HY2 Node',
+        protocol: 'hy2',
+        server: 'hy2.example.com',
+        port: 443,
+        credentials: {
+          password: 'replace-me'
+        },
+        params: {
+          obfs: 'shadowtls'
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'hysteria2 节点当前仅支持 params.obfs = "salamander"');
   assert.deepEqual(captureWriteState(db), initialState);
   assert.deepEqual(kv.deletedKeys, []);
 });
@@ -1262,6 +1592,71 @@ test('binding new nodes invalidates caches, writes audit log, and changes subseq
   assert.doesNotMatch(preview.payload.data.content, /HK Edge 01/);
 });
 
+test('share-link import -> create -> bind -> preview works for ss and hysteria2 nodes', async () => {
+  const { env, kv, db } = createEnv({
+    userNodeMap: [],
+    cacheEntries: [
+      ['sub:mihomo:tok_demo', 'cached'],
+      ['preview:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:singbox:tok_demo', 'cached'],
+      ['preview:singbox:usr_demo', '{"cached":true}']
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const ssCreate = await createNodeFromShareLink(
+    env,
+    adminToken,
+    'ss://YWVzLTI1Ni1nY206cGFzc3cwcmQ=@ss-01.example.com:8388?plugin=v2ray-plugin#SS%20Imported'
+  );
+  const hy2Create = await createNodeFromShareLink(
+    env,
+    adminToken,
+    'hysteria2://replace-me@hy2-01.example.com:8443?sni=sub.example.com&obfs=salamander&obfs-password=secret#HY2%20Imported'
+  );
+
+  assert.equal(ssCreate.response.status, 201);
+  assert.equal(ssCreate.payload.ok, true);
+  assert.equal(ssCreate.payload.data.protocol, 'ss');
+  assert.equal(hy2Create.response.status, 201);
+  assert.equal(hy2Create.payload.ok, true);
+  assert.equal(hy2Create.payload.data.protocol, 'hysteria2');
+
+  const bindResult = await requestJson(
+    'http://127.0.0.1:8787/api/users/usr_demo/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        nodeIds: [ssCreate.payload.data.id, hy2Create.payload.data.id]
+      })
+    },
+    env
+  );
+
+  assert.equal(bindResult.response.status, 200);
+  assert.equal(bindResult.payload.ok, true);
+  assert.deepEqual(bindResult.payload.data.nodeIds, [ssCreate.payload.data.id, hy2Create.payload.data.id]);
+  assert.deepEqual(kv.deletedKeys, [
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo',
+    'sub:singbox:tok_demo',
+    'preview:singbox:usr_demo'
+  ]);
+
+  const preview = await requestPreview(env, adminToken);
+  assert.equal(preview.response.status, 200);
+  assert.equal(preview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.match(preview.payload.data.content, /SS Imported/);
+  assert.match(preview.payload.data.content, /HY2 Imported/);
+  assert.match(preview.payload.data.content, /type: ss/);
+  assert.match(preview.payload.data.content, /type: hysteria2/);
+  assert.equal(db.userNodeMap.length, 2);
+});
+
 test('updating a node rejects invalid ports', async () => {
   const { env, kv, db } = createEnv();
   const adminToken = await createAdminToken(env);
@@ -1341,6 +1736,47 @@ test('updating a node rejects non-object params payloads', async () => {
   assert.equal(payload.error.code, 'VALIDATION_FAILED');
   assert.equal(payload.error.message, 'params must be a JSON object or null');
   assert.notEqual(db.nodes.get('node_hk_01').params_json, null);
+  assert.deepEqual(kv.deletedKeys, []);
+  assert.equal(db.auditLogs.length, 0);
+});
+
+test('updating a node rejects invalid hysteria2 metadata', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_hy2_01', {
+        name: 'HY2 Edge 01',
+        protocol: 'hysteria2',
+        server: 'hy2-01.example.com',
+        credentials_json: JSON.stringify({ password: 'replace-me' }),
+        params_json: JSON.stringify({ sni: 'sub.example.com' })
+      })
+    ],
+    userNodeMap: [{ id: 'unm_1', user_id: 'usr_demo', node_id: 'node_hy2_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/node_hy2_01',
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        params: {
+          insecure: 'true'
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'hysteria2 节点的 params.insecure 必须是布尔值');
+  assert.equal(db.nodes.get('node_hy2_01').params_json, JSON.stringify({ sni: 'sub.example.com' }));
   assert.deepEqual(kv.deletedKeys, []);
   assert.equal(db.auditLogs.length, 0);
 });
