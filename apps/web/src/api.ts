@@ -11,6 +11,8 @@ import type {
   UserRecord
 } from '@subforge/shared';
 
+import { WEB_API_ROUTES } from './api-routes.js';
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
 
 export interface AdminSession {
@@ -72,6 +74,36 @@ export interface LogoutPayload {
   revokedAt?: string;
 }
 
+export interface CacheRebuildPayload {
+  userCount: number;
+  targets: SubscriptionTarget[];
+  keysRequested: number;
+  rebuiltAt: string;
+}
+
+export interface NodeImportInput {
+  name: string;
+  protocol: string;
+  server: string;
+  port: number;
+  enabled?: boolean;
+  credentials?: Record<string, unknown>;
+  params?: Record<string, unknown>;
+}
+
+export interface NodeImportPayload {
+  importedCount: number;
+  importedAt: string;
+  sourceType?: NodeRecord['sourceType'];
+  sourceId?: string | null;
+  createdCount?: number;
+  updatedCount?: number;
+  unchangedCount?: number;
+  duplicateCount?: number;
+  disabledCount?: number;
+  changed?: boolean;
+}
+
 interface SuccessEnvelope<T> {
   ok: true;
   data: T;
@@ -103,40 +135,44 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
 }
 
 export async function fetchSetupStatus(): Promise<SetupStatusPayload> {
-  return request('/api/setup/status', { method: 'GET' });
+  return request(WEB_API_ROUTES.fetchSetupStatus.buildPath(), { method: WEB_API_ROUTES.fetchSetupStatus.method });
 }
 
 export async function bootstrapSetup(username: string, password: string): Promise<SetupBootstrapPayload> {
-  return request('/api/setup/bootstrap', {
-    method: 'POST',
+  return request(WEB_API_ROUTES.bootstrapSetup.buildPath(), {
+    method: WEB_API_ROUTES.bootstrapSetup.method,
     body: JSON.stringify({ username, password })
   });
 }
 
 export async function login(username: string, password: string): Promise<{ token: string; admin: AdminSession }> {
-  return request('/api/admin/login', {
-    method: 'POST',
+  return request(WEB_API_ROUTES.login.buildPath(), {
+    method: WEB_API_ROUTES.login.method,
     body: JSON.stringify({ username, password })
   });
 }
 
 export async function logout(token: string): Promise<LogoutPayload> {
-  return request('/api/admin/logout', { method: 'POST' }, token);
+  return request(WEB_API_ROUTES.logout.buildPath(), { method: WEB_API_ROUTES.logout.method }, token);
 }
 
 export async function fetchMe(token: string): Promise<AdminSession> {
-  return request('/api/admin/me', { method: 'GET' }, token);
+  return request(WEB_API_ROUTES.fetchMe.buildPath(), { method: WEB_API_ROUTES.fetchMe.method }, token);
 }
 
 export async function fetchUsers(token: string): Promise<UserRecord[]> {
-  return request('/api/users', { method: 'GET' }, token);
+  return request(WEB_API_ROUTES.fetchUsers.buildPath(), { method: WEB_API_ROUTES.fetchUsers.method }, token);
 }
 
 export async function createUser(
   token: string,
   input: { name: string; remark?: string; expiresAt?: string }
 ): Promise<UserRecord> {
-  return request('/api/users', { method: 'POST', body: JSON.stringify(input) }, token);
+  return request(
+    WEB_API_ROUTES.createUser.buildPath(),
+    { method: WEB_API_ROUTES.createUser.method, body: JSON.stringify(input) },
+    token
+  );
 }
 
 export async function updateUser(
@@ -144,7 +180,11 @@ export async function updateUser(
   userId: string,
   input: { name?: string; status?: string; remark?: string; expiresAt?: string | null }
 ): Promise<UserRecord> {
-  return request(`/api/users/${userId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
+  return request(
+    WEB_API_ROUTES.updateUser.buildPath(userId),
+    { method: WEB_API_ROUTES.updateUser.method, body: JSON.stringify(input) },
+    token
+  );
 }
 
 export async function deleteUser(token: string, userId: string): Promise<{ deleted: true; userId: string }> {
@@ -152,11 +192,19 @@ export async function deleteUser(token: string, userId: string): Promise<{ delet
 }
 
 export async function resetUserToken(token: string, userId: string): Promise<UserRecord> {
-  return request(`/api/users/${userId}/reset-token`, { method: 'POST' }, token);
+  return request(
+    WEB_API_ROUTES.resetUserToken.buildPath(userId),
+    { method: WEB_API_ROUTES.resetUserToken.method },
+    token
+  );
 }
 
 export async function fetchUserNodeBindings(token: string, userId: string): Promise<UserNodeBinding[]> {
-  return request(`/api/users/${userId}/nodes`, { method: 'GET' }, token);
+  return request(
+    WEB_API_ROUTES.fetchUserNodeBindings.buildPath(userId),
+    { method: WEB_API_ROUTES.fetchUserNodeBindings.method },
+    token
+  );
 }
 
 export async function replaceUserNodeBindings(
@@ -165,9 +213,9 @@ export async function replaceUserNodeBindings(
   nodeIds: string[]
 ): Promise<{ userId: string; nodeIds: string[] }> {
   return request(
-    `/api/users/${userId}/nodes`,
+    WEB_API_ROUTES.replaceUserNodeBindings.buildPath(userId),
     {
-      method: 'POST',
+      method: WEB_API_ROUTES.replaceUserNodeBindings.method,
       body: JSON.stringify({ nodeIds })
     },
     token
@@ -175,7 +223,7 @@ export async function replaceUserNodeBindings(
 }
 
 export async function fetchNodes(token: string): Promise<NodeRecord[]> {
-  return request('/api/nodes', { method: 'GET' }, token);
+  return request(WEB_API_ROUTES.fetchNodes.buildPath(), { method: WEB_API_ROUTES.fetchNodes.method }, token);
 }
 
 export async function createNode(
@@ -189,7 +237,27 @@ export async function createNode(
     params?: Record<string, unknown> | null;
   }
 ): Promise<NodeRecord> {
-  return request('/api/nodes', { method: 'POST', body: JSON.stringify(input) }, token);
+  return request(
+    WEB_API_ROUTES.createNode.buildPath(),
+    { method: WEB_API_ROUTES.createNode.method, body: JSON.stringify(input) },
+    token
+  );
+}
+
+export async function importNodes(token: string, input: NodeImportInput[]): Promise<NodeImportPayload> {
+  return request(
+    WEB_API_ROUTES.importNodes.buildPath(),
+    { method: WEB_API_ROUTES.importNodes.method, body: JSON.stringify({ nodes: input }) },
+    token
+  );
+}
+
+export async function importRemoteNodes(token: string, sourceUrl: string): Promise<NodeImportPayload> {
+  return request(
+    WEB_API_ROUTES.importRemoteNodes.buildPath(),
+    { method: WEB_API_ROUTES.importRemoteNodes.method, body: JSON.stringify({ sourceUrl }) },
+    token
+  );
 }
 
 export async function previewNodeImportFromUrl(token: string, sourceUrl: string): Promise<NodeImportPreviewPayload> {
@@ -216,7 +284,11 @@ export async function updateNode(
     params?: Record<string, unknown> | null;
   }
 ): Promise<NodeRecord> {
-  return request(`/api/nodes/${nodeId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
+  return request(
+    WEB_API_ROUTES.updateNode.buildPath(nodeId),
+    { method: WEB_API_ROUTES.updateNode.method, body: JSON.stringify(input) },
+    token
+  );
 }
 
 export async function deleteNode(token: string, nodeId: string): Promise<{ deleted: true; nodeId: string }> {
@@ -224,14 +296,22 @@ export async function deleteNode(token: string, nodeId: string): Promise<{ delet
 }
 
 export async function fetchTemplates(token: string): Promise<TemplateRecord[]> {
-  return request('/api/templates', { method: 'GET' }, token);
+  return request(
+    WEB_API_ROUTES.fetchTemplates.buildPath(),
+    { method: WEB_API_ROUTES.fetchTemplates.method },
+    token
+  );
 }
 
 export async function createTemplate(
   token: string,
   input: { name: string; targetType: SubscriptionTarget; content: string; isDefault?: boolean }
 ): Promise<TemplateRecord> {
-  return request('/api/templates', { method: 'POST', body: JSON.stringify(input) }, token);
+  return request(
+    WEB_API_ROUTES.createTemplate.buildPath(),
+    { method: WEB_API_ROUTES.createTemplate.method, body: JSON.stringify(input) },
+    token
+  );
 }
 
 export async function updateTemplate(
@@ -239,7 +319,11 @@ export async function updateTemplate(
   templateId: string,
   input: { name?: string; content?: string; version?: number; enabled?: boolean; isDefault?: boolean }
 ): Promise<TemplateRecord> {
-  return request(`/api/templates/${templateId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
+  return request(
+    WEB_API_ROUTES.updateTemplate.buildPath(templateId),
+    { method: WEB_API_ROUTES.updateTemplate.method, body: JSON.stringify(input) },
+    token
+  );
 }
 
 export async function deleteTemplate(
@@ -250,18 +334,30 @@ export async function deleteTemplate(
 }
 
 export async function setDefaultTemplate(token: string, templateId: string): Promise<TemplateRecord> {
-  return request(`/api/templates/${templateId}/set-default`, { method: 'POST' }, token);
+  return request(
+    WEB_API_ROUTES.setDefaultTemplate.buildPath(templateId),
+    { method: WEB_API_ROUTES.setDefaultTemplate.method },
+    token
+  );
 }
 
 export async function fetchRuleSources(token: string): Promise<RuleSourceRecord[]> {
-  return request('/api/rule-sources', { method: 'GET' }, token);
+  return request(
+    WEB_API_ROUTES.fetchRuleSources.buildPath(),
+    { method: WEB_API_ROUTES.fetchRuleSources.method },
+    token
+  );
 }
 
 export async function createRuleSource(
   token: string,
   input: { name: string; sourceUrl: string; format: RuleSourceRecord['format'] }
 ): Promise<RuleSourceRecord> {
-  return request('/api/rule-sources', { method: 'POST', body: JSON.stringify(input) }, token);
+  return request(
+    WEB_API_ROUTES.createRuleSource.buildPath(),
+    { method: WEB_API_ROUTES.createRuleSource.method, body: JSON.stringify(input) },
+    token
+  );
 }
 
 export async function updateRuleSource(
@@ -269,7 +365,11 @@ export async function updateRuleSource(
   ruleSourceId: string,
   input: { name?: string; sourceUrl?: string; format?: RuleSourceRecord['format']; enabled?: boolean }
 ): Promise<RuleSourceRecord> {
-  return request(`/api/rule-sources/${ruleSourceId}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
+  return request(
+    WEB_API_ROUTES.updateRuleSource.buildPath(ruleSourceId),
+    { method: WEB_API_ROUTES.updateRuleSource.method, body: JSON.stringify(input) },
+    token
+  );
 }
 
 export async function deleteRuleSource(
@@ -280,15 +380,35 @@ export async function deleteRuleSource(
 }
 
 export async function syncRuleSource(token: string, ruleSourceId: string): Promise<RuleSourceSyncPayload> {
-  return request(`/api/rule-sources/${ruleSourceId}/sync`, { method: 'POST' }, token);
+  return request(
+    WEB_API_ROUTES.syncRuleSource.buildPath(ruleSourceId),
+    { method: WEB_API_ROUTES.syncRuleSource.method },
+    token
+  );
 }
 
 export async function fetchSyncLogs(token: string): Promise<SyncLogRecord[]> {
-  return request('/api/sync-logs', { method: 'GET' }, token);
+  return request(
+    WEB_API_ROUTES.fetchSyncLogs.buildPath(),
+    { method: WEB_API_ROUTES.fetchSyncLogs.method },
+    token
+  );
 }
 
 export async function fetchAuditLogs(token: string): Promise<AuditLogRecord[]> {
-  return request('/api/audit-logs', { method: 'GET' }, token);
+  return request(
+    WEB_API_ROUTES.fetchAuditLogs.buildPath(),
+    { method: WEB_API_ROUTES.fetchAuditLogs.method },
+    token
+  );
+}
+
+export async function rebuildSubscriptionCaches(token: string): Promise<CacheRebuildPayload> {
+  return request(
+    WEB_API_ROUTES.rebuildSubscriptionCaches.buildPath(),
+    { method: WEB_API_ROUTES.rebuildSubscriptionCaches.method },
+    token
+  );
 }
 
 export async function fetchPreview(
@@ -296,5 +416,9 @@ export async function fetchPreview(
   userId: string,
   target: SubscriptionTarget
 ): Promise<PreviewPayload> {
-  return request(`/api/preview/${userId}/${target}`, { method: 'GET' }, token);
+  return request(
+    WEB_API_ROUTES.fetchPreview.buildPath(userId, target),
+    { method: WEB_API_ROUTES.fetchPreview.method },
+    token
+  );
 }

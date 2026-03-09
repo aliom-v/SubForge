@@ -9,6 +9,13 @@ export interface UserCacheRef {
   token: string;
 }
 
+export interface CacheRebuildResult {
+  userCount: number;
+  targets: SubscriptionTarget[];
+  keysRequested: number;
+  rebuiltAt: string;
+}
+
 function getTargets(targets?: SubscriptionTarget[]): SubscriptionTarget[] {
   return targets && targets.length > 0 ? targets : allTargets;
 }
@@ -40,6 +47,23 @@ export async function invalidateUsersCaches(
 export async function invalidateAllUserCaches(env: Env, targets?: SubscriptionTarget[]): Promise<void> {
   const users = await listUserCacheRefs(env.DB);
   await invalidateUsersCaches(env, users, targets);
+}
+
+export async function rebuildSubscriptionCaches(
+  env: Env,
+  targets?: SubscriptionTarget[]
+): Promise<CacheRebuildResult> {
+  const users = await listUserCacheRefs(env.DB);
+  const activeTargets = getTargets(targets);
+
+  await invalidateUsersCaches(env, users, activeTargets);
+
+  return {
+    userCount: users.length,
+    targets: [...activeTargets],
+    keysRequested: users.length * activeTargets.length * 2,
+    rebuiltAt: new Date().toISOString()
+  };
 }
 
 export async function invalidateNodeAffectedCaches(

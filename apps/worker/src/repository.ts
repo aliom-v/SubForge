@@ -1,15 +1,16 @@
 import type {
-  AuditLogRecord,
-  JsonValue,
+  NodeSourceType,
   RuleSourceFormat,
   RuleSourceRecord,
   SubscriptionTarget,
   SyncLogRecord,
   TemplateRecord,
   UserNodeBinding,
-  UserRecord,
   NodeRecord,
-  AdminRecord
+  AdminRecord,
+  AuditLogRecord,
+  JsonValue,
+  UserRecord
 } from '@subforge/shared';
 import type { SubscriptionCompileInput, SubscriptionNode, SubscriptionRuleSet, SubscriptionTemplate } from '@subforge/core';
 import { sanitizeAuditPayload } from './audit';
@@ -52,6 +53,54 @@ function parseJsonObject(value: unknown): Record<string, JsonValue> | undefined 
 
 function serializeJsonObject(value: Record<string, unknown> | null | undefined): string | null {
   return value == null ? null : JSON.stringify(value);
+}
+
+function readRecordString(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function mapAuditRequestMeta(payload?: Record<string, JsonValue> | null): AuditLogRecord['requestMeta'] | undefined {
+  if (!payload || typeof payload._request !== 'object' || payload._request === null || Array.isArray(payload._request)) {
+    return undefined;
+  }
+
+  const requestMeta = payload._request as Record<string, unknown>;
+  const ip = readRecordString(requestMeta, 'ip');
+  const country = readRecordString(requestMeta, 'country');
+  const colo = readRecordString(requestMeta, 'colo');
+  const userAgent = readRecordString(requestMeta, 'userAgent');
+  const method = readRecordString(requestMeta, 'method');
+  const path = readRecordString(requestMeta, 'path');
+  const rayId = readRecordString(requestMeta, 'rayId');
+
+  if (!ip && !country && !colo && !userAgent && !method && !path && !rayId) {
+    return undefined;
+  }
+
+  return {
+    ...(ip ? { ip } : {}),
+    ...(country ? { country } : {}),
+    ...(colo ? { colo } : {}),
+    ...(userAgent ? { userAgent } : {}),
+    ...(method ? { method } : {}),
+    ...(path ? { path } : {}),
+    ...(rayId ? { rayId } : {})
+  };
+}
+
+function readAuditTargetDisplayName(row: Row, payload?: Record<string, JsonValue> | null): string | null {
+  const joinedDisplayName = asNullableString(row.target_display_name);
+
+  if (joinedDisplayName) {
+    return joinedDisplayName;
+  }
+
+  if (!payload) {
+    return null;
+  }
+
+  return readRecordString(payload, 'name') ?? readRecordString(payload, 'sourceUrl');
 }
 
 function mapAdmin(row: Row): AdminRecord {
@@ -136,7 +185,7 @@ function mapRuleSource(row: Row): RuleSourceRecord {
     updatedAt: asString(row.updated_at),
     ...(lastSyncAt !== null ? { lastSyncAt } : {}),
     ...(lastSyncStatus !== null
-      ? { lastSyncStatus: lastSyncStatus as Exclude<RuleSourceRecord['lastSyncStatus'], undefined> }
+      ? { lastSyncStatus: lastSyncStatus as Exclude<RuleSourceRecord['lastSyncStatus'], null | undefined> }
       : {})
   };
 }
@@ -376,11 +425,12 @@ export async function createNode(
     protocol: string;
     server: string;
     port: number;
-    sourceType?: string | undefined;
-    sourceId?: string | null | undefined;
-    enabled?: boolean | undefined;
-    credentials?: Record<string, unknown> | null | undefined;
-    params?: Record<string, unknown> | null | undefined;
+    sourceType?: string;
+    sourceId?: string | null;
+    enabled?: boolean;
+    lastSyncAt?: string | null;
+    credentials?: Record<string, unknown> | null;
+    params?: Record<string, unknown> | null;
   }
 ): Promise<NodeRecord> {
   const id = createId('node');
@@ -401,7 +451,7 @@ export async function createNode(
       input.sourceType ?? 'manual',
       input.sourceId ?? null,
       input.enabled === false ? 0 : 1,
-      null,
+      input.lastSyncAt ?? null,
       now,
       now
     )
@@ -414,15 +464,16 @@ export async function updateNode(
   db: D1Database,
   id: string,
   input: {
-    name?: string | undefined;
-    protocol?: string | undefined;
-    server?: string | undefined;
-    port?: number | undefined;
-    sourceType?: string | undefined;
-    sourceId?: string | null | undefined;
-    enabled?: boolean | undefined;
-    credentials?: Record<string, unknown> | null | undefined;
-    params?: Record<string, unknown> | null | undefined;
+    name?: string;
+    protocol?: string;
+    server?: string;
+    port?: number;
+    sourceType?: string;
+    sourceId?: string | null;
+    enabled?: boolean;
+    lastSyncAt?: string | null;
+    credentials?: Record<string, unknown> | null;
+    params?: Record<string, unknown> | null;
   }
 ): Promise<NodeRecord | null> {
   const current = await getNodeById(db, id);
@@ -433,7 +484,7 @@ export async function updateNode(
 
   await db
     .prepare(
-      'UPDATE nodes SET name = ?, protocol = ?, server = ?, port = ?, credentials_json = ?, params_json = ?, source_type = ?, source_id = ?, enabled = ?, updated_at = ? WHERE id = ?'
+      'UPDATE nodes SET name = ?, protocol = ?, server = ?, port = ?, credentials_json = ?, params_json = ?, source_type = ?, source_id = ?, enabled = ?, last_sync_at = ?, updated_at = ? WHERE id = ?'
     )
     .bind(
       input.name ?? current.name,
@@ -445,6 +496,7 @@ export async function updateNode(
       input.sourceType ?? current.sourceType,
       'sourceId' in input ? (input.sourceId ?? null) : (current.sourceId ?? null),
       input.enabled === undefined ? (current.enabled ? 1 : 0) : input.enabled ? 1 : 0,
+      'lastSyncAt' in input ? (input.lastSyncAt ?? null) : (current.lastSyncAt ?? null),
       new Date().toISOString(),
       id
     )
@@ -462,6 +514,29 @@ export async function deleteNode(db: D1Database, id: string): Promise<boolean> {
 
   await db.prepare('DELETE FROM nodes WHERE id = ?').bind(id).run();
   return true;
+}
+
+export async function listNodesBySource(
+  db: D1Database,
+  sourceType: NodeSourceType,
+  sourceId?: string | null
+): Promise<NodeRecord[]> {
+  const rows =
+    sourceId === undefined
+      ? await all(db, 'SELECT * FROM nodes WHERE source_type = ? ORDER BY created_at DESC', [sourceType])
+      : sourceId === null
+        ? await all(
+            db,
+            'SELECT * FROM nodes WHERE source_type = ? AND source_id IS NULL ORDER BY created_at DESC',
+            [sourceType]
+          )
+        : await all(
+            db,
+            'SELECT * FROM nodes WHERE source_type = ? AND source_id = ? ORDER BY created_at DESC',
+            [sourceType, sourceId]
+          );
+
+  return rows.map(mapNode);
 }
 
 export async function listTemplates(db: D1Database): Promise<TemplateRecord[]> {
@@ -720,6 +795,29 @@ export async function recordRuleSourceSync(
   return getRuleSourceById(db, sourceId);
 }
 
+export async function recordNodeSourceSync(
+  db: D1Database,
+  sourceId: string,
+  status: SyncLogRecord['status'],
+  message: string,
+  details?: Record<string, unknown>
+): Promise<void> {
+  await db
+    .prepare(
+      'INSERT INTO sync_logs (id, source_type, source_id, status, message, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    )
+    .bind(
+      createId('sync'),
+      'node_source',
+      sourceId,
+      status,
+      message,
+      details ? JSON.stringify(details) : null,
+      new Date().toISOString()
+    )
+    .run();
+}
+
 export async function getSubscriptionCompileInputByToken(
   db: D1Database,
   token: string,
@@ -881,6 +979,8 @@ function mapAuditLog(row: Row): AuditLogRecord {
   const targetId = asNullableString(row.target_id);
   const payload = sanitizeAuditPayload(parseJsonObject(row.payload_json)) as AuditLogRecord['payload'];
   const actorAdminUsername = asNullableString(row.actor_admin_username);
+  const targetDisplayName = readAuditTargetDisplayName(row, payload);
+  const requestMeta = mapAuditRequestMeta(payload);
 
   return {
     id: asString(row.id),
@@ -890,6 +990,8 @@ function mapAuditLog(row: Row): AuditLogRecord {
     createdAt: asString(row.created_at),
     ...(actorAdminUsername !== null ? { actorAdminUsername } : {}),
     ...(targetId !== null ? { targetId } : {}),
+    ...(targetDisplayName !== null ? { targetDisplayName } : {}),
+    ...(requestMeta ? { requestMeta } : {}),
     ...(payload ? { payload } : {})
   };
 }
@@ -923,9 +1025,22 @@ export async function createAuditLog(
 export async function listAuditLogs(db: D1Database, limit = 50): Promise<AuditLogRecord[]> {
   const rows = await all(
     db,
-    `SELECT audit_logs.*, admins.username AS actor_admin_username
+    `SELECT
+       audit_logs.*,
+       admins.username AS actor_admin_username,
+       CASE
+         WHEN audit_logs.target_type = 'user' THEN users.name
+         WHEN audit_logs.target_type = 'node' THEN nodes.name
+         WHEN audit_logs.target_type = 'template' THEN templates.name
+         WHEN audit_logs.target_type = 'rule_source' THEN rule_sources.name
+         ELSE NULL
+       END AS target_display_name
      FROM audit_logs
      LEFT JOIN admins ON admins.id = audit_logs.actor_admin_id
+     LEFT JOIN users ON audit_logs.target_type = 'user' AND users.id = audit_logs.target_id
+     LEFT JOIN nodes ON audit_logs.target_type = 'node' AND nodes.id = audit_logs.target_id
+     LEFT JOIN templates ON audit_logs.target_type = 'template' AND templates.id = audit_logs.target_id
+     LEFT JOIN rule_sources ON audit_logs.target_type = 'rule_source' AND rule_sources.id = audit_logs.target_id
      ORDER BY audit_logs.created_at DESC
      LIMIT ?`,
     [limit]

@@ -20,3 +20,11 @@ export function buildRuleSnapshotCacheKey(sourceId: string): string {
 export function buildActiveRulesCacheKey(target: SubscriptionTarget): string {
   return `${CACHE_KEY_PREFIXES.ruleActive}:${target}`;
 }
+
+export function buildAdminLoginRateLimitKey(clientKey: string, username: string): string {
+  return `${CACHE_KEY_PREFIXES.adminLoginRateLimit}:${clientKey}:${username}`;
+}
+
+export function buildSubscriptionRateLimitKey(target: SubscriptionTarget, token: string, clientKey: string): string {
+  return `${CACHE_KEY_PREFIXES.subscriptionRateLimit}:${target}:${token}:${clientKey}`;
+}

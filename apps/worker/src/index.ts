@@ -16,8 +16,10 @@ import {
   RULE_SOURCE_FORMATS,
   SUBSCRIPTION_TARGETS,
   USER_STATUSES,
-  type NodeSourceType,
+  type AdminRecord,
   type AppErrorShape,
+  type JsonValue,
+  type NodeSourceType,
   type RuleSourceFormat,
   type SubscriptionTarget,
   type UserStatus
@@ -49,12 +51,14 @@ import {
   getUserByToken,
   listAuditLogs,
   listNodes,
+  listNodesBySource,
   listRuleSources,
   listSyncLogs,
   listTemplates,
   listUserNodeBindings,
   listUsers,
   listUsersByNodeId,
+  recordNodeSourceSync,
   replaceUserNodes,
   createAuditLog,
   resetUserToken,
@@ -65,8 +69,29 @@ import {
   updateUser
 } from './repository';
 import { hashPassword, signAdminSessionToken, verifyAdminSessionToken, verifyPassword } from './security';
-import { invalidateAllUserCaches, invalidateNodeAffectedCaches, invalidateUserCaches, invalidateUsersCaches } from './cache';
+import {
+  invalidateAllUserCaches,
+  invalidateNodeAffectedCaches,
+  invalidateUserCaches,
+  invalidateUsersCaches,
+  rebuildSubscriptionCaches
+} from './cache';
+import {
+  clearAdminLoginRateLimit,
+  consumeSubscriptionRateLimit,
+  peekAdminLoginRateLimit,
+  recordAdminLoginFailure,
+  type RateLimitDecision
+} from './rate-limit';
+import {
+  normalizeImportedNodes,
+  planNodeImport,
+  planRemoteNodeSync,
+  type ImportedNodeInput
+} from './node-source';
 import { fetchText, runEnabledRuleSourceSync, syncRuleSourceNow } from './sync';
+
+const NODE_IMPORT_LIMIT = 200;
 
 function isSubscriptionTarget(value: string): value is SubscriptionTarget {
   return SUBSCRIPTION_TARGETS.includes(value as SubscriptionTarget);
@@ -112,7 +137,7 @@ function isValidDateTime(value: string | null | undefined): boolean {
   return !value || !Number.isNaN(Date.parse(value));
 }
 
-function isValidHttpUrl(value: string | undefined): boolean {
+function isValidHttpUrl(value: string | undefined): value is string {
   if (!value) return false;
 
   try {
@@ -123,9 +148,176 @@ function isValidHttpUrl(value: string | undefined): boolean {
   }
 }
 
+function getRawNodeImportItems(body: unknown): unknown[] {
+  const rawNodes = Array.isArray(body) ? body : isRecord(body) && Array.isArray(body.nodes) ? body.nodes : null;
+
+  if (!rawNodes) {
+    throw createAppError('VALIDATION_FAILED', 'nodes must be a JSON array or an object containing a nodes array');
+  }
+
+  if (rawNodes.length === 0) {
+    throw createAppError('VALIDATION_FAILED', 'at least one node is required for import');
+  }
+
+  if (rawNodes.length > NODE_IMPORT_LIMIT) {
+    throw createAppError('VALIDATION_FAILED', `node import limit is ${NODE_IMPORT_LIMIT} items per request`);
+  }
+
+  return rawNodes;
+}
+
+function parseImportedNodeInputs(rawNodes: unknown[]): ImportedNodeInput[] {
+  const importedNodes: ImportedNodeInput[] = [];
+
+  for (const [index, item] of rawNodes.entries()) {
+    if (!isRecord(item)) {
+      throw createAppError('VALIDATION_FAILED', `node at index ${index} must be a JSON object`);
+    }
+
+    const name = asString(item.name);
+    const protocol = asString(item.protocol);
+    const server = asString(item.server);
+    const port = asNumber(item.port);
+
+    if (!name || !protocol || !server || !isValidPort(port)) {
+      throw createAppError(
+        'VALIDATION_FAILED',
+        `node at index ${index} must include valid name, protocol, server, and port fields`
+      );
+    }
+
+    if ('enabled' in item && asBoolean(item.enabled) === undefined) {
+      throw createAppError('VALIDATION_FAILED', `node at index ${index} has invalid enabled flag`);
+    }
+
+    if ('credentials' in item && item.credentials != null && !isRecord(item.credentials)) {
+      throw createAppError('VALIDATION_FAILED', `node at index ${index} has invalid credentials object`);
+    }
+
+    if ('params' in item && item.params != null && !isRecord(item.params)) {
+      throw createAppError('VALIDATION_FAILED', `node at index ${index} has invalid params object`);
+    }
+
+    importedNodes.push({
+      name,
+      protocol,
+      server,
+      port,
+      ...(asBoolean(item.enabled) !== undefined ? { enabled: asBoolean(item.enabled) } : {}),
+      ...(isRecord(item.credentials) ? { credentials: item.credentials as Record<string, JsonValue> } : {}),
+      ...(isRecord(item.params) ? { params: item.params as Record<string, JsonValue> } : {})
+    });
+  }
+
+  return importedNodes;
+}
+
+function buildNodeImportPayload(input: {
+  importedAt: string;
+  importedCount: number;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  duplicateCount: number;
+  disabledCount: number;
+  sourceType: NodeSourceType;
+  sourceId?: string | null;
+}): {
+  importedCount: number;
+  importedAt: string;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  duplicateCount: number;
+  disabledCount: number;
+  sourceType: NodeSourceType;
+  sourceId?: string | null;
+  changed: boolean;
+} {
+  return {
+    importedCount: input.importedCount,
+    importedAt: input.importedAt,
+    createdCount: input.createdCount,
+    updatedCount: input.updatedCount,
+    unchangedCount: input.unchangedCount,
+    duplicateCount: input.duplicateCount,
+    disabledCount: input.disabledCount,
+    sourceType: input.sourceType,
+    ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+    changed: input.createdCount + input.updatedCount + input.disabledCount > 0
+  };
+}
+
+async function invalidateNodeCachesByIds(env: Env, nodeIds: string[]): Promise<void> {
+  const uniqueNodeIds = [...new Set(nodeIds)];
+  await Promise.all(uniqueNodeIds.map((nodeId) => invalidateNodeAffectedCaches(env, nodeId)));
+}
+
+async function fetchRemoteNodeImportBody(
+  sourceUrl: string,
+  timeoutMs: number
+): Promise<{ body: unknown; status: number; durationMs: number; fetchedBytes: number; contentType?: string }> {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(sourceUrl, {
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json, text/plain;q=0.9, */*;q=0.1'
+      }
+    });
+    const textBody = await response.text();
+    const durationMs = Date.now() - startedAt;
+    const fetchedBytes = new TextEncoder().encode(textBody).length;
+    const contentType = response.headers.get('content-type') ?? undefined;
+
+    if (!response.ok) {
+      throw createAppError('VALIDATION_FAILED', `remote node source returned status ${response.status}`, {
+        sourceUrl,
+        upstreamStatus: response.status,
+        durationMs,
+        fetchedBytes,
+        contentType
+      });
+    }
+
+    try {
+      return {
+        body: JSON.parse(textBody) as unknown,
+        status: response.status,
+        durationMs,
+        fetchedBytes,
+        ...(contentType ? { contentType } : {})
+      };
+    } catch {
+      throw createAppError('VALIDATION_FAILED', 'remote node source must return valid JSON', {
+        sourceUrl,
+        upstreamStatus: response.status,
+        durationMs,
+        fetchedBytes,
+        contentType
+      });
+    }
+  } catch (error) {
+    if (isAppErrorShape(error)) {
+      throw error;
+    }
+
+    const message = error instanceof Error && error.name === 'AbortError' ? 'remote node source request timed out' : 'remote node source request failed';
+
+    throw createAppError('VALIDATION_FAILED', message, {
+      sourceUrl,
+      durationMs: Date.now() - startedAt
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function isAppErrorShape(error: unknown): error is AppErrorShape {
   const code = error && typeof error === 'object' && 'code' in error ? (error as { code: unknown }).code : null;
-
   return Boolean(
     error &&
       typeof error === 'object' &&
@@ -269,7 +461,115 @@ function getErrorStatus(code: string): number {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'UNAUTHORIZED') return 401;
   if (code === 'FORBIDDEN') return 403;
+  if (code === 'TOO_MANY_REQUESTS') return 429;
   return 400;
+}
+
+function buildRateLimitHeaders(decision: RateLimitDecision): Record<string, string> {
+  return {
+    'x-subforge-rate-limit-scope': decision.scope,
+    'x-subforge-rate-limit-limit': String(decision.limit),
+    'x-subforge-rate-limit-remaining': String(decision.remaining),
+    'x-subforge-rate-limit-reset': decision.resetAt
+  };
+}
+
+function rateLimitError(message: string, decision: RateLimitDecision) {
+  return createAppError('TOO_MANY_REQUESTS', message, {
+    scope: decision.scope,
+    limit: decision.limit,
+    remaining: decision.remaining,
+    retryAfterSec: decision.retryAfterSec,
+    resetAt: decision.resetAt,
+    current: decision.current
+  });
+}
+
+function failWithHeaders(
+  error: ReturnType<typeof createAppError>,
+  status: number,
+  headers: Record<string, string>
+): Response {
+  return json({ ok: false, error }, { status, headers });
+}
+
+function failRateLimited(message: string, decision: RateLimitDecision): Response {
+  return failWithHeaders(rateLimitError(message, decision), 429, {
+    ...buildRateLimitHeaders(decision),
+    'retry-after': String(decision.retryAfterSec)
+  });
+}
+
+function maskTokenForAudit(token: string): string {
+  if (!token) {
+    return '';
+  }
+
+  return token.length <= 6 ? '***' : `***${token.slice(-6)}`;
+}
+
+function buildUserAuditPayload(user: {
+  name: string;
+  status?: string;
+  remark?: string | null;
+  expiresAt?: string | null;
+}): Record<string, JsonValue> {
+  return {
+    name: user.name,
+    ...(user.status ? { status: user.status } : {}),
+    ...(user.remark ? { remark: user.remark } : {}),
+    ...(user.expiresAt ? { expiresAt: user.expiresAt } : {})
+  };
+}
+
+function buildNodeAuditPayload(node: {
+  name: string;
+  protocol: string;
+  server: string;
+  port: number;
+  sourceType?: string;
+  sourceId?: string | null;
+  enabled?: boolean;
+}): Record<string, JsonValue> {
+  return {
+    name: node.name,
+    protocol: node.protocol,
+    server: node.server,
+    port: node.port,
+    ...(node.sourceType ? { sourceType: node.sourceType } : {}),
+    ...(node.sourceId ? { sourceId: node.sourceId } : {}),
+    ...(node.enabled !== undefined ? { enabled: node.enabled } : {})
+  };
+}
+
+function buildTemplateAuditPayload(template: {
+  name: string;
+  targetType: SubscriptionTarget;
+  version?: number;
+  status?: string;
+  isDefault?: boolean;
+}): Record<string, JsonValue> {
+  return {
+    name: template.name,
+    targetType: template.targetType,
+    ...(template.version !== undefined ? { version: template.version } : {}),
+    ...(template.status ? { status: template.status } : {}),
+    ...(template.isDefault !== undefined ? { isDefault: template.isDefault } : {})
+  };
+}
+
+function buildRuleSourceAuditPayload(ruleSource: {
+  name: string;
+  sourceUrl: string;
+  format: RuleSourceFormat;
+  enabled?: boolean;
+}): Record<string, JsonValue> {
+  return {
+    name: ruleSource.name,
+    sourceUrl: ruleSource.sourceUrl,
+    format: ruleSource.format,
+    ...(ruleSource.enabled !== undefined ? { enabled: ruleSource.enabled } : {})
+  };
 }
 
 function withAuditPayload(request: Request, payload?: Record<string, unknown> | null): Record<string, unknown> {
@@ -277,7 +577,10 @@ function withAuditPayload(request: Request, payload?: Record<string, unknown> | 
     ip: request.headers.get('cf-connecting-ip') ?? null,
     country: request.headers.get('cf-ipcountry') ?? null,
     colo: request.cf && typeof request.cf === 'object' && 'colo' in request.cf ? request.cf.colo : null,
-    userAgent: request.headers.get('user-agent') ?? null
+    userAgent: request.headers.get('user-agent') ?? null,
+    method: request.method,
+    path: new URL(request.url).pathname,
+    rayId: request.headers.get('cf-ray') ?? null
   };
 
   return sanitizeAuditPayload({
@@ -304,7 +607,7 @@ async function writeAuditLog(
 }
 
 
-async function requireAdmin(request: Request, env: Env) {
+async function requireAdmin(request: Request, env: Env): Promise<{ admin: AdminRecord } | { error: AppErrorShape }> {
   const token = readBearerToken(request);
 
   if (!token) {
@@ -348,21 +651,40 @@ async function handleAdminLogin(request: Request, env: Env): Promise<Response> {
     return fail(createAppError('VALIDATION_FAILED', 'username and password are required'), 400);
   }
 
+  const loginRateLimit = await peekAdminLoginRateLimit(request, env, username);
+
+  if (!loginRateLimit.allowed) {
+    return failRateLimited('too many login attempts, please retry later', loginRateLimit);
+  }
+
   const admin = await getAdminLoginRowByUsername(env.DB, username);
 
   if (!admin) {
-    return fail(createAppError('UNAUTHORIZED', 'invalid username or password'), 401);
+    const failedAttempt = await recordAdminLoginFailure(request, env, username);
+
+    if (!failedAttempt.allowed) {
+      return failRateLimited('too many login attempts, please retry later', failedAttempt);
+    }
+
+    return failWithHeaders(createAppError('UNAUTHORIZED', 'invalid username or password'), 401, buildRateLimitHeaders(failedAttempt));
   }
 
   const verified = await verifyPassword(password, admin.passwordHash);
 
   if (!verified) {
-    return fail(createAppError('UNAUTHORIZED', 'invalid username or password'), 401);
+    const failedAttempt = await recordAdminLoginFailure(request, env, username);
+
+    if (!failedAttempt.allowed) {
+      return failRateLimited('too many login attempts, please retry later', failedAttempt);
+    }
+
+    return failWithHeaders(createAppError('UNAUTHORIZED', 'invalid username or password'), 401, buildRateLimitHeaders(failedAttempt));
   }
 
   if (admin.status !== 'active') {
     return fail(createAppError('FORBIDDEN', 'admin account is unavailable'), 403);
   }
+  await clearAdminLoginRateLimit(request, env, username);
 
   const token = await signAdminSessionToken(
     {
@@ -373,22 +695,31 @@ async function handleAdminLogin(request: Request, env: Env): Promise<Response> {
     env.ADMIN_JWT_SECRET
   );
 
-  return ok({
-    token,
-    admin: {
-      id: admin.id,
-      username: admin.username,
-      role: admin.role,
-      status: admin.status
+  return ok(
+    {
+      token,
+      admin: {
+        id: admin.id,
+        username: admin.username,
+        role: admin.role,
+        status: admin.status
+      }
+    },
+    {
+      headers: {
+        'x-subforge-rate-limit-scope': 'admin_login',
+        'x-subforge-rate-limit-cleared': 'true'
+      }
     }
-  });
+  );
 }
 
 async function handleAdminMe(request: Request, env: Env): Promise<Response> {
   const auth = await requireAdmin(request, env);
 
   if ('error' in auth) {
-    return fail(auth.error, auth.error.code === 'UNAUTHORIZED' ? 401 : 403);
+    const authError = auth.error;
+    return fail(authError, authError.code === 'UNAUTHORIZED' ? 401 : 403);
   }
 
   return ok(auth.admin);
@@ -487,7 +818,7 @@ async function handleUsers(request: Request, env: Env, adminId: string): Promise
       action: 'user.create',
       targetType: 'user',
       targetId: user.id,
-      payload: { name: user.name }
+      payload: buildUserAuditPayload(user)
     });
 
     return ok(user, { status: 201 });
@@ -539,7 +870,7 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
       action: 'user.update',
       targetType: 'user',
       targetId: user.id,
-      payload: { status: user.status }
+      payload: buildUserAuditPayload(user)
     });
     return ok(user);
   }
@@ -566,8 +897,9 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
       targetId: user.id,
       payload: {
         tokenReset: true,
-        previousTokenRedacted: true,
-        currentTokenRedacted: true
+        name: user.name,
+        previousTokenSuffix: maskTokenForAudit(previous.token),
+        currentTokenSuffix: maskTokenForAudit(user.token)
       }
     });
     return ok(user);
@@ -612,7 +944,11 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
       action: 'user.bind_nodes',
       targetType: 'user',
       targetId: userId,
-      payload: { nodeIds }
+      payload: {
+        ...(user ? { name: user.name } : {}),
+        nodeIds,
+        nodeCount: nodeIds.length
+      }
     });
 
     return ok({ userId, nodeIds });
@@ -713,7 +1049,6 @@ async function handleNodes(request: Request, env: Env, adminId: string): Promise
     const protocol = protocolInput ? canonicalizeNodeProtocol(protocolInput) : undefined;
     const server = asString(body.server);
     const port = asNumber(body.port);
-
     if (!name || !protocol || !server || port === undefined) {
       return fail(createAppError('VALIDATION_FAILED', 'name, protocol, server and port are required'), 400);
     }
@@ -781,12 +1116,187 @@ async function handleNodes(request: Request, env: Env, adminId: string): Promise
       action: 'node.create',
       targetType: 'node',
       targetId: node.id,
-      payload: { name: node.name, protocol: node.protocol }
+      payload: buildNodeAuditPayload(node)
     });
     return ok(node, { status: 201 });
   }
 
   return notFound('/api/nodes');
+}
+
+async function handleNodeImport(request: Request, env: Env, adminId: string): Promise<Response> {
+  if (request.method !== 'POST') {
+    return notFound('/api/nodes/import');
+  }
+
+  const importedAt = new Date().toISOString();
+  const body = await parseJsonBody(request);
+  const rawNodes = getRawNodeImportItems(body);
+  const importedNodes = parseImportedNodeInputs(rawNodes);
+  const { nodes: dedupedNodes, duplicateCount } = normalizeImportedNodes(importedNodes, 'manual');
+  const existingManualNodes = await listNodesBySource(env.DB, 'manual');
+  const plan = planNodeImport(existingManualNodes, dedupedNodes);
+
+  for (const node of plan.created) {
+    await createNode(env.DB, node);
+  }
+
+  for (const update of plan.updated) {
+    await updateNode(env.DB, update.current.id, update.next);
+  }
+
+  await invalidateNodeCachesByIds(
+    env,
+    plan.updated.map((update) => update.current.id)
+  );
+
+  const payload = buildNodeImportPayload({
+    importedAt,
+    importedCount: dedupedNodes.length,
+    createdCount: plan.created.length,
+    updatedCount: plan.updated.length,
+    unchangedCount: plan.unchanged.length,
+    duplicateCount,
+    disabledCount: 0,
+    sourceType: 'manual'
+  });
+
+  await writeAuditLog(request, env, {
+    actorAdminId: adminId,
+    action: 'node.import',
+    targetType: 'node',
+    payload: {
+      importedCount: payload.importedCount,
+      createdCount: payload.createdCount,
+      updatedCount: payload.updatedCount,
+      unchangedCount: payload.unchangedCount,
+      duplicateCount: payload.duplicateCount,
+      names: dedupedNodes.slice(0, 10).map((node) => node.name)
+    }
+  });
+
+  return ok(payload, { status: payload.changed ? 201 : 200 });
+}
+
+async function handleRemoteNodeImport(request: Request, env: Env, adminId: string): Promise<Response> {
+  if (request.method !== 'POST') {
+    return notFound('/api/nodes/import/remote');
+  }
+
+  const body = await parseJsonBody(request);
+
+  if (!isRecord(body)) {
+    return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
+  }
+
+  const sourceUrl = asString(body.sourceUrl);
+
+  if (!isValidHttpUrl(sourceUrl)) {
+    return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http or https URL'), 400);
+  }
+
+  const canonicalSourceUrl = new URL(sourceUrl).toString();
+  const startedAt = Date.now();
+
+  try {
+    const upstream = await fetchRemoteNodeImportBody(
+      canonicalSourceUrl,
+      Number(env.SYNC_HTTP_TIMEOUT_MS || '10000')
+    );
+    const rawNodes = getRawNodeImportItems(upstream.body);
+    const importedNodes = parseImportedNodeInputs(rawNodes);
+    const importedAt = new Date().toISOString();
+    const { nodes: dedupedNodes, duplicateCount } = normalizeImportedNodes(importedNodes, 'remote', canonicalSourceUrl);
+    const existingRemoteNodes = await listNodesBySource(env.DB, 'remote', canonicalSourceUrl);
+    const plan = planRemoteNodeSync(existingRemoteNodes, dedupedNodes);
+    const staleToDisable = plan.stale.filter((node) => node.enabled);
+
+    for (const node of plan.created) {
+      await createNode(env.DB, {
+        ...node,
+        lastSyncAt: importedAt
+      });
+    }
+
+    for (const update of plan.updated) {
+      await updateNode(env.DB, update.current.id, {
+        ...update.next,
+        lastSyncAt: importedAt
+      });
+    }
+
+    for (const staleNode of staleToDisable) {
+      await updateNode(env.DB, staleNode.id, {
+        enabled: false,
+        lastSyncAt: importedAt
+      });
+    }
+
+    await invalidateNodeCachesByIds(
+      env,
+      [...plan.updated.map((update) => update.current.id), ...staleToDisable.map((node) => node.id)]
+    );
+
+    const payload = buildNodeImportPayload({
+      importedAt,
+      importedCount: dedupedNodes.length,
+      createdCount: plan.created.length,
+      updatedCount: plan.updated.length,
+      unchangedCount: plan.unchanged.length,
+      duplicateCount,
+      disabledCount: staleToDisable.length,
+      sourceType: 'remote',
+      sourceId: canonicalSourceUrl
+    });
+
+    const details = {
+      sourceUrl: canonicalSourceUrl,
+      upstreamStatus: upstream.status,
+      fetchedBytes: upstream.fetchedBytes,
+      durationMs: Date.now() - startedAt,
+      ...(upstream.contentType ? { contentType: upstream.contentType } : {}),
+      importedCount: payload.importedCount,
+      createdCount: payload.createdCount,
+      updatedCount: payload.updatedCount,
+      unchangedCount: payload.unchangedCount,
+      duplicateCount: payload.duplicateCount,
+      disabledCount: payload.disabledCount
+    };
+    const status = payload.changed ? 'success' : 'skipped';
+    const message = payload.changed
+      ? `remote node source synced (${payload.importedCount} nodes)`
+      : `remote node source unchanged (${payload.importedCount} nodes)`;
+
+    await recordNodeSourceSync(env.DB, canonicalSourceUrl, status, message, details);
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'node.import_remote',
+      targetType: 'node',
+      payload: {
+        sourceUrl: canonicalSourceUrl,
+        importedCount: payload.importedCount,
+        createdCount: payload.createdCount,
+        updatedCount: payload.updatedCount,
+        unchangedCount: payload.unchangedCount,
+        duplicateCount: payload.duplicateCount,
+        disabledCount: payload.disabledCount
+      }
+    });
+
+    return ok(payload, { status: payload.changed ? 201 : 200 });
+  } catch (error) {
+    const appError = isAppErrorShape(error)
+      ? error
+      : createAppError('VALIDATION_FAILED', error instanceof Error ? error.message : 'remote node source sync failed');
+
+    const details = isRecord(appError.details)
+      ? { sourceUrl: canonicalSourceUrl, durationMs: Date.now() - startedAt, ...appError.details }
+      : { sourceUrl: canonicalSourceUrl, durationMs: Date.now() - startedAt };
+
+    await recordNodeSourceSync(env.DB, canonicalSourceUrl, 'failed', appError.message, details);
+
+    return fail({ ...appError, details }, getErrorStatus(appError.code));
+  }
 }
 
 async function handleNodeById(request: Request, env: Env, adminId: string, nodeId: string): Promise<Response> {
@@ -857,7 +1367,6 @@ async function handleNodeById(request: Request, env: Env, adminId: string, nodeI
 
     const shouldClearSourceIdOnManualSwitch =
       nextSourceType === 'manual' && currentNode.sourceType !== 'manual' && !nextSourceId.present;
-
     const node = await updateNode(env.DB, nodeId, {
       ...(nextName ? { name: nextName } : {}),
       ...(nextProtocol ? { protocol: nextProtocol } : {}),
@@ -884,12 +1393,13 @@ async function handleNodeById(request: Request, env: Env, adminId: string, nodeI
       action: 'node.update',
       targetType: 'node',
       targetId: node.id,
-      payload: { name: node.name, enabled: node.enabled }
+      payload: buildNodeAuditPayload(node)
     });
     return ok(node);
   }
 
   if (request.method === 'DELETE') {
+    const currentNode = await getNodeById(env.DB, nodeId);
     const affectedUsers = await listUsersByNodeId(env.DB, nodeId);
     const deleted = await deleteNode(env.DB, nodeId);
 
@@ -902,7 +1412,13 @@ async function handleNodeById(request: Request, env: Env, adminId: string, nodeI
       actorAdminId: adminId,
       action: 'node.delete',
       targetType: 'node',
-      targetId: nodeId
+      targetId: nodeId,
+      payload: currentNode
+        ? {
+            ...buildNodeAuditPayload(currentNode),
+            affectedUserCount: affectedUsers.length
+          }
+        : { affectedUserCount: affectedUsers.length }
     });
     return ok({ deleted: true, nodeId });
   }
@@ -967,7 +1483,7 @@ async function handleTemplates(request: Request, env: Env, adminId: string): Pro
       action: 'template.create',
       targetType: 'template',
       targetId: template.id,
-      payload: { name: template.name, targetType: template.targetType }
+      payload: buildTemplateAuditPayload(template)
     });
     return ok(template, { status: 201 });
   }
@@ -1040,7 +1556,7 @@ async function handleTemplateById(
       action: 'template.update',
       targetType: 'template',
       targetId: template.id,
-      payload: { name: template.name, targetType: template.targetType }
+      payload: buildTemplateAuditPayload(template)
     });
     return ok(template);
   }
@@ -1078,7 +1594,10 @@ async function handleTemplateById(
       action: 'template.set_default',
       targetType: 'template',
       targetId: template.id,
-      payload: { targetType: template.targetType }
+      payload: {
+        ...buildTemplateAuditPayload(template),
+        previousTemplateId: previousEffectiveTemplate?.id ?? null
+      }
     });
     return ok(template);
   }
@@ -1157,7 +1676,7 @@ async function handleRuleSources(request: Request, env: Env, adminId: string): P
       action: 'rule_source.create',
       targetType: 'rule_source',
       targetId: ruleSource.id,
-      payload: { name: ruleSource.name, format: ruleSource.format }
+      payload: buildRuleSourceAuditPayload(ruleSource)
     });
 
     return ok(ruleSource, { status: 201 });
@@ -1220,7 +1739,7 @@ async function handleRuleSourceById(
       action: 'rule_source.update',
       targetType: 'rule_source',
       targetId: ruleSource.id,
-      payload: { name: ruleSource.name, enabled: ruleSource.enabled }
+      payload: buildRuleSourceAuditPayload(ruleSource)
     });
 
     return ok(ruleSource);
@@ -1239,7 +1758,13 @@ async function handleRuleSourceById(
       action: 'rule_source.sync',
       targetType: 'rule_source',
       targetId: current.id,
-      payload: { status: result.status, changed: result.changed, ruleCount: result.ruleCount, details: result.details ?? null }
+      payload: {
+        ...buildRuleSourceAuditPayload(current),
+        status: result.status,
+        changed: result.changed,
+        ruleCount: result.ruleCount,
+        details: result.details ?? null
+      }
     });
     return ok(result);
   }
@@ -1343,6 +1868,12 @@ async function handlePublicSubscription(
     return fail(createAppError('UNSUPPORTED_TARGET', 'unsupported subscription target'), 400);
   }
 
+  const rateLimit = await consumeSubscriptionRateLimit(request, env, token, targetRaw);
+
+  if (!rateLimit.allowed) {
+    return failRateLimited('subscription request rate limit exceeded', rateLimit);
+  }
+
   const cacheKey = buildSubscriptionCacheKey(targetRaw, token);
   const accessFailure = await validatePublicSubscriptionAccess(env, token, cacheKey);
 
@@ -1355,6 +1886,7 @@ async function handlePublicSubscription(
   if (cached) {
     return text(cached, getContentTypeByTarget(targetRaw), {
       headers: {
+        ...buildRateLimitHeaders(rateLimit),
         'x-subforge-cache': 'hit',
         'x-subforge-cache-key': cacheKey,
         'x-subforge-cache-scope': 'subscription'
@@ -1365,13 +1897,17 @@ async function handlePublicSubscription(
   const compileInput = await getSubscriptionCompileInputByToken(env.DB, token, targetRaw);
 
   if (!compileInput) {
-    return fail(createAppError('SUBSCRIPTION_USER_NOT_FOUND', 'subscription token or template not found'), 404);
+    return failWithHeaders(
+      createAppError('SUBSCRIPTION_USER_NOT_FOUND', 'subscription token or template not found'),
+      404,
+      buildRateLimitHeaders(rateLimit)
+    );
   }
 
   const result = compileSubscription(compileInput);
 
   if (!result.ok) {
-    return fail(result.error, 400);
+    return failWithHeaders(result.error, 400, buildRateLimitHeaders(rateLimit));
   }
 
   await env.SUB_CACHE.put(cacheKey, result.data.content, {
@@ -1380,6 +1916,7 @@ async function handlePublicSubscription(
 
   return text(result.data.content, result.data.mimeType, {
     headers: {
+      ...buildRateLimitHeaders(rateLimit),
       'x-subforge-cache': 'miss',
       'x-subforge-cache-key': cacheKey,
       'x-subforge-cache-scope': 'subscription'
@@ -1393,6 +1930,27 @@ async function handleSyncLogs(env: Env): Promise<Response> {
 
 async function handleAuditLogs(env: Env): Promise<Response> {
   return ok(await listAuditLogs(env.DB));
+}
+
+async function handleCacheRebuild(request: Request, env: Env, adminId: string): Promise<Response> {
+  if (request.method !== 'POST') {
+    return notFound('/api/cache/rebuild');
+  }
+
+  const result = await rebuildSubscriptionCaches(env);
+
+  await writeAuditLog(request, env, {
+    actorAdminId: adminId,
+    action: 'cache.rebuild',
+    targetType: 'cache',
+    payload: {
+      userCount: result.userCount,
+      targets: result.targets,
+      keysRequested: result.keysRequested
+    }
+  });
+
+  return ok(result);
 }
 
 async function handleApiRequest(request: Request, env: Env, segments: string[]): Promise<Response> {
@@ -1413,7 +1971,8 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
   const auth = await requireAdmin(request, env);
 
   if ('error' in auth) {
-    return fail(auth.error, auth.error.code === 'UNAUTHORIZED' ? 401 : 403);
+    const authError = auth.error;
+    return fail(authError, authError.code === 'UNAUTHORIZED' ? 401 : 403);
   }
 
   if (resource === 'admin' && resourceId === 'me' && request.method === 'GET') {
@@ -1447,6 +2006,14 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
     return handleNodes(request, env, auth.admin.id);
   }
 
+  if (resource === 'nodes' && resourceId === 'import' && !action) {
+    return handleNodeImport(request, env, auth.admin.id);
+  }
+
+  if (resource === 'nodes' && resourceId === 'import' && action === 'remote') {
+    return handleRemoteNodeImport(request, env, auth.admin.id);
+  }
+
   if (resource === 'nodes' && resourceId) {
     return handleNodeById(request, env, auth.admin.id, resourceId);
   }
@@ -1465,6 +2032,10 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
 
   if (resource === 'rule-sources' && resourceId) {
     return handleRuleSourceById(request, env, auth.admin.id, resourceId, action);
+  }
+
+  if (resource === 'cache' && resourceId === 'rebuild' && !action) {
+    return handleCacheRebuild(request, env, auth.admin.id);
   }
 
   if (resource === 'sync-logs' && !resourceId && request.method === 'GET') {

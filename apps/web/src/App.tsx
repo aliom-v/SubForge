@@ -32,7 +32,10 @@ import {
   fetchTemplates,
   fetchUserNodeBindings,
   fetchUsers,
+  importNodes,
+  importRemoteNodes,
   login,
+  rebuildSubscriptionCaches,
   logout,
   previewNodeImportFromUrl,
   replaceUserNodeBindings,
@@ -45,6 +48,9 @@ import {
   updateUser,
   type AdminSession,
   type NodeImportPreviewPayload,
+  type CacheRebuildPayload,
+  type NodeImportInput,
+  type NodeImportPayload,
   type PreviewPayload,
   type RuleSourceSyncPayload,
   type SetupStatusPayload
@@ -151,6 +157,18 @@ function formatNodeImportContentEncoding(value: NodeImportContentEncoding): stri
   return value === 'base64_text' ? 'Base64 订阅文本' : '明文分享链接';
 }
 
+const nodeImportPlaceholder = `[
+  {
+    "name": "HK-01",
+    "protocol": "vless",
+    "server": "hk.example.com",
+    "port": 443,
+    "enabled": true,
+    "credentials": { "uuid": "replace-with-uuid" },
+    "params": { "tls": true, "sni": "hk.example.com" }
+  }
+]`;
+
 export function App(): JSX.Element {
   const [token, setToken] = useState<string>(() => localStorage.getItem(sessionStorageKey) ?? '');
   const [admin, setAdmin] = useState<AdminSession | null>(null);
@@ -161,6 +179,9 @@ export function App(): JSX.Element {
   const [error, setError] = useState('');
   const [preview, setPreview] = useState<PreviewPayload | null>(null);
   const [syncResult, setSyncResult] = useState<RuleSourceSyncPayload | null>(null);
+  const [cacheRebuildResult, setCacheRebuildResult] = useState<CacheRebuildPayload | null>(null);
+  const [nodeImportResult, setNodeImportResult] = useState<NodeImportPayload | null>(null);
+  const [remoteNodeImportResult, setRemoteNodeImportResult] = useState<NodeImportPayload | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatusPayload | null>(null);
 
   const [loginForm, setLoginForm] = useState({ username: 'admin', password: '' });
@@ -170,6 +191,7 @@ export function App(): JSX.Element {
   const [nodeImportText, setNodeImportText] = useState('');
   const [nodeImportSourceUrl, setNodeImportSourceUrl] = useState('');
   const [remoteNodeImportPreview, setRemoteNodeImportPreview] = useState<NodeImportPreviewPayload | null>(null);
+  const [remoteNodeSourceUrl, setRemoteNodeSourceUrl] = useState('');
   const [templateForm, setTemplateForm] = useState({
     name: '',
     targetType: 'mihomo' as SubscriptionTarget,
@@ -217,6 +239,10 @@ export function App(): JSX.Element {
     if (!token) {
       setAdmin(null);
       setResources(emptyResources);
+      setPreview(null);
+      setSyncResult(null);
+      setCacheRebuildResult(null);
+      setNodeImportResult(null);
       return;
     }
 
@@ -309,6 +335,10 @@ export function App(): JSX.Element {
       setToken('');
       setAdmin(null);
       setResources(emptyResources);
+      setPreview(null);
+      setSyncResult(null);
+      setCacheRebuildResult(null);
+      setNodeImportResult(null);
       await refreshSetupStatus();
       setError(getErrorMessage(caughtError));
     } finally {
@@ -432,11 +462,15 @@ export function App(): JSX.Element {
     setAdmin(null);
     setResources(emptyResources);
     setPreview(null);
+    setCacheRebuildResult(null);
+    setNodeImportResult(null);
+    setRemoteNodeImportResult(null);
+    setRemoteNodeImportPreview(null);
     setMessage(logoutMessage);
     setError('');
   }
 
-  async function withAction(action: () => Promise<unknown>, successMessage?: string): Promise<void> {
+  async function withAction<T>(action: () => Promise<T>, successMessage?: string): Promise<void> {
     setLoading(true);
     setError('');
 
@@ -596,7 +630,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function handleImportNodes(): Promise<void> {
+  async function handleImportShareLinks(): Promise<void> {
     if (!token) return;
 
     if (!nodeImportText.trim()) {
@@ -640,7 +674,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function handleImportRemoteNodes(): Promise<void> {
+  async function handleCreatePreviewedRemoteNodes(): Promise<void> {
     if (!token) return;
 
     if (!remoteNodeImportPreview) {
@@ -692,11 +726,76 @@ export function App(): JSX.Element {
     }, '节点已删除');
   }
 
+  async function handleImportNodes(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!token) return;
+
+    const parsed = parseNodeImportDraft(nodeImportText);
+
+    if (!parsed.ok) {
+      reportValidationError(parsed.error);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const result = await importNodes(token, parsed.nodes);
+      setNodeImportResult(result);
+      setNodeImportText('');
+      await refreshResources();
+      setMessage(
+        `已处理 ${result.importedCount} 个节点（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 去重 ${result.duplicateCount ?? 0}）`
+      );
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleImportRemoteNodes(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!token) return;
+
+    const sourceUrl = remoteNodeSourceUrl.trim();
+
+    if (!isValidHttpUrl(sourceUrl)) {
+      reportValidationError('远程节点源 URL 必须是合法的 http / https 地址');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const result = await importRemoteNodes(token, sourceUrl);
+      setRemoteNodeImportResult(result);
+      await refreshResources();
+      setMessage(
+        result.changed
+          ? `远程节点源已同步（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 禁用 ${result.disabledCount ?? 0}）`
+          : `远程节点源无变化，共 ${result.importedCount} 个节点`
+      );
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleCreateTemplate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!token) return;
 
-    const validationError = validateTemplateDraft({ name: templateForm.name, content: templateForm.content, version: 1 });
+    const validationError = validateTemplateDraft({
+      name: templateForm.name,
+      content: templateForm.content,
+      version: 1
+    });
 
     if (validationError) {
       reportValidationError(validationError);
@@ -748,7 +847,10 @@ export function App(): JSX.Element {
     event.preventDefault();
     if (!token) return;
 
-    const validationError = validateRuleSourceDraft({ name: ruleSourceForm.name, sourceUrl: ruleSourceForm.sourceUrl });
+    const validationError = validateRuleSourceDraft({
+      name: ruleSourceForm.name,
+      sourceUrl: ruleSourceForm.sourceUrl
+    });
 
     if (validationError) {
       reportValidationError(validationError);
@@ -810,6 +912,25 @@ export function App(): JSX.Element {
       setPreview(null);
       setSyncResult((current) => (current?.sourceId === ruleSourceId ? null : current));
     }, '规则源已删除');
+  }
+
+  async function handleRebuildCaches(): Promise<void> {
+    if (!token) return;
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const result = await rebuildSubscriptionCaches(token);
+      setCacheRebuildResult(result);
+      await refreshResources();
+      setMessage(`缓存重建已提交：${result.userCount} 个用户 / ${result.keysRequested} 个缓存键`);
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handlePreview(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -974,7 +1095,14 @@ export function App(): JSX.Element {
       {error ? <p className="feedback error">{error}</p> : null}
       {message ? <p className="feedback success">{message}</p> : null}
 
-      {activeTab === 'overview' ? <OverviewPanel {...resources} /> : null}
+      {activeTab === 'overview' ? (
+        <OverviewPanel
+          {...resources}
+          loading={loading}
+          cacheRebuildResult={cacheRebuildResult}
+          onRebuildCaches={() => void handleRebuildCaches()}
+        />
+      ) : null}
 
       {activeTab === 'users' ? (
         <section className="panel-grid users-grid">
@@ -1129,7 +1257,7 @@ export function App(): JSX.Element {
                 <button
                   type="button"
                   disabled={loading || parsedNodeImport.nodes.length === 0}
-                  onClick={() => void handleImportNodes()}
+                  onClick={() => void handleImportShareLinks()}
                 >
                   批量创建 {parsedNodeImport.nodes.length} 个节点
                 </button>
@@ -1206,7 +1334,7 @@ export function App(): JSX.Element {
                   <button
                     type="button"
                     disabled={loading || remoteNodeImportPreview.nodes.length === 0}
-                    onClick={() => void handleImportRemoteNodes()}
+                    onClick={() => void handleCreatePreviewedRemoteNodes()}
                   >
                     批量创建 {remoteNodeImportPreview.nodes.length} 个节点
                   </button>
@@ -1308,6 +1436,64 @@ export function App(): JSX.Element {
           </article>
 
           <article className="panel">
+            <h2>批量导入</h2>
+            <form className="form-grid" onSubmit={handleImportNodes}>
+              <Field label="节点 JSON" full>
+                <textarea
+                  value={nodeImportText}
+                  onChange={(event) => setNodeImportText(event.target.value)}
+                  rows={12}
+                  placeholder={nodeImportPlaceholder}
+                />
+              </Field>
+              <p className="helper">支持直接粘贴 JSON 数组，或 <code>{'{"nodes": [...]}'}</code> 对象；每个节点至少需要 <code>name</code>、<code>protocol</code>、<code>server</code>、<code>port</code>。</p>
+              <button type="submit" disabled={loading}>导入节点</button>
+            </form>
+            {nodeImportResult ? (
+              <div className="result-card">
+                <strong>最近一次批量导入</strong>
+                <span>时间：{nodeImportResult.importedAt}</span>
+                <span>数量：{nodeImportResult.importedCount}</span>
+                <span>来源：{nodeImportResult.sourceType ?? 'manual'}</span>
+                <span>新增：{nodeImportResult.createdCount ?? 0}</span>
+                <span>更新：{nodeImportResult.updatedCount ?? 0}</span>
+                <span>去重：{nodeImportResult.duplicateCount ?? 0}</span>
+              </div>
+            ) : (
+              <p className="helper">适合一次性导入已有节点清单；导入完成后可继续在右侧逐条编辑。</p>
+            )}
+          </article>
+
+          <article className="panel">
+            <h2>远程节点源同步</h2>
+            <form className="form-grid" onSubmit={handleImportRemoteNodes}>
+              <Field label="远程 URL" full>
+                <input
+                  value={remoteNodeSourceUrl}
+                  onChange={(event) => setRemoteNodeSourceUrl(event.target.value)}
+                  placeholder="https://example.com/nodes.json"
+                />
+              </Field>
+              <p className="helper">当前远程节点源要求返回 JSON 数组，或 <code>{'{"nodes": [...]}'}</code> 结构；同步时会按协议/地址/端口/凭证做去重。</p>
+              <button type="submit" disabled={loading}>同步远程节点源</button>
+            </form>
+            {remoteNodeImportResult ? (
+              <div className="result-card">
+                <strong>最近一次远程同步</strong>
+                <span>时间：{remoteNodeImportResult.importedAt}</span>
+                <span>数量：{remoteNodeImportResult.importedCount}</span>
+                <span>来源：{remoteNodeImportResult.sourceId ?? 'remote'}</span>
+                <span>新增：{remoteNodeImportResult.createdCount ?? 0}</span>
+                <span>更新：{remoteNodeImportResult.updatedCount ?? 0}</span>
+                <span>禁用：{remoteNodeImportResult.disabledCount ?? 0}</span>
+                <span>去重：{remoteNodeImportResult.duplicateCount ?? 0}</span>
+              </div>
+            ) : (
+              <p className="helper">适合对外部节点 JSON 做手动拉取同步；同一来源会复用已有远程节点，并自动禁用本次未出现的旧节点。</p>
+            )}
+          </article>
+
+          <article className="panel">
             <h2>编辑节点</h2>
             <form className="form-grid" onSubmit={handleUpdateNode}>
               <Field label="选择节点">
@@ -1366,12 +1552,13 @@ export function App(): JSX.Element {
           <article className="panel full-width">
             <h2>节点列表</h2>
             <ResourceTable
-              columns={['名称', '协议', '地址', '端口', '元数据', '状态', '操作']}
+              columns={['名称', '协议', '地址', '端口', '来源', '元数据', '状态', '操作']}
               rows={resources.nodes.map((node) => [
                 node.name,
                 node.protocol,
                 node.server,
                 node.port,
+                node.sourceType,
                 summarizeNodeMetadata(node),
                 node.enabled ? 'enabled' : 'disabled',
                 <div className="inline-actions" key={node.id}>
@@ -1488,12 +1675,14 @@ export function App(): JSX.Element {
           <article className="panel full-width">
             <h2>规则源列表</h2>
             <ResourceTable
-              columns={['名称', '格式', 'URL', '状态', '操作']}
+              columns={['名称', '格式', '状态', '失败次数', '上次同步', 'URL', '操作']}
               rows={resources.ruleSources.map((ruleSource) => [
                 ruleSource.name,
                 ruleSource.format,
+                formatSyncStatusLabel(ruleSource.lastSyncStatus ?? 'never'),
+                ruleSource.failureCount,
+                ruleSource.lastSyncAt ?? '-',
                 ruleSource.sourceUrl,
-                ruleSource.lastSyncStatus ?? 'never',
                 <div className="inline-actions" key={ruleSource.id}>
                   <button type="button" onClick={() => setRuleSourceEditForm((current) => ({ ...current, id: ruleSource.id }))}>编辑</button>
                   <button type="button" className="secondary" onClick={() => void handleSyncRuleSource(ruleSource.id)}>触发同步</button>
@@ -1512,11 +1701,11 @@ export function App(): JSX.Element {
             {syncResult ? (
               <div className="result-card">
                 <strong>{syncResult.sourceName}</strong>
-                <span>状态：{syncResult.status}</span>
-                <span>变更：{syncResult.changed ? 'yes' : 'no'}</span>
+                <span>状态：{formatSyncStatusLabel(syncResult.status)}</span>
+                <span>变更：{syncResult.changed ? '有' : '无'}</span>
                 <span>规则数：{syncResult.ruleCount}</span>
                 <span>{syncResult.message}</span>
-                {syncResult.details ? renderJsonBlock(syncResult.details) : null}
+                {syncResult.details ? renderSyncDetails(syncResult.details) : null}
               </div>
             ) : (
               <p className="helper">在“规则源”页触发同步后，这里会显示最近一次结果。</p>
@@ -1529,9 +1718,9 @@ export function App(): JSX.Element {
               rows={resources.syncLogs.map((log) => [
                 log.createdAt,
                 `${log.sourceType}${log.sourceId ? ` / ${log.sourceId}` : ''}`,
-                log.status,
+                formatSyncStatusLabel(log.status),
                 log.message ?? '-',
-                log.details ? renderJsonBlock(log.details) : '-'
+                log.details ? renderSyncDetails(log.details) : '-'
               ])}
             />
           </article>
@@ -1543,13 +1732,14 @@ export function App(): JSX.Element {
           <article className="panel full-width">
             <h2>审计日志</h2>
             <ResourceTable
-              columns={['时间', '管理员', '动作', '目标', '详情']}
+              columns={['时间', '管理员', '动作', '目标', '请求', '详情']}
               rows={resources.auditLogs.map((log) => [
                 log.createdAt,
                 log.actorAdminUsername ? `${log.actorAdminUsername} / ${log.actorAdminId}` : log.actorAdminId,
-                log.action,
-                `${log.targetType}${log.targetId ? ` / ${log.targetId}` : ''}`,
-                log.payload ? renderJsonBlock(log.payload) : '-'
+                renderAuditAction(log),
+                renderAuditTarget(log),
+                renderAuditRequest(log),
+                renderAuditDetails(log)
               ])}
             />
           </article>
@@ -1709,6 +1899,94 @@ function buildNodeMutationInput(input: NodeDraftForm): {
   };
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseNodeImportDraft(raw: string): { ok: true; nodes: NodeImportInput[] } | { ok: false; error: string } {
+  if (!raw.trim()) {
+    return { ok: false, error: '请先粘贴要导入的节点 JSON' };
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: '批量导入内容必须是合法 JSON' };
+  }
+
+  const rawNodes = Array.isArray(parsed) ? parsed : isObjectRecord(parsed) && Array.isArray(parsed.nodes) ? parsed.nodes : null;
+
+  if (!rawNodes) {
+    return { ok: false, error: '批量导入内容必须是 JSON 数组或包含 nodes 数组的对象' };
+  }
+
+  if (rawNodes.length === 0) {
+    return { ok: false, error: '至少需要导入 1 个节点' };
+  }
+
+  if (rawNodes.length > 200) {
+    return { ok: false, error: '单次最多导入 200 个节点' };
+  }
+
+  const nodes: NodeImportInput[] = [];
+
+  for (const [index, rawNode] of rawNodes.entries()) {
+    if (!isObjectRecord(rawNode)) {
+      return { ok: false, error: `第 ${index + 1} 个节点必须是对象` };
+    }
+
+    const port =
+      typeof rawNode.port === 'number'
+        ? rawNode.port
+        : typeof rawNode.port === 'string' && rawNode.port.trim()
+          ? Number(rawNode.port)
+          : Number.NaN;
+
+    const draft: NodeImportInput = {
+      name: typeof rawNode.name === 'string' ? rawNode.name.trim() : '',
+      protocol: typeof rawNode.protocol === 'string' ? rawNode.protocol.trim() : '',
+      server: typeof rawNode.server === 'string' ? rawNode.server.trim() : '',
+      port
+    };
+
+    const validationError = validateNodeDraft(draft);
+
+    if (validationError) {
+      return { ok: false, error: `第 ${index + 1} 个节点无效：${validationError}` };
+    }
+
+    if ('enabled' in rawNode && typeof rawNode.enabled !== 'boolean') {
+      return { ok: false, error: `第 ${index + 1} 个节点的 enabled 必须是布尔值` };
+    }
+
+    if ('credentials' in rawNode && rawNode.credentials != null && !isObjectRecord(rawNode.credentials)) {
+      return { ok: false, error: `第 ${index + 1} 个节点的 credentials 必须是对象` };
+    }
+
+    if ('params' in rawNode && rawNode.params != null && !isObjectRecord(rawNode.params)) {
+      return { ok: false, error: `第 ${index + 1} 个节点的 params 必须是对象` };
+    }
+
+    if (typeof rawNode.enabled === 'boolean') {
+      draft.enabled = rawNode.enabled;
+    }
+
+    if (isObjectRecord(rawNode.credentials)) {
+      draft.credentials = rawNode.credentials;
+    }
+
+    if (isObjectRecord(rawNode.params)) {
+      draft.params = rawNode.params;
+    }
+
+    nodes.push(draft);
+  }
+
+  return { ok: true, nodes };
+}
+
 function validateTemplateDraft(input: { name: string; content: string; version: number }): string | null {
   if (!input.name.trim()) return '模板名称不能为空';
   if (!input.content.trim()) return '模板内容不能为空';
@@ -1731,7 +2009,283 @@ function renderJsonBlock(value: unknown): JSX.Element {
   return <pre className="json-block">{stringifyStructured(value)}</pre>;
 }
 
-function OverviewPanel(props: ResourceState): JSX.Element {
+function readStringValue(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readNumberValue(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function formatSyncStatusLabel(status: string): string {
+  if (status === 'success') return '成功';
+  if (status === 'failed') return '失败';
+  if (status === 'skipped') return '跳过';
+  if (status === 'never') return '未同步';
+  return status;
+}
+
+function formatSyncStageLabel(stage: string): string {
+  if (stage === 'fetch') return '拉取';
+  if (stage === 'parse') return '解析';
+  if (stage === 'compare') return '比对';
+  return stage;
+}
+
+function formatSyncSeverityLabel(severity: string): string {
+  if (severity === 'info') return '提示';
+  if (severity === 'warning') return '警告';
+  if (severity === 'error') return '错误';
+  return severity;
+}
+
+function formatSyncErrorCodeLabel(errorCode: string): string {
+  if (errorCode === 'FETCH_TIMEOUT') return '上游拉取超时';
+  if (errorCode === 'FETCH_NETWORK_ERROR') return '上游网络异常';
+  if (errorCode === 'UPSTREAM_HTTP_ERROR') return '上游返回异常状态';
+  if (errorCode === 'EMPTY_UPSTREAM_CONTENT') return '上游内容为空';
+  if (errorCode === 'INVALID_JSON') return 'JSON 无法解析';
+  if (errorCode === 'UNSUPPORTED_JSON_SHAPE') return 'JSON 结构不受支持';
+  if (errorCode === 'NO_VALID_RULES') return '未提取到有效规则';
+  return errorCode;
+}
+
+function formatSyncSourceShapeLabel(sourceShape: string): string {
+  if (sourceShape === 'plain-text') return '纯文本逐行';
+  if (sourceShape === 'yaml-lines') return 'YAML 行文本';
+  if (sourceShape === 'yaml-list') return 'YAML 列表';
+  if (sourceShape === 'yaml-block') return 'YAML 块文本';
+  if (sourceShape === 'invalid-json') return '非法 JSON';
+  if (sourceShape === 'array') return 'JSON 数组';
+  if (sourceShape.startsWith('object:')) {
+    return `JSON 对象（键：${sourceShape.slice('object:'.length).split('|').join(' / ')}）`;
+  }
+  if (sourceShape.startsWith('yaml-') && sourceShape.endsWith('-inline')) {
+    return `YAML 内联数组（${sourceShape.slice('yaml-'.length, -'-inline'.length)}）`;
+  }
+  return sourceShape;
+}
+
+function readBooleanValue(record: Record<string, unknown>, key: string): boolean | null {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function readStringArrayValue(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : [];
+}
+
+function renderSyncDetails(value: unknown): JSX.Element {
+  if (!isObjectRecord(value)) {
+    return renderJsonBlock(value);
+  }
+
+  const errorCode = readStringValue(value, 'errorCode');
+  const reason = readStringValue(value, 'reason');
+  const operatorHint = readStringValue(value, 'operatorHint');
+  const contentPreview = readStringValue(value, 'contentPreview');
+  const supportedShapes = readStringArrayValue(value, 'supportedShapes');
+  const retryable = readBooleanValue(value, 'retryable');
+  const items = [
+    (() => {
+      const stage = readStringValue(value, 'stage');
+      return stage ? `阶段：${formatSyncStageLabel(stage)}` : null;
+    })(),
+    (() => {
+      const severity = readStringValue(value, 'severity');
+      return severity ? `级别：${formatSyncSeverityLabel(severity)}` : null;
+    })(),
+    errorCode ? `诊断：${formatSyncErrorCodeLabel(errorCode)}` : null,
+    errorCode ? `错误码：${errorCode}` : null,
+    (() => {
+      const format = readStringValue(value, 'format');
+      return format ? `格式：${format}` : null;
+    })(),
+    (() => {
+      const parser = readStringValue(value, 'parser');
+      return parser ? `解析器：${parser}` : null;
+    })(),
+    (() => {
+      const upstreamStatus = readNumberValue(value, 'upstreamStatus');
+      return upstreamStatus !== null ? `HTTP：${upstreamStatus}` : null;
+    })(),
+    (() => {
+      const contentType = readStringValue(value, 'contentType');
+      return contentType ? `类型：${contentType}` : null;
+    })(),
+    (() => {
+      const sourceShape = readStringValue(value, 'sourceShape');
+      return sourceShape ? `结构：${formatSyncSourceShapeLabel(sourceShape)}` : null;
+    })(),
+    (() => {
+      const fetchedBytes = readNumberValue(value, 'fetchedBytes');
+      return fetchedBytes !== null ? `字节：${fetchedBytes}` : null;
+    })(),
+    (() => {
+      const ruleCount = readNumberValue(value, 'ruleCount');
+      return ruleCount !== null ? `规则：${ruleCount}` : null;
+    })(),
+    (() => {
+      const extractedRuleCount = readNumberValue(value, 'extractedRuleCount');
+      return extractedRuleCount !== null ? `提取：${extractedRuleCount}` : null;
+    })(),
+    (() => {
+      const duplicateRuleCount = readNumberValue(value, 'duplicateRuleCount');
+      return duplicateRuleCount !== null ? `重复：${duplicateRuleCount}` : null;
+    })(),
+    (() => {
+      const ignoredLineCount = readNumberValue(value, 'ignoredLineCount');
+      return ignoredLineCount !== null ? `忽略：${ignoredLineCount}` : null;
+    })(),
+    (() => {
+      const durationMs = readNumberValue(value, 'durationMs');
+      return durationMs !== null ? `耗时：${durationMs}ms` : null;
+    })(),
+    retryable === true ? '可重试：是' : retryable === false ? '可重试：否' : null
+  ].filter((item): item is string => Boolean(item));
+
+  return (
+    <>
+      {items.length > 0 ? (
+        <div className="inline-meta">
+          {items.map((item) => <span key={item}>{item}</span>)}
+        </div>
+      ) : null}
+      {reason ? <p className="helper">原因：{reason}</p> : null}
+      {operatorHint ? <p className="helper">建议：{operatorHint}</p> : null}
+      {supportedShapes.length > 0 ? (
+        <>
+          <p className="helper">支持的源结构：</p>
+          <div className="inline-meta">
+            {supportedShapes.map((item) => <span key={item}>{item}</span>)}
+          </div>
+        </>
+      ) : null}
+      {contentPreview ? (
+        <>
+          <p className="helper">上游内容预览：</p>
+          <pre className="json-block">{contentPreview}</pre>
+        </>
+      ) : null}
+      {renderJsonBlock(value)}
+    </>
+  );
+}
+
+function formatAuditActionLabel(action: string): string {
+  if (action === 'user.create') return '创建用户';
+  if (action === 'user.update') return '更新用户';
+  if (action === 'user.reset_token') return '重置用户令牌';
+  if (action === 'user.bind_nodes') return '更新用户节点绑定';
+  if (action === 'node.create') return '创建节点';
+  if (action === 'node.import') return '批量导入节点';
+  if (action === 'node.import_remote') return '同步远程节点源';
+  if (action === 'node.update') return '更新节点';
+  if (action === 'node.delete') return '删除节点';
+  if (action === 'template.create') return '创建模板';
+  if (action === 'template.update') return '更新模板';
+  if (action === 'template.set_default') return '设为默认模板';
+  if (action === 'rule_source.create') return '创建规则源';
+  if (action === 'rule_source.update') return '更新规则源';
+  if (action === 'rule_source.sync') return '同步规则源';
+  if (action === 'cache.rebuild') return '重建缓存';
+  return action;
+}
+
+function formatAuditTargetTypeLabel(targetType: string): string {
+  if (targetType === 'user') return '用户';
+  if (targetType === 'node') return '节点';
+  if (targetType === 'template') return '模板';
+  if (targetType === 'rule_source') return '规则源';
+  if (targetType === 'cache') return '缓存';
+  return targetType;
+}
+
+function formatAuditTargetLabel(log: AuditLogRecord): string {
+  const targetTypeLabel = formatAuditTargetTypeLabel(log.targetType);
+  if (log.targetDisplayName) return `${targetTypeLabel} / ${log.targetDisplayName}`;
+  if (log.targetId) return `${targetTypeLabel} / ${log.targetId}`;
+  return targetTypeLabel;
+}
+
+function getAuditPayloadDetails(log: AuditLogRecord): unknown {
+  if (!isObjectRecord(log.payload)) {
+    return log.payload ?? null;
+  }
+
+  const { _request, ...rest } = log.payload;
+  return Object.keys(rest).length > 0 ? rest : null;
+}
+
+function renderAuditAction(log: AuditLogRecord): JSX.Element {
+  return (
+    <>
+      <div>{formatAuditActionLabel(log.action)}</div>
+      <div className="helper">{log.action}</div>
+    </>
+  );
+}
+
+function renderAuditTarget(log: AuditLogRecord): JSX.Element {
+  return (
+    <>
+      <div>{formatAuditTargetTypeLabel(log.targetType)}</div>
+      {log.targetDisplayName ? <div className="helper">{log.targetDisplayName}</div> : null}
+      {log.targetId ? <div className="helper">{log.targetId}</div> : null}
+    </>
+  );
+}
+
+function renderAuditRequest(log: AuditLogRecord): JSX.Element {
+  const requestMeta = log.requestMeta;
+
+  if (!requestMeta) {
+    return <span>-</span>;
+  }
+
+  const requestPath = requestMeta.method && requestMeta.path
+    ? `${requestMeta.method} ${requestMeta.path}`
+    : requestMeta.method ?? requestMeta.path ?? null;
+  const requestLocation = [requestMeta.country, requestMeta.colo].filter((item): item is string => Boolean(item)).join(' / ');
+  const items = [
+    requestPath,
+    requestMeta.ip ? `IP：${requestMeta.ip}` : null,
+    requestLocation ? `地区：${requestLocation}` : null,
+    requestMeta.rayId ? `Ray：${requestMeta.rayId}` : null
+  ].filter((item): item is string => Boolean(item));
+
+  return (
+    <>
+      {items.length > 0 ? (
+        <div className="inline-meta">
+          {items.map((item) => <span key={item}>{item}</span>)}
+        </div>
+      ) : null}
+      {requestMeta.userAgent ? <div className="helper">{requestMeta.userAgent}</div> : null}
+    </>
+  );
+}
+
+function renderAuditDetails(log: AuditLogRecord): JSX.Element {
+  const payload = getAuditPayloadDetails(log);
+
+  if (payload == null) {
+    return <span>-</span>;
+  }
+
+  return renderJsonBlock(payload);
+}
+
+interface OverviewPanelProps extends ResourceState {
+  loading: boolean;
+  cacheRebuildResult: CacheRebuildPayload | null;
+  onRebuildCaches: () => void;
+}
+
+function OverviewPanel(props: OverviewPanelProps): JSX.Element {
   const latestLog = props.syncLogs[0];
   const latestAudit = props.auditLogs[0];
 
@@ -1756,8 +2310,34 @@ function OverviewPanel(props: ResourceState): JSX.Element {
           <li>规则源同步后，查看同步日志与预览输出</li>
           <li>资源变更后，相关预览与订阅缓存会自动失效</li>
         </ul>
-        {latestLog ? <p className="helper">最近同步：{latestLog.status} / {latestLog.message ?? '-'}</p> : null}
-        {latestAudit ? <p className="helper">最近审计：{latestAudit.action} / {latestAudit.targetType}</p> : null}
+        {latestLog ? <p className="helper">最近同步：{formatSyncStatusLabel(latestLog.status)} / {latestLog.message ?? '-'}</p> : null}
+        {latestAudit ? <p className="helper">最近审计：{formatAuditActionLabel(latestAudit.action)} / {formatAuditTargetLabel(latestAudit)}</p> : null}
+      </article>
+      <article className="panel">
+        <h2>缓存维护</h2>
+        <p className="helper">当模板、规则或节点发生批量调整时，可手动清理现有预览与公开订阅缓存；下一次访问会按最新数据自动重建。</p>
+        <div className="inline-actions">
+          <button
+            type="button"
+            className="secondary"
+            onClick={props.onRebuildCaches}
+            disabled={props.loading || props.users.length === 0}
+          >
+            重建订阅缓存
+          </button>
+        </div>
+        {props.cacheRebuildResult ? (
+          <div className="result-card">
+            <strong>最近一次缓存重建</strong>
+            <span>时间：{props.cacheRebuildResult.rebuiltAt}</span>
+            <span>用户数：{props.cacheRebuildResult.userCount}</span>
+            <span>目标：{props.cacheRebuildResult.targets.join(' / ')}</span>
+            <span>失效请求：{props.cacheRebuildResult.keysRequested} 个缓存键</span>
+          </div>
+        ) : (
+          <p className="helper">当前只会清理缓存，不会主动预热；预览页或公开订阅在下一次访问时会即时生成最新内容。</p>
+        )}
+        {props.users.length === 0 ? <p className="helper">当前还没有用户，无需手动重建缓存。</p> : null}
       </article>
     </section>
   );

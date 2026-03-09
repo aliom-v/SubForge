@@ -1,0 +1,2265 @@
+openapi: 3.1.0
+info:
+  title: SubForge API
+  version: 0.1.0
+  summary: SubForge 管理后台与公开订阅接口规范
+  description: |
+    这是 SubForge 当前 Worker 暴露的正式 OpenAPI 规范入口。
+
+    约定：
+    - 除 `/health`、`/api/setup/status`、`/api/setup/bootstrap`、`/api/admin/login`、`/s/{token}/{target}` 外，其余 `/api/*` 接口默认要求 `Authorization: Bearer <admin-session-token>`。
+    - JSON API 默认使用统一包裹：成功为 `{ "ok": true, "data": ... }`，失败为 `{ "ok": false, "error": ... }`。
+    - 更详细的错误码、缓存头、限流头说明见 `docs/API错误码与响应头说明.md`。
+servers:
+  - url: http://127.0.0.1:8787
+    description: 本地开发 Worker
+  - url: https://{host}
+    description: 已部署实例
+    variables:
+      host:
+        default: example.subforge.dev
+security:
+  - bearerAuth: []
+tags:
+  - name: System
+    description: 健康检查、初始化与基础系统接口
+  - name: Admin
+    description: 管理员会话接口
+  - name: Users
+    description: 用户与用户节点绑定管理
+  - name: Nodes
+    description: 节点 CRUD 与批量导入
+  - name: Templates
+    description: 订阅模板管理
+  - name: RuleSources
+    description: 规则源管理与即时同步
+  - name: Logs
+    description: 同步日志与审计日志
+  - name: Cache
+    description: 缓存清理与重建
+  - name: Preview
+    description: 后台订阅预览接口
+  - name: Subscription
+    description: 公开订阅输出接口
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: 健康检查
+      description: 返回服务名、当前环境、示例缓存 key 与服务时间。
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                healthyDevelopment:
+                  summary: 本地开发实例健康检查
+                  value:
+                    ok: true
+                    service: SubForge
+                    env: development
+                    cacheKeyExample: sub:mihomo:demo-token
+                    time: '2026-03-09T12:30:00.000Z'
+
+  /api/setup/status:
+    get:
+      tags: [System]
+      summary: 查询初始化状态
+      operationId: getSetupStatus
+      security: []
+      responses:
+        '200':
+          description: 返回是否已初始化及管理员数量
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupStatusResponse'
+              examples:
+                setupNotInitialized:
+                  summary: 首次安装前状态
+                  value:
+                    ok: true
+                    data:
+                      initialized: false
+                      adminCount: 0
+                setupInitialized:
+                  summary: 已创建管理员后的状态
+                  value:
+                    ok: true
+                    data:
+                      initialized: true
+                      adminCount: 1
+
+  /api/setup/bootstrap:
+    post:
+      tags: [System]
+      summary: 首次初始化管理员
+      description: 仅在系统尚未创建管理员时可调用，成功后直接返回登录 token。
+      operationId: bootstrapSetup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupBootstrapRequest'
+            examples:
+              firstAdmin:
+                summary: 创建首个管理员
+                value:
+                  username: admin
+                  password: changeMe123
+      responses:
+        '201':
+          description: 初始化完成
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupBootstrapResponse'
+              examples:
+                bootstrapSuccess:
+                  summary: 初始化后直接获得管理员登录态
+                  value:
+                    ok: true
+                    data:
+                      initialized: true
+                      token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.bootstrap-demo
+                      admin:
+                        id: admin_01hsetup
+                        username: admin
+                        role: admin
+                        status: active
+                        createdAt: '2026-03-09T12:30:00.000Z'
+                        updatedAt: '2026-03-09T12:30:00.000Z'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/admin/login:
+    post:
+      tags: [Admin]
+      summary: 管理员登录
+      description: |
+        使用用户名和密码登录。
+
+        该接口受管理员登录限流保护，成功时会返回清理后的限流头；失败或超限时也会附带限流相关头部。
+      operationId: adminLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+            examples:
+              loginRequest:
+                summary: 管理员登录请求
+                value:
+                  username: admin
+                  password: changeMe123
+      responses:
+        '200':
+          description: 登录成功
+          headers:
+            x-subforge-rate-limit-scope:
+              $ref: '#/components/headers/XSubforgeRateLimitScope'
+            x-subforge-rate-limit-cleared:
+              $ref: '#/components/headers/XSubforgeRateLimitCleared'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLoginResponse'
+              examples:
+                loginSuccess:
+                  summary: 登录成功并清理限流状态
+                  value:
+                    ok: true
+                    data:
+                      token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.login-demo
+                      admin:
+                        id: admin_01hsetup
+                        username: admin
+                        role: admin
+                        status: active
+                        createdAt: '2026-03-09T12:30:00.000Z'
+                        updatedAt: '2026-03-09T12:35:00.000Z'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+
+  /api/admin/me:
+    get:
+      tags: [Admin]
+      summary: 查询当前管理员
+      operationId: getAdminMe
+      responses:
+        '200':
+          description: 当前管理员信息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminMeResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/admin/logout:
+    post:
+      tags: [Admin]
+      summary: 退出登录
+      description: '当前为轻量实现，返回 `{ loggedOut: true }`，不做服务端 token 黑名单管理。'
+      operationId: adminLogout
+      responses:
+        '200':
+          description: 已退出
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/users:
+    get:
+      tags: [Users]
+      summary: 获取用户列表
+      operationId: listUsers
+      responses:
+        '200':
+          description: 用户列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+              examples:
+                userList:
+                  summary: 含启用与停用用户的列表
+                  value:
+                    ok: true
+                    data:
+                      - id: user_01halice
+                        name: Alice
+                        token: subtoken_alice
+                        status: active
+                        expiresAt: '2026-12-31T23:59:59.000Z'
+                        remark: core user
+                        createdAt: '2026-03-08T08:00:00.000Z'
+                        updatedAt: '2026-03-09T08:00:00.000Z'
+                      - id: user_01hbob
+                        name: Bob
+                        token: subtoken_bob
+                        status: disabled
+                        expiresAt: null
+                        remark: null
+                        createdAt: '2026-03-07T08:00:00.000Z'
+                        updatedAt: '2026-03-09T07:00:00.000Z'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      tags: [Users]
+      summary: 创建用户
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+            examples:
+              createUserRequest:
+                summary: 创建带到期时间的用户
+                value:
+                  name: Alice
+                  expiresAt: '2026-12-31T23:59:59.000Z'
+                  remark: core user
+      responses:
+        '201':
+          description: 用户已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+              examples:
+                userCreated:
+                  summary: 创建用户并返回订阅 token
+                  value:
+                    ok: true
+                    data:
+                      id: user_01halice
+                      name: Alice
+                      token: subtoken_alice
+                      status: active
+                      expiresAt: '2026-12-31T23:59:59.000Z'
+                      remark: core user
+                      createdAt: '2026-03-09T12:40:00.000Z'
+                      updatedAt: '2026-03-09T12:40:00.000Z'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/users/{userId}:
+    patch:
+      tags: [Users]
+      summary: 更新用户
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: 更新后的用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/users/{userId}/reset-token:
+    post:
+      tags: [Users]
+      summary: 重置用户 token
+      operationId: resetUserToken
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: 返回重置后的用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/users/{userId}/nodes:
+    get:
+      tags: [Users]
+      summary: 查询用户绑定节点
+      operationId: listUserNodes
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: 用户绑定节点列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserNodeBindingListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      tags: [Users]
+      summary: 替换用户绑定节点
+      operationId: replaceUserNodes
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceUserNodesRequest'
+      responses:
+        '200':
+          description: 返回绑定结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplaceUserNodesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/nodes:
+    get:
+      tags: [Nodes]
+      summary: 获取节点列表
+      operationId: listNodes
+      responses:
+        '200':
+          description: 节点列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      tags: [Nodes]
+      summary: 创建节点
+      operationId: createNode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNodeRequest'
+            examples:
+              createNodeRequest:
+                summary: 手动创建带鉴权信息的节点
+                value:
+                  name: hk-edge-01
+                  protocol: socks5
+                  server: hk1.example.com
+                  port: 1080
+                  sourceType: manual
+                  enabled: true
+                  credentials:
+                    username: demo-user
+                    password: demo-pass
+                  params:
+                    udp: true
+      responses:
+        '201':
+          description: 节点已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+              examples:
+                nodeCreated:
+                  summary: 手动节点创建成功
+                  value:
+                    ok: true
+                    data:
+                      id: node_01hhk1
+                      name: hk-edge-01
+                      protocol: socks5
+                      server: hk1.example.com
+                      port: 1080
+                      sourceType: manual
+                      sourceId: null
+                      enabled: true
+                      lastSyncAt: null
+                      credentials:
+                        username: demo-user
+                        password: demo-pass
+                      params:
+                        udp: true
+                      createdAt: '2026-03-09T12:45:00.000Z'
+                      updatedAt: '2026-03-09T12:45:00.000Z'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/nodes/import:
+    post:
+      tags: [Nodes]
+      summary: 批量导入节点
+      description: '接受 JSON 数组，或形如 `{ "nodes": [...] }` 的对象；单次最多 200 条。'
+      operationId: importNodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeImportRequest'
+            examples:
+              arrayNodeImportPayload:
+                summary: 直接传入节点数组
+                value:
+                  - name: hk-edge-01
+                    protocol: socks5
+                    server: hk1.example.com
+                    port: 1080
+                    enabled: true
+                  - name: sg-edge-01
+                    protocol: vmess
+                    server: sg1.example.com
+                    port: 443
+                    enabled: true
+              wrappedNodeImportPayload:
+                summary: '使用 `{ nodes: [...] }` 包裹'
+                value:
+                  nodes:
+                    - name: hk-edge-01
+                      protocol: socks5
+                      server: hk1.example.com
+                      port: 1080
+                      enabled: true
+                    - name: sg-edge-01
+                      protocol: vmess
+                      server: sg1.example.com
+                      port: 443
+                      enabled: true
+      responses:
+        '200':
+          description: 导入完成但未产生变更
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeImportResponse'
+        '201':
+          description: 导入完成且产生变更
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeImportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/nodes/import/remote:
+    post:
+      tags: [Nodes]
+      summary: 拉取远程节点源并同步
+      description: '远端需返回 JSON 数组或 `{"nodes": [...]}`，系统会按节点指纹去重，并禁用当前来源下已过期的远程节点。'
+      operationId: importRemoteNodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoteNodeImportRequest'
+            examples:
+              remoteSourceRequest:
+                summary: 拉取一个远程节点 JSON 源
+                value:
+                  sourceUrl: https://example.com/subforge/nodes.json
+      responses:
+        '200':
+          description: 同步完成但未产生变更
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeImportResponse'
+              examples:
+                remoteSyncUnchanged:
+                  summary: 远程节点源未发生变化
+                  value:
+                    ok: true
+                    data:
+                      importedCount: 24
+                      importedAt: '2026-03-09T12:50:00.000Z'
+                      createdCount: 0
+                      updatedCount: 0
+                      unchangedCount: 24
+                      duplicateCount: 2
+                      disabledCount: 0
+                      sourceType: remote
+                      sourceId: https://example.com/subforge/nodes.json
+                      changed: false
+        '201':
+          description: 同步完成且产生变更
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeImportResponse'
+              examples:
+                remoteSyncChanged:
+                  summary: 远程节点源已更新并禁用旧节点
+                  value:
+                    ok: true
+                    data:
+                      importedCount: 24
+                      importedAt: '2026-03-09T12:52:00.000Z'
+                      createdCount: 3
+                      updatedCount: 5
+                      unchangedCount: 16
+                      duplicateCount: 2
+                      disabledCount: 1
+                      sourceType: remote
+                      sourceId: https://example.com/subforge/nodes.json
+                      changed: true
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/nodes/{nodeId}:
+    patch:
+      tags: [Nodes]
+      summary: 更新节点
+      operationId: updateNode
+      parameters:
+        - $ref: '#/components/parameters/NodeIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNodeRequest'
+      responses:
+        '200':
+          description: 更新后的节点
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Nodes]
+      summary: 删除节点
+      operationId: deleteNode
+      parameters:
+        - $ref: '#/components/parameters/NodeIdPath'
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteNodeResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/templates:
+    get:
+      tags: [Templates]
+      summary: 获取模板列表
+      operationId: listTemplates
+      responses:
+        '200':
+          description: 模板列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      tags: [Templates]
+      summary: 创建模板
+      operationId: createTemplate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+            examples:
+              createTemplateRequest:
+                summary: 创建 Mihomo 默认模板
+                value:
+                  name: mihomo-default
+                  targetType: mihomo
+                  content: |
+                    proxies:
+                    {{proxies}}
+                    proxy-groups:
+                    {{proxy_groups}}
+                    rules:
+                    {{rules}}
+                  version: 1
+                  isDefault: true
+                  enabled: true
+      responses:
+        '201':
+          description: 模板已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+              examples:
+                templateCreated:
+                  summary: 模板创建成功
+                  value:
+                    ok: true
+                    data:
+                      id: tpl_01hmihomo
+                      name: mihomo-default
+                      targetType: mihomo
+                      content: |
+                        proxies:
+                        {{proxies}}
+                        proxy-groups:
+                        {{proxy_groups}}
+                        rules:
+                        {{rules}}
+                      version: 1
+                      isDefault: true
+                      status: enabled
+                      createdAt: '2026-03-09T13:00:00.000Z'
+                      updatedAt: '2026-03-09T13:00:00.000Z'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/templates/{templateId}:
+    patch:
+      tags: [Templates]
+      summary: 更新模板
+      operationId: updateTemplate
+      parameters:
+        - $ref: '#/components/parameters/TemplateIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateRequest'
+      responses:
+        '200':
+          description: 更新后的模板
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/templates/{templateId}/set-default:
+    post:
+      tags: [Templates]
+      summary: 设为默认模板
+      operationId: setDefaultTemplate
+      parameters:
+        - $ref: '#/components/parameters/TemplateIdPath'
+      responses:
+        '200':
+          description: 已切换默认模板
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/rule-sources:
+    get:
+      tags: [RuleSources]
+      summary: 获取规则源列表
+      operationId: listRuleSources
+      responses:
+        '200':
+          description: 规则源列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSourceListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      tags: [RuleSources]
+      summary: 创建规则源
+      operationId: createRuleSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRuleSourceRequest'
+            examples:
+              createRuleSourceRequest:
+                summary: 创建一个 YAML 规则源
+                value:
+                  name: base-rules
+                  sourceUrl: https://example.com/rules/base.yaml
+                  format: yaml
+                  enabled: true
+      responses:
+        '201':
+          description: 规则源已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSourceResponse'
+              examples:
+                ruleSourceCreated:
+                  summary: 规则源创建成功
+                  value:
+                    ok: true
+                    data:
+                      id: rs_01hbase
+                      name: base-rules
+                      sourceUrl: https://example.com/rules/base.yaml
+                      format: yaml
+                      enabled: true
+                      lastSyncAt: null
+                      lastSyncStatus: null
+                      failureCount: 0
+                      createdAt: '2026-03-09T13:05:00.000Z'
+                      updatedAt: '2026-03-09T13:05:00.000Z'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/rule-sources/{ruleSourceId}:
+    patch:
+      tags: [RuleSources]
+      summary: 更新规则源
+      operationId: updateRuleSource
+      parameters:
+        - $ref: '#/components/parameters/RuleSourceIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRuleSourceRequest'
+      responses:
+        '200':
+          description: 更新后的规则源
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSourceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/rule-sources/{ruleSourceId}/sync:
+    post:
+      tags: [RuleSources]
+      summary: 立即同步规则源
+      operationId: syncRuleSource
+      parameters:
+        - $ref: '#/components/parameters/RuleSourceIdPath'
+      responses:
+        '200':
+          description: 同步结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSourceSyncResponse'
+              examples:
+                ruleSourceSyncUpdated:
+                  summary: 规则快照已更新
+                  value:
+                    ok: true
+                    data:
+                      sourceId: rs_01hbase
+                      sourceName: base-rules
+                      status: success
+                      message: snapshot updated (128 rules)
+                      changed: true
+                      ruleCount: 128
+                      details:
+                        sourceUrl: https://example.com/rules/base.yaml
+                        format: yaml
+                        durationMs: 382
+                        stage: compare
+                        severity: info
+                        contentType: text/yaml; charset=utf-8
+                        upstreamStatus: 200
+                        fetchedBytes: 4096
+                        rawLineCount: 146
+                        extractedRuleCount: 128
+                        duplicateRuleCount: 4
+                        ignoredLineCount: 14
+                        ruleCount: 128
+                        contentHash: b1946ac92492d2347c6235b4d2611184
+                ruleSourceSyncUnchanged:
+                  summary: 规则内容未变化
+                  value:
+                    ok: true
+                    data:
+                      sourceId: rs_01hbase
+                      sourceName: base-rules
+                      status: skipped
+                      message: content unchanged (128 rules)
+                      changed: false
+                      ruleCount: 128
+                      details:
+                        sourceUrl: https://example.com/rules/base.yaml
+                        format: yaml
+                        durationMs: 211
+                        stage: compare
+                        severity: info
+                        contentType: text/yaml; charset=utf-8
+                        upstreamStatus: 200
+                        fetchedBytes: 4096
+                        ruleCount: 128
+                        reason: content unchanged
+                        contentHash: b1946ac92492d2347c6235b4d2611184
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/sync-logs:
+    get:
+      tags: [Logs]
+      summary: 获取同步日志
+      operationId: listSyncLogs
+      responses:
+        '200':
+          description: 最近同步日志
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncLogListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/audit-logs:
+    get:
+      tags: [Logs]
+      summary: 获取审计日志
+      operationId: listAuditLogs
+      responses:
+        '200':
+          description: 最近审计日志
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/cache/rebuild:
+    post:
+      tags: [Cache]
+      summary: 手动重建订阅缓存
+      description: 当前实现会清理相关缓存 key，不主动预热。
+      operationId: rebuildCache
+      responses:
+        '200':
+          description: 缓存重建请求结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheRebuildResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/preview/{userId}/{target}:
+    get:
+      tags: [Preview]
+      summary: 获取后台订阅预览
+      description: 返回 JSON 包裹，而不是直接返回订阅原文。
+      operationId: getPreview
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+        - $ref: '#/components/parameters/TargetPath'
+      responses:
+        '200':
+          description: 预览内容
+          headers:
+            x-subforge-preview-cache:
+              $ref: '#/components/headers/XSubforgePreviewCache'
+            x-subforge-cache-key:
+              $ref: '#/components/headers/XSubforgeCacheKey'
+            x-subforge-cache-scope:
+              $ref: '#/components/headers/XSubforgePreviewCacheScope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewResponse'
+              examples:
+                previewMiss:
+                  summary: 首次预览命中 miss 并写入缓存
+                  value:
+                    ok: true
+                    data:
+                      cacheKey: preview:mihomo:user_01halice
+                      mimeType: text/yaml; charset=utf-8
+                      content: |
+                        proxies:
+                          - name: hk-edge-01
+                            type: socks5
+                            server: hk1.example.com
+                            port: 1080
+                        proxy-groups:
+                          - name: auto
+                            type: select
+                            proxies:
+                              - hk-edge-01
+                        rules:
+                          - MATCH,auto
+                      metadata:
+                        userId: user_01halice
+                        nodeCount: 1
+                        ruleSetCount: 1
+                        templateName: mihomo-default
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /s/{token}/{target}:
+    get:
+      tags: [Subscription]
+      summary: 获取公开订阅
+      description: |
+        返回订阅原文，而不是统一 JSON 包裹。
+
+        - `mihomo` 返回 `text/yaml; charset=utf-8`
+        - `singbox` 返回 `application/json; charset=utf-8`
+      operationId: getPublicSubscription
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TokenPath'
+        - $ref: '#/components/parameters/TargetPath'
+      responses:
+        '200':
+          description: 订阅原文
+          headers:
+            x-subforge-rate-limit-scope:
+              $ref: '#/components/headers/XSubforgeRateLimitScope'
+            x-subforge-rate-limit-limit:
+              $ref: '#/components/headers/XSubforgeRateLimitLimit'
+            x-subforge-rate-limit-remaining:
+              $ref: '#/components/headers/XSubforgeRateLimitRemaining'
+            x-subforge-rate-limit-reset:
+              $ref: '#/components/headers/XSubforgeRateLimitReset'
+            x-subforge-cache:
+              $ref: '#/components/headers/XSubforgeCache'
+            x-subforge-cache-key:
+              $ref: '#/components/headers/XSubforgeCacheKey'
+            x-subforge-cache-scope:
+              $ref: '#/components/headers/XSubforgeSubscriptionCacheScope'
+          content:
+            text/yaml:
+              schema:
+                type: string
+              examples:
+                mihomoSubscription:
+                  summary: Mihomo 订阅原文
+                  value: |
+                    proxies:
+                      - name: hk-edge-01
+                        type: socks5
+                        server: hk1.example.com
+                        port: 1080
+                    proxy-groups:
+                      - name: auto
+                        type: select
+                        proxies:
+                          - hk-edge-01
+                    rules:
+                      - MATCH,auto
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+              examples:
+                singboxSubscription:
+                  summary: sing-box 订阅原文
+                  value:
+                    outbounds:
+                      - type: socks
+                        tag: hk-edge-01
+                        server: hk1.example.com
+                        server_port: 1080
+                    route:
+                      rules:
+                        - outbound: hk-edge-01
+                          network: tcp,udp
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      description: 用户 ID
+      schema:
+        type: string
+    NodeIdPath:
+      name: nodeId
+      in: path
+      required: true
+      description: 节点 ID
+      schema:
+        type: string
+    TemplateIdPath:
+      name: templateId
+      in: path
+      required: true
+      description: 模板 ID
+      schema:
+        type: string
+    RuleSourceIdPath:
+      name: ruleSourceId
+      in: path
+      required: true
+      description: 规则源 ID
+      schema:
+        type: string
+    TokenPath:
+      name: token
+      in: path
+      required: true
+      description: 用户公开订阅 token
+      schema:
+        type: string
+    TargetPath:
+      name: target
+      in: path
+      required: true
+      description: 订阅目标类型
+      schema:
+        $ref: '#/components/schemas/SubscriptionTarget'
+  headers:
+    XSubforgeRateLimitScope:
+      description: 限流作用域
+      schema:
+        type: string
+        examples: [admin_login, subscription]
+    XSubforgeRateLimitCleared:
+      description: 登录成功后是否清理登录限流状态
+      schema:
+        type: string
+        enum: ['true']
+    XSubforgeRateLimitLimit:
+      description: 限流窗口上限
+      schema:
+        type: string
+    XSubforgeRateLimitRemaining:
+      description: 限流窗口剩余额度
+      schema:
+        type: string
+    XSubforgeRateLimitReset:
+      description: 限流窗口重置时间
+      schema:
+        type: string
+        format: date-time
+    RetryAfter:
+      description: 距离可重试的秒数
+      schema:
+        type: string
+    XSubforgePreviewCache:
+      description: 预览缓存命中状态
+      schema:
+        type: string
+        enum: [hit, miss]
+    XSubforgeCache:
+      description: 公开订阅缓存命中状态
+      schema:
+        type: string
+        enum: [hit, miss]
+    XSubforgeCacheKey:
+      description: 当前响应对应的缓存 key
+      schema:
+        type: string
+    XSubforgePreviewCacheScope:
+      description: 预览缓存作用域
+      schema:
+        type: string
+        enum: [preview]
+    XSubforgeSubscriptionCacheScope:
+      description: 公开订阅缓存作用域
+      schema:
+        type: string
+        enum: [subscription]
+  responses:
+    BadRequestError:
+      description: 参数校验失败、业务规则不满足或目标类型不支持
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          examples:
+            invalidJsonBody:
+              summary: 请求体不是合法 JSON
+              value:
+                ok: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: request body must be valid JSON
+            unsupportedTarget:
+              summary: 订阅目标类型不支持
+              value:
+                ok: false
+                error:
+                  code: UNSUPPORTED_TARGET
+                  message: unsupported subscription target
+    UnauthorizedError:
+      description: 缺少或无效 Bearer token，或登录凭证错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          examples:
+            missingBearerToken:
+              summary: 缺少管理员 Bearer token
+              value:
+                ok: false
+                error:
+                  code: UNAUTHORIZED
+                  message: missing bearer token
+            invalidAdminSession:
+              summary: Bearer token 无效
+              value:
+                ok: false
+                error:
+                  code: UNAUTHORIZED
+                  message: invalid admin session token
+    ForbiddenError:
+      description: 当前操作被禁止，例如初始化已完成后再次 bootstrap
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          examples:
+            setupAlreadyCompleted:
+              summary: 初始化已完成后再次 bootstrap
+              value:
+                ok: false
+                error:
+                  code: FORBIDDEN
+                  message: setup has already been completed
+            adminUnavailable:
+              summary: 管理员账号不可用
+              value:
+                ok: false
+                error:
+                  code: FORBIDDEN
+                  message: admin account is unavailable
+    NotFoundError:
+      description: 资源或路由不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          examples:
+            noRouteMatched:
+              summary: 路由不存在
+              value:
+                ok: false
+                error:
+                  code: NOT_FOUND
+                  message: No route matches /api/not-exists
+            previewDataNotFound:
+              summary: 预览数据不存在
+              value:
+                ok: false
+                error:
+                  code: NOT_FOUND
+                  message: preview data not found
+            subscriptionUserNotFound:
+              summary: 订阅 token 或模板上下文不存在
+              value:
+                ok: false
+                error:
+                  code: SUBSCRIPTION_USER_NOT_FOUND
+                  message: subscription token or template not found
+    TooManyRequestsError:
+      description: 登录或公开订阅请求超过频率限制
+      headers:
+        x-subforge-rate-limit-scope:
+          $ref: '#/components/headers/XSubforgeRateLimitScope'
+        x-subforge-rate-limit-limit:
+          $ref: '#/components/headers/XSubforgeRateLimitLimit'
+        x-subforge-rate-limit-remaining:
+          $ref: '#/components/headers/XSubforgeRateLimitRemaining'
+        x-subforge-rate-limit-reset:
+          $ref: '#/components/headers/XSubforgeRateLimitReset'
+        retry-after:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          examples:
+            tooManyLoginAttempts:
+              summary: 管理员登录超限
+              value:
+                ok: false
+                error:
+                  code: TOO_MANY_REQUESTS
+                  message: too many login attempts, please retry later
+                  details:
+                    scope: admin_login
+                    limit: 5
+                    remaining: 0
+                    retryAfterSec: 600
+                    resetAt: '2026-03-09T12:40:00.000Z'
+                    current: 6
+            subscriptionRateLimited:
+              summary: 公开订阅请求超限
+              value:
+                ok: false
+                error:
+                  code: TOO_MANY_REQUESTS
+                  message: subscription request rate limit exceeded
+                  details:
+                    scope: subscription
+                    limit: 60
+                    remaining: 0
+                    retryAfterSec: 60
+                    resetAt: '2026-03-09T12:35:00.000Z'
+                    current: 61
+  schemas:
+    ApiSuccessEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        data: {}
+    ApiErrorEnvelope:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          $ref: '#/components/schemas/AppError'
+    AppError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - NOT_FOUND
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - TOO_MANY_REQUESTS
+            - VALIDATION_FAILED
+            - SUBSCRIPTION_USER_NOT_FOUND
+            - USER_DISABLED
+            - USER_EXPIRED
+            - NO_NODES_AVAILABLE
+            - TEMPLATE_NOT_FOUND
+            - UNSUPPORTED_TARGET
+            - RENDERER_NOT_FOUND
+            - TEMPLATE_TARGET_MISMATCH
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+    SubscriptionTarget:
+      type: string
+      enum: [mihomo, singbox]
+    UserStatus:
+      type: string
+      enum: [active, disabled]
+    AdminStatus:
+      type: string
+      enum: [active, disabled]
+    AdminRole:
+      type: string
+      enum: [admin]
+    NodeSourceType:
+      type: string
+      enum: [manual, remote]
+    TemplateStatus:
+      type: string
+      enum: [enabled, disabled]
+    RuleSourceFormat:
+      type: string
+      enum: [yaml, json, text]
+    SyncLogStatus:
+      type: string
+      enum: [success, failed, skipped]
+    JsonObject:
+      type: object
+      additionalProperties: true
+    HealthResponse:
+      type: object
+      required: [ok, service, env, cacheKeyExample, time]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        service:
+          type: string
+        env:
+          type: string
+        cacheKeyExample:
+          type: string
+        time:
+          type: string
+          format: date-time
+    SetupStatusData:
+      type: object
+      required: [initialized, adminCount]
+      properties:
+        initialized:
+          type: boolean
+        adminCount:
+          type: integer
+          minimum: 0
+    SetupStatusResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/SetupStatusData'
+    AdminRecord:
+      type: object
+      required: [id, username, role, status, createdAt]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        role:
+          $ref: '#/components/schemas/AdminRole'
+        status:
+          $ref: '#/components/schemas/AdminStatus'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AdminLoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+    AdminAuthData:
+      type: object
+      required: [token, admin]
+      properties:
+        token:
+          type: string
+        admin:
+          $ref: '#/components/schemas/AdminRecord'
+    AdminLoginResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/AdminAuthData'
+    AdminMeResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/AdminRecord'
+    LogoutData:
+      type: object
+      required: [loggedOut]
+      properties:
+        loggedOut:
+          type: boolean
+          enum: [true]
+    LogoutResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/LogoutData'
+    SetupBootstrapRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+        password:
+          type: string
+          format: password
+          minLength: 8
+    SetupBootstrapData:
+      type: object
+      required: [initialized, token, admin]
+      properties:
+        initialized:
+          type: boolean
+          enum: [true]
+        token:
+          type: string
+        admin:
+          $ref: '#/components/schemas/AdminRecord'
+    SetupBootstrapResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/SetupBootstrapData'
+    UserRecord:
+      type: object
+      required: [id, name, token, status, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        token:
+          type: string
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+        remark:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateUserRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+        remark:
+          type: [string, 'null']
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+        remark:
+          type: [string, 'null']
+    UserResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UserRecord'
+    UserListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserRecord'
+    UserNodeBinding:
+      type: object
+      required: [id, userId, nodeId, enabled, createdAt]
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        nodeId:
+          type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    UserNodeBindingListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserNodeBinding'
+    ReplaceUserNodesRequest:
+      type: object
+      required: [nodeIds]
+      properties:
+        nodeIds:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+    ReplaceUserNodesData:
+      type: object
+      required: [userId, nodeIds]
+      properties:
+        userId:
+          type: string
+        nodeIds:
+          type: array
+          items:
+            type: string
+    ReplaceUserNodesResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ReplaceUserNodesData'
+    NodeRecord:
+      type: object
+      required: [id, name, protocol, server, port, sourceType, enabled, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        protocol:
+          type: string
+        server:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        sourceType:
+          $ref: '#/components/schemas/NodeSourceType'
+        sourceId:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        lastSyncAt:
+          type: [string, 'null']
+          format: date-time
+        credentials:
+          $ref: '#/components/schemas/JsonObject'
+        params:
+          $ref: '#/components/schemas/JsonObject'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateNodeRequest:
+      type: object
+      required: [name, protocol, server, port]
+      properties:
+        name:
+          type: string
+        protocol:
+          type: string
+        server:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        sourceType:
+          $ref: '#/components/schemas/NodeSourceType'
+        sourceId:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        credentials:
+          $ref: '#/components/schemas/JsonObject'
+        params:
+          $ref: '#/components/schemas/JsonObject'
+    UpdateNodeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        protocol:
+          type: string
+        server:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        sourceType:
+          $ref: '#/components/schemas/NodeSourceType'
+        sourceId:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        credentials:
+          $ref: '#/components/schemas/JsonObject'
+        params:
+          $ref: '#/components/schemas/JsonObject'
+    NodeResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/NodeRecord'
+    NodeListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/NodeRecord'
+    ImportedNodeItem:
+      type: object
+      required: [name, protocol, server, port]
+      properties:
+        name:
+          type: string
+        protocol:
+          type: string
+        server:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        enabled:
+          type: boolean
+        credentials:
+          $ref: '#/components/schemas/JsonObject'
+        params:
+          $ref: '#/components/schemas/JsonObject'
+    NodeImportRequest:
+      oneOf:
+        - type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ImportedNodeItem'
+        - type: object
+          required: [nodes]
+          properties:
+            nodes:
+              type: array
+              minItems: 1
+              maxItems: 200
+              items:
+                $ref: '#/components/schemas/ImportedNodeItem'
+    RemoteNodeImportRequest:
+      type: object
+      required: [sourceUrl]
+      properties:
+        sourceUrl:
+          type: string
+          format: uri
+    NodeImportResult:
+      type: object
+      required:
+        - importedCount
+        - importedAt
+        - createdCount
+        - updatedCount
+        - unchangedCount
+        - duplicateCount
+        - disabledCount
+        - sourceType
+        - changed
+      properties:
+        importedCount:
+          type: integer
+          minimum: 0
+        importedAt:
+          type: string
+          format: date-time
+        createdCount:
+          type: integer
+          minimum: 0
+        updatedCount:
+          type: integer
+          minimum: 0
+        unchangedCount:
+          type: integer
+          minimum: 0
+        duplicateCount:
+          type: integer
+          minimum: 0
+        disabledCount:
+          type: integer
+          minimum: 0
+        sourceType:
+          $ref: '#/components/schemas/NodeSourceType'
+        sourceId:
+          type: [string, 'null']
+          description: 手动导入时通常为空；远程同步时为 canonical source URL
+        changed:
+          type: boolean
+    NodeImportResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/NodeImportResult'
+    DeleteNodeData:
+      type: object
+      required: [deleted, nodeId]
+      properties:
+        deleted:
+          type: boolean
+          enum: [true]
+        nodeId:
+          type: string
+    DeleteNodeResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DeleteNodeData'
+    TemplateRecord:
+      type: object
+      required: [id, name, targetType, content, version, isDefault, status, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        targetType:
+          $ref: '#/components/schemas/SubscriptionTarget'
+        content:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        isDefault:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/TemplateStatus'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateTemplateRequest:
+      type: object
+      required: [name, targetType, content]
+      properties:
+        name:
+          type: string
+        targetType:
+          $ref: '#/components/schemas/SubscriptionTarget'
+        content:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        isDefault:
+          type: boolean
+        enabled:
+          type: boolean
+    UpdateTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        content:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        isDefault:
+          type: boolean
+        enabled:
+          type: boolean
+    TemplateResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TemplateRecord'
+    TemplateListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TemplateRecord'
+    RuleSourceRecord:
+      type: object
+      required: [id, name, sourceUrl, format, enabled, failureCount, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        sourceUrl:
+          type: string
+          format: uri
+        format:
+          $ref: '#/components/schemas/RuleSourceFormat'
+        enabled:
+          type: boolean
+        lastSyncAt:
+          type: [string, 'null']
+          format: date-time
+        lastSyncStatus:
+          oneOf:
+            - $ref: '#/components/schemas/SyncLogStatus'
+            - type: 'null'
+        failureCount:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateRuleSourceRequest:
+      type: object
+      required: [name, sourceUrl, format]
+      properties:
+        name:
+          type: string
+        sourceUrl:
+          type: string
+          format: uri
+        format:
+          $ref: '#/components/schemas/RuleSourceFormat'
+        enabled:
+          type: boolean
+    UpdateRuleSourceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        sourceUrl:
+          type: string
+          format: uri
+        format:
+          $ref: '#/components/schemas/RuleSourceFormat'
+        enabled:
+          type: boolean
+    RuleSourceResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RuleSourceRecord'
+    RuleSourceListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/RuleSourceRecord'
+    RuleSourceSyncDetails:
+      type: object
+      required: [sourceUrl, format, durationMs]
+      properties:
+        sourceUrl:
+          type: string
+          format: uri
+        format:
+          $ref: '#/components/schemas/RuleSourceFormat'
+        durationMs:
+          type: integer
+          minimum: 0
+        stage:
+          type: string
+          enum: [fetch, parse, compare]
+        severity:
+          type: string
+          enum: [info, warning, error]
+        errorCode:
+          type: string
+        parser:
+          $ref: '#/components/schemas/RuleSourceFormat'
+        contentType:
+          type: string
+        sourceShape:
+          type: string
+        rawLineCount:
+          type: integer
+          minimum: 0
+        extractedRuleCount:
+          type: integer
+          minimum: 0
+        duplicateRuleCount:
+          type: integer
+          minimum: 0
+        ignoredLineCount:
+          type: integer
+          minimum: 0
+        upstreamStatus:
+          type: integer
+          minimum: 100
+          maximum: 599
+        fetchedBytes:
+          type: integer
+          minimum: 0
+        ruleCount:
+          type: integer
+          minimum: 0
+        contentHash:
+          type: string
+        reason:
+          type: string
+        retryable:
+          type: boolean
+        operatorHint:
+          type: string
+        supportedShapes:
+          type: array
+          items:
+            type: string
+        contentPreview:
+          type: string
+    RuleSourceSyncResult:
+      type: object
+      required: [sourceId, sourceName, status, message, changed, ruleCount]
+      properties:
+        sourceId:
+          type: string
+        sourceName:
+          type: string
+        status:
+          $ref: '#/components/schemas/SyncLogStatus'
+        message:
+          type: string
+        changed:
+          type: boolean
+        ruleCount:
+          type: integer
+          minimum: 0
+        details:
+          $ref: '#/components/schemas/RuleSourceSyncDetails'
+    RuleSourceSyncResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RuleSourceSyncResult'
+    SyncLogRecord:
+      type: object
+      required: [id, sourceType, status, createdAt]
+      properties:
+        id:
+          type: string
+        sourceType:
+          type: string
+        sourceId:
+          type: [string, 'null']
+        status:
+          $ref: '#/components/schemas/SyncLogStatus'
+        message:
+          type: [string, 'null']
+        details:
+          oneOf:
+            - $ref: '#/components/schemas/JsonObject'
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+    SyncLogListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/SyncLogRecord'
+    AuditRequestMeta:
+      type: object
+      properties:
+        ip:
+          type: [string, 'null']
+        country:
+          type: [string, 'null']
+        colo:
+          type: [string, 'null']
+        userAgent:
+          type: [string, 'null']
+        method:
+          type: [string, 'null']
+        path:
+          type: [string, 'null']
+        rayId:
+          type: [string, 'null']
+    AuditLogRecord:
+      type: object
+      required: [id, actorAdminId, action, targetType, createdAt]
+      properties:
+        id:
+          type: string
+        actorAdminId:
+          type: string
+        actorAdminUsername:
+          type: [string, 'null']
+        action:
+          type: string
+        targetType:
+          type: string
+        targetId:
+          type: [string, 'null']
+        targetDisplayName:
+          type: [string, 'null']
+        requestMeta:
+          oneOf:
+            - $ref: '#/components/schemas/AuditRequestMeta'
+            - type: 'null'
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/JsonObject'
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+    AuditLogListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/AuditLogRecord'
+    CacheRebuildResult:
+      type: object
+      required: [userCount, targets, keysRequested, rebuiltAt]
+      properties:
+        userCount:
+          type: integer
+          minimum: 0
+        targets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubscriptionTarget'
+        keysRequested:
+          type: integer
+          minimum: 0
+        rebuiltAt:
+          type: string
+          format: date-time
+    CacheRebuildResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/CacheRebuildResult'
+    PreviewMetadata:
+      type: object
+      required: [userId, nodeCount, ruleSetCount, templateName]
+      properties:
+        userId:
+          type: string
+        nodeCount:
+          type: integer
+          minimum: 0
+        ruleSetCount:
+          type: integer
+          minimum: 0
+        templateName:
+          type: string
+    PreviewPayload:
+      type: object
+      required: [cacheKey, mimeType, content, metadata]
+      properties:
+        cacheKey:
+          type: string
+        mimeType:
+          type: string
+        content:
+          type: string
+          description: 完整渲染后的订阅内容，字符串内容与公开订阅接口 body 对齐
+        metadata:
+          $ref: '#/components/schemas/PreviewMetadata'
+    PreviewResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/PreviewPayload'

@@ -20,5 +20,7 @@ export const CACHE_KEY_PREFIXES = {
   preview: 'preview',
   templateDefault: 'template:default',
   ruleSnapshot: 'rules:snapshot',
-  ruleActive: 'rules:active'
+  ruleActive: 'rules:active',
+  adminLoginRateLimit: 'rate:admin-login',
+  subscriptionRateLimit: 'rate:subscription'
 } as const;

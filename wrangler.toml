@@ -5,7 +5,11 @@ compatibility_date = "2026-03-07"
 
 [vars]
 APP_ENV = "development"
+ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC = "600"
+ADMIN_LOGIN_RATE_LIMIT_MAX_ATTEMPTS = "5"
 SUBSCRIPTION_CACHE_TTL = "1800"
+SUBSCRIPTION_RATE_LIMIT_WINDOW_SEC = "60"
+SUBSCRIPTION_RATE_LIMIT_MAX_REQUESTS = "60"
 SYNC_HTTP_TIMEOUT_MS = "10000"
 PREVIEW_CACHE_TTL = "120"
 
@@ -25,3 +29,31 @@ binding = "SUB_CACHE"
 
 [triggers]
 crons = ["0 * * * *"]
+
+
+[env.staging]
+name = "subforge-worker-staging"
+
+[env.staging.vars]
+APP_ENV = "staging"
+ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC = "600"
+ADMIN_LOGIN_RATE_LIMIT_MAX_ATTEMPTS = "5"
+SUBSCRIPTION_CACHE_TTL = "1800"
+SUBSCRIPTION_RATE_LIMIT_WINDOW_SEC = "60"
+SUBSCRIPTION_RATE_LIMIT_MAX_REQUESTS = "60"
+SYNC_HTTP_TIMEOUT_MS = "10000"
+PREVIEW_CACHE_TTL = "120"
+
+[env.staging.assets]
+directory = "./apps/web/dist"
+not_found_handling = "single-page-application"
+binding = "ASSETS"
+run_worker_first = true
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "subforge-staging"
+migrations_dir = "migrations"
+
+[[env.staging.kv_namespaces]]
+binding = "SUB_CACHE"

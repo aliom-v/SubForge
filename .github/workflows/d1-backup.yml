@@ -1,0 +1,256 @@
+name: D1 Backup
+
+on:
+  schedule:
+    - cron: '15 3 * * *'
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Backup target environment
+        required: true
+        type: choice
+        default: production
+        options:
+          - production
+          - staging
+      backup_scope:
+        description: Backup scope
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - schema
+          - data
+      retention_days:
+        description: Artifact retention days
+        required: false
+        default: '30'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      target_environment: ${{ steps.plan.outputs.target_environment }}
+      backup_scope: ${{ steps.plan.outputs.backup_scope }}
+      retention_days: ${{ steps.plan.outputs.retention_days }}
+    steps:
+      - name: Resolve backup plan
+        id: plan
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            target_environment="production"
+            backup_scope="full"
+            retention_days="30"
+          else
+            target_environment="${{ inputs.target_environment }}"
+            backup_scope="${{ inputs.backup_scope }}"
+            retention_days="${{ inputs.retention_days }}"
+            if [ -z "$retention_days" ]; then
+              retention_days="30"
+            fi
+          fi
+
+          echo "target_environment=$target_environment" >> "$GITHUB_OUTPUT"
+          echo "backup_scope=$backup_scope" >> "$GITHUB_OUTPUT"
+          echo "retention_days=$retention_days" >> "$GITHUB_OUTPUT"
+
+      - name: Write backup summary
+        run: |
+          {
+            echo "## D1 backup plan"
+            echo "- Environment: `${{ steps.plan.outputs.target_environment }}`"
+            echo "- Scope: `${{ steps.plan.outputs.backup_scope }}`"
+            echo "- Retention days: `${{ steps.plan.outputs.retention_days }}`"
+            echo "- Schedule: `03:15 UTC` daily for production"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  backup:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.target_environment }}
+    concurrency:
+      group: subforge-${{ needs.plan.outputs.target_environment }}-d1-backup
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_BACKUP_ARCHIVE_PASSPHRASE: ${{ secrets.D1_BACKUP_ARCHIVE_PASSPHRASE }}
+      D1_BACKUP_ARCHIVE_S3_URI: ${{ vars.D1_BACKUP_ARCHIVE_S3_URI }}
+      D1_BACKUP_ARCHIVE_ENDPOINT_URL: ${{ vars.D1_BACKUP_ARCHIVE_ENDPOINT_URL }}
+      D1_BACKUP_ARCHIVE_AWS_REGION: ${{ vars.D1_BACKUP_ARCHIVE_AWS_REGION }}
+      D1_BACKUP_ARCHIVE_SSE: ${{ vars.D1_BACKUP_ARCHIVE_SSE }}
+      D1_BACKUP_ARCHIVE_KMS_KEY_ID: ${{ vars.D1_BACKUP_ARCHIVE_KMS_KEY_ID }}
+      D1_BACKUP_ARCHIVE_STORAGE_CLASS: ${{ vars.D1_BACKUP_ARCHIVE_STORAGE_CLASS }}
+      D1_BACKUP_ARCHIVE_AWS_ACCESS_KEY_ID: ${{ secrets.D1_BACKUP_ARCHIVE_AWS_ACCESS_KEY_ID }}
+      D1_BACKUP_ARCHIVE_AWS_SECRET_ACCESS_KEY: ${{ secrets.D1_BACKUP_ARCHIVE_AWS_SECRET_ACCESS_KEY }}
+      D1_BACKUP_ARCHIVE_AWS_SESSION_TOKEN: ${{ secrets.D1_BACKUP_ARCHIVE_AWS_SESSION_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Export D1 backup
+        id: export
+        shell: bash
+        run: |
+          extra_args=()
+          archive_mode="plain"
+
+          if [ -n "$D1_BACKUP_ARCHIVE_PASSPHRASE" ]; then
+            extra_args+=(--encrypt --delete-plain --passphrase-env D1_BACKUP_ARCHIVE_PASSPHRASE)
+            archive_mode="encrypted"
+          fi
+
+          npm run backup:d1 --             --environment "${{ needs.plan.outputs.target_environment }}"             --scope "${{ needs.plan.outputs.backup_scope }}"             --output-dir ./backups/d1             --label "gha-${{ github.run_id }}"             "${extra_args[@]}"
+
+          echo "archive_mode=$archive_mode" >> "$GITHUB_OUTPUT"
+
+      - name: Collect backup artifact metadata
+        id: collect
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(backups/d1/*)
+          if [ ${#files[@]} -lt 1 ]; then
+            echo "Expected at least one backup artifact file." >&2
+            exit 1
+          fi
+
+          artifact_name="d1-backup-${{ needs.plan.outputs.target_environment }}-${{ github.run_id }}"
+          file_count="$(find backups/d1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
+
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "file_count=$file_count" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve object storage sync plan
+        id: sync_plan
+        shell: bash
+        run: |
+          sync_enabled="false"
+          sync_target=""
+          sync_mode="skipped"
+
+          if [ -n "$D1_BACKUP_ARCHIVE_S3_URI" ]; then
+            if [ -z "$D1_BACKUP_ARCHIVE_AWS_ACCESS_KEY_ID" ] || [ -z "$D1_BACKUP_ARCHIVE_AWS_SECRET_ACCESS_KEY" ]; then
+              echo "D1_BACKUP_ARCHIVE_S3_URI is configured but archive access key secrets are missing." >&2
+              exit 1
+            fi
+
+            if [ "${{ steps.export.outputs.archive_mode }}" = "plain" ] && [ -z "$D1_BACKUP_ARCHIVE_SSE" ]; then
+              echo "Object storage sync requires encrypted archives or D1_BACKUP_ARCHIVE_SSE for server-side encryption." >&2
+              exit 1
+            fi
+
+            if [ "$D1_BACKUP_ARCHIVE_SSE" = "aws:kms" ] && [ -z "$D1_BACKUP_ARCHIVE_KMS_KEY_ID" ]; then
+              echo "D1_BACKUP_ARCHIVE_SSE=aws:kms requires D1_BACKUP_ARCHIVE_KMS_KEY_ID." >&2
+              exit 1
+            fi
+
+            sync_enabled="true"
+            date_prefix="$(date -u +%Y/%m/%d)"
+            sync_target="${D1_BACKUP_ARCHIVE_S3_URI%/}/${{ needs.plan.outputs.target_environment }}/${date_prefix}/gha-${GITHUB_RUN_ID}"
+
+            if [ "${{ steps.export.outputs.archive_mode }}" = "encrypted" ]; then
+              sync_mode="client-side-encrypted"
+            else
+              sync_mode="server-side-${D1_BACKUP_ARCHIVE_SSE}"
+            fi
+          fi
+
+          echo "sync_enabled=$sync_enabled" >> "$GITHUB_OUTPUT"
+          echo "sync_target=$sync_target" >> "$GITHUB_OUTPUT"
+          echo "sync_mode=$sync_mode" >> "$GITHUB_OUTPUT"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.collect.outputs.artifact_name }}
+          path: backups/d1/*
+          retention-days: ${{ fromJSON(needs.plan.outputs.retention_days) }}
+          if-no-files-found: error
+
+      - name: Sync backup artifact to object storage
+        id: sync_upload
+        if: ${{ steps.sync_plan.outputs.sync_enabled == 'true' }}
+        shell: bash
+        run: |
+          export AWS_ACCESS_KEY_ID="$D1_BACKUP_ARCHIVE_AWS_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$D1_BACKUP_ARCHIVE_AWS_SECRET_ACCESS_KEY"
+          export AWS_SESSION_TOKEN="$D1_BACKUP_ARCHIVE_AWS_SESSION_TOKEN"
+          export AWS_DEFAULT_REGION="${D1_BACKUP_ARCHIVE_AWS_REGION:-us-east-1}"
+          export AWS_EC2_METADATA_DISABLED=true
+
+          aws_global_args=()
+          cp_args=(s3 cp backups/d1/ "${{ steps.sync_plan.outputs.sync_target }}/" --recursive --only-show-errors)
+
+          if [ -n "$D1_BACKUP_ARCHIVE_ENDPOINT_URL" ]; then
+            aws_global_args+=(--endpoint-url "$D1_BACKUP_ARCHIVE_ENDPOINT_URL")
+          fi
+
+          if [ -n "$D1_BACKUP_ARCHIVE_STORAGE_CLASS" ]; then
+            cp_args+=(--storage-class "$D1_BACKUP_ARCHIVE_STORAGE_CLASS")
+          fi
+
+          if [ -n "$D1_BACKUP_ARCHIVE_SSE" ]; then
+            cp_args+=(--sse "$D1_BACKUP_ARCHIVE_SSE")
+          fi
+
+          if [ -n "$D1_BACKUP_ARCHIVE_KMS_KEY_ID" ]; then
+            cp_args+=(--sse-kms-key-id "$D1_BACKUP_ARCHIVE_KMS_KEY_ID")
+          fi
+
+          aws "${aws_global_args[@]}" "${cp_args[@]}"
+
+      - name: Write backup result summary
+        run: |
+          {
+            echo "## D1 backup artifact"
+            echo "- Artifact: `${{ steps.collect.outputs.artifact_name }}`"
+            echo "- File count: `${{ steps.collect.outputs.file_count }}`"
+            echo "- Archive mode: `${{ steps.export.outputs.archive_mode }}`"
+            echo "- Retention days: `${{ needs.plan.outputs.retention_days }}`"
+            if [ "${{ steps.export.outputs.archive_mode }}" = "plain" ]; then
+              echo "- Warning: `D1_BACKUP_ARCHIVE_PASSPHRASE` 未配置，当前只上传明文 SQL artifact；建议尽快补 Secret 开启加密归档。"
+            else
+              echo "- Archive payload: encrypted `.enc` + `.sha256` files"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write object storage sync summary
+        run: |
+          {
+            echo "## D1 object storage sync"
+            if [ "${{ steps.sync_plan.outputs.sync_enabled }}" != "true" ]; then
+              echo "- Object storage sync: skipped (`D1_BACKUP_ARCHIVE_S3_URI` not configured)"
+            else
+              echo "- Target: `${{ steps.sync_plan.outputs.sync_target }}`"
+              echo "- Sync mode: `${{ steps.sync_plan.outputs.sync_mode }}`"
+              echo "- Endpoint: `${D1_BACKUP_ARCHIVE_ENDPOINT_URL:-aws-default}`"
+              echo "- Region: `${D1_BACKUP_ARCHIVE_AWS_REGION:-us-east-1}`"
+              if [ -n "$D1_BACKUP_ARCHIVE_STORAGE_CLASS" ]; then
+                echo "- Storage class: `${D1_BACKUP_ARCHIVE_STORAGE_CLASS}`"
+              fi
+              if [ -n "$D1_BACKUP_ARCHIVE_SSE" ]; then
+                echo "- Server-side encryption: `${D1_BACKUP_ARCHIVE_SSE}`"
+              fi
+              if [ -n "$D1_BACKUP_ARCHIVE_KMS_KEY_ID" ]; then
+                echo "- KMS key id: `${D1_BACKUP_ARCHIVE_KMS_KEY_ID}`"
+              fi
+              echo "- Bucket lifecycle should be configured on the target bucket / prefix outside this repo."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

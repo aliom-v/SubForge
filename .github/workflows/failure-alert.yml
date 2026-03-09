@@ -1,0 +1,63 @@
+name: Failure Alert
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Deploy
+      - D1 Backup
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write failure summary
+        env:
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          BRANCH_NAME: ${{ github.event.workflow_run.head_branch }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+          ACTOR_NAME: ${{ github.event.workflow_run.actor.login }}
+          EVENT_NAME: ${{ github.event.workflow_run.event }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          {
+            echo "## Workflow failure alert"
+            echo "- Workflow: `${WORKFLOW_NAME}`"
+            echo "- Branch: `${BRANCH_NAME}`"
+            echo "- Commit: `${COMMIT_SHA}`"
+            echo "- Actor: `${ACTOR_NAME}`"
+            echo "- Event: `${EVENT_NAME}`"
+            echo "- Conclusion: `${CONCLUSION}`"
+            echo "- Run: ${RUN_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Send optional webhook alert
+        if: ${{ secrets.FAILURE_WEBHOOK_URL != '' }}
+        env:
+          FAILURE_WEBHOOK_URL: ${{ secrets.FAILURE_WEBHOOK_URL }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          BRANCH_NAME: ${{ github.event.workflow_run.head_branch }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+          ACTOR_NAME: ${{ github.event.workflow_run.actor.login }}
+          EVENT_NAME: ${{ github.event.workflow_run.event }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          REPOSITORY_NAME: ${{ github.repository }}
+        run: |
+          payload=$(cat <<EOF
+          {"repository":"${REPOSITORY_NAME}","workflow":"${WORKFLOW_NAME}","branch":"${BRANCH_NAME}","sha":"${COMMIT_SHA}","actor":"${ACTOR_NAME}","event":"${EVENT_NAME}","conclusion":"${CONCLUSION}","runUrl":"${RUN_URL}"}
+          EOF
+          )
+
+          curl --fail --show-error --silent \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$FAILURE_WEBHOOK_URL"

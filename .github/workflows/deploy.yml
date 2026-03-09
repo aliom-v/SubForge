@@ -1,0 +1,112 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - release/**
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Deploy target environment
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      git_ref:
+        description: Branch, tag, or SHA to deploy
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      github_environment: ${{ steps.plan.outputs.github_environment }}
+      deploy_command: ${{ steps.plan.outputs.deploy_command }}
+      checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
+    steps:
+      - name: Resolve deployment target
+        id: plan
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            checkout_ref="${GITHUB_SHA}"
+            if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              github_environment="production"
+              deploy_command="npm run deploy"
+            else
+              github_environment="staging"
+              deploy_command="npm run deploy:staging"
+            fi
+          else
+            github_environment="${{ inputs.target_environment }}"
+            checkout_ref="${{ inputs.git_ref }}"
+            if [ -z "$checkout_ref" ]; then
+              checkout_ref="${GITHUB_REF_NAME}"
+            fi
+            if [ "$github_environment" = "production" ] && [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+              echo "Production deploys must be dispatched from the main branch context." >&2
+              exit 1
+            fi
+            if [ "$github_environment" = "production" ]; then
+              deploy_command="npm run deploy"
+            else
+              deploy_command="npm run deploy:staging"
+            fi
+          fi
+
+          echo "github_environment=$github_environment" >> "$GITHUB_OUTPUT"
+          echo "deploy_command=$deploy_command" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "## Deployment plan"
+            echo "- Environment: `${{ steps.plan.outputs.github_environment }}`"
+            echo "- Ref: `${{ steps.plan.outputs.checkout_ref }}`"
+            echo "- Command: `${{ steps.plan.outputs.deploy_command }}`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.github_environment }}
+    concurrency:
+      group: subforge-${{ needs.plan.outputs.github_environment }}-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.checkout_ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run verification pipeline
+        run: npm run ci:verify
+
+      - name: Apply migrations and deploy worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          secrets: |
+            ADMIN_JWT_SECRET
+          command: ${{ needs.plan.outputs.deploy_command }}
+        env:
+          ADMIN_JWT_SECRET: ${{ secrets.ADMIN_JWT_SECRET }}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 function assertIncludes(content, expected, label) {
   assert.ok(content.includes(expected), `${label} should include: ${expected}`);
@@ -50,372 +50,366 @@ assertIncludes(demoSql, '-- Demo tokens', 'demo seed tokens header');
 assertIncludes(demoSql, 'Demo Alice', 'demo seed user A');
 assertIncludes(demoSql, 'Demo Bob', 'demo seed user B');
 
+const initHelp = await captureModuleOutput('scripts/init-instance.mjs', ['--help']);
+assertIncludes(initHelp, '--with-demo', 'init script help demo flag');
+assertIncludes(initHelp, '--admin-user <username>', 'init script help admin flag');
+assertIncludes(initHelp, 'npm run init:remote', 'init script help remote example');
+
+const d1BackupHelp = await captureModuleOutput('scripts/d1-backup.mjs', ['--help']);
+assertIncludes(d1BackupHelp, 'npm run backup:d1', 'd1 backup help root command');
+assertIncludes(d1BackupHelp, '--scope full|schema|data', 'd1 backup help scope flag');
+assertIncludes(d1BackupHelp, '--encrypt', 'd1 backup help encrypt flag');
+assertIncludes(d1BackupHelp, 'D1_BACKUP_ARCHIVE_PASSPHRASE', 'd1 backup help passphrase env');
+
+const d1BackupDecryptHelp = await captureModuleOutput('scripts/d1-backup-decrypt.mjs', ['--help']);
+assertIncludes(d1BackupDecryptHelp, 'npm run backup:d1:decrypt', 'd1 backup decrypt help npm command');
+assertIncludes(d1BackupDecryptHelp, '--input <backup.enc>', 'd1 backup decrypt help input flag');
+
+const d1RestoreDrillHelp = await captureModuleOutput('scripts/d1-restore-drill.mjs', ['--help']);
+assertIncludes(d1RestoreDrillHelp, '--prepare-schema', 'd1 restore drill help prepare schema');
+assertIncludes(d1RestoreDrillHelp, 'npm run d1:restore:drill', 'd1 restore drill help npm command');
+assertIncludes(d1RestoreDrillHelp, 'backup.sql.enc', 'd1 restore drill encrypted backup help');
+
 const wrangler = readFileSync('wrangler.toml', 'utf8');
 assertIncludes(wrangler, 'PREVIEW_CACHE_TTL', 'wrangler vars');
 assertIncludes(wrangler, 'SYNC_HTTP_TIMEOUT_MS', 'wrangler vars');
-assertIncludes(wrangler, 'main = "apps/worker/src/index.ts"', 'wrangler worker entry');
+assertIncludes(wrangler, 'ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC', 'wrangler login rate limit vars');
+assertIncludes(wrangler, 'SUBSCRIPTION_RATE_LIMIT_MAX_REQUESTS', 'wrangler subscription rate limit vars');
 assertIncludes(wrangler, '[assets]', 'wrangler assets config');
 assertIncludes(wrangler, 'directory = "./apps/web/dist"', 'wrangler assets directory');
 assertIncludes(wrangler, 'not_found_handling = "single-page-application"', 'wrangler spa handling');
 assertIncludes(wrangler, 'run_worker_first = true', 'wrangler worker-first flag');
-assertIncludes(wrangler, 'binding = "DB"', 'wrangler d1 binding');
-assertIncludes(wrangler, 'binding = "SUB_CACHE"', 'wrangler kv binding');
-assertIncludes(wrangler, 'crons = ["0 * * * *"]', 'wrangler cron config');
+assertIncludes(wrangler, '[env.staging]', 'wrangler staging env');
+assertIncludes(wrangler, 'name = "subforge-worker-staging"', 'wrangler staging worker name');
+assertIncludes(wrangler, 'database_name = "subforge-staging"', 'wrangler staging d1 name');
 assert.ok(!wrangler.includes('YOUR_D1_DATABASE_ID'), 'wrangler should not contain D1 placeholder ids');
 assert.ok(!wrangler.includes('YOUR_KV_NAMESPACE_ID'), 'wrangler should not contain KV placeholder ids');
+
+assert.ok(existsSync('package-lock.json'), 'package-lock.json should exist');
+
+const gitignore = readFileSync('.gitignore', 'utf8');
+assertIncludes(gitignore, 'backups/d1/', 'gitignore d1 backup artifacts');
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
 assert.equal(packageJson.scripts.build, 'npm run build:web', 'root build script');
 assert.equal(packageJson.scripts.deploy, 'npm run db:migrations:apply && npm run deploy:worker', 'root deploy script');
-assert.equal(
-  packageJson.scripts['db:migrations:apply:local'],
-  'npm run db:migrations:apply:local --workspace @subforge/worker',
-  'root local migration script'
-);
-assert.equal(packageJson.scripts.test, 'node --test tests/*.test.mjs', 'root test script');
+assert.equal(packageJson.scripts['init:local'], 'node scripts/init-instance.mjs --local', 'root local init script');
+assert.equal(packageJson.scripts['init:remote'], 'node scripts/init-instance.mjs --remote --deploy', 'root remote init script');
 assert.equal(packageJson.scripts['test:smoke'], 'node scripts/smoke-check.mjs', 'smoke script');
+assert.equal(packageJson.scripts['test:contract'], 'node scripts/openapi-contract-check.mjs', 'contract script');
+assert.equal(packageJson.scripts['test:unit'], 'node scripts/run-unit-tests.mjs', 'unit test script');
+assert.equal(packageJson.scripts['ci:verify'], 'npm run test:contract && npm run test:smoke && npm run test:unit && npm run typecheck && npm run build && npm run build:worker', 'ci verify script');
+assert.equal(packageJson.scripts['build:worker:staging'], 'npm run build:staging --workspace @subforge/worker', 'root staging worker build script');
+assert.equal(packageJson.scripts['deploy:staging'], 'npm run db:migrations:apply:staging && npm run deploy:worker:staging', 'root staging deploy script');
+assert.equal(packageJson.scripts['backup:d1'], 'node scripts/d1-backup.mjs --environment production', 'root production backup script');
+assert.equal(packageJson.scripts['backup:d1:staging'], 'node scripts/d1-backup.mjs --environment staging', 'root staging backup script');
+assert.equal(packageJson.scripts['backup:d1:schema'], 'node scripts/d1-backup.mjs --environment production --scope schema', 'root schema backup script');
+assert.equal(packageJson.scripts['backup:d1:data'], 'node scripts/d1-backup.mjs --environment production --scope data', 'root data backup script');
+assert.equal(packageJson.scripts['backup:d1:encrypted'], 'node scripts/d1-backup.mjs --environment production --encrypt', 'root encrypted backup script');
+assert.equal(packageJson.scripts['backup:d1:staging:encrypted'], 'node scripts/d1-backup.mjs --environment staging --encrypt', 'root staging encrypted backup script');
+assert.equal(packageJson.scripts['backup:d1:decrypt'], 'node scripts/d1-backup-decrypt.mjs', 'root backup decrypt script');
+assert.equal(packageJson.scripts['d1:restore:drill'], 'node scripts/d1-restore-drill.mjs', 'root restore drill script');
 assert.ok(packageJson.cloudflare?.bindings?.ADMIN_JWT_SECRET, 'package.json should describe Cloudflare bindings');
-assert.equal(packageJson.packageManager, 'npm@11.7.0', 'package manager metadata');
-
-const workerPackageJson = JSON.parse(readFileSync('apps/worker/package.json', 'utf8'));
-assert.equal(workerPackageJson.scripts.dev, 'wrangler dev --config ../../wrangler.toml', 'worker dev script');
-assert.equal(workerPackageJson.scripts.build, 'wrangler deploy --dry-run --config ../../wrangler.toml', 'worker dry-run build script');
-assert.equal(workerPackageJson.scripts.deploy, 'wrangler deploy --config ../../wrangler.toml', 'worker deploy script');
-assert.equal(
-  workerPackageJson.scripts['db:migrations:apply:local'],
-  'wrangler d1 migrations apply DB --local --config ../../wrangler.toml',
-  'worker local migration script'
-);
-assert.equal(workerPackageJson.scripts['db:migrations:apply'], 'wrangler d1 migrations apply DB --remote --config ../../wrangler.toml', 'worker migration script');
-assert.match(workerPackageJson.devDependencies.wrangler, /^\^4\./, 'worker should use wrangler v4');
-assert.equal(workerPackageJson.dependencies['@subforge/core'], '0.1.0', 'worker should use npm-compatible workspace version for core');
-assert.equal(workerPackageJson.dependencies['@subforge/shared'], '0.1.0', 'worker should use npm-compatible workspace version for shared');
 
 const webPackageJson = JSON.parse(readFileSync('apps/web/package.json', 'utf8'));
 assert.equal(webPackageJson.dependencies['@subforge/core'], '0.1.0', 'web should use npm-compatible workspace version for core');
 assert.equal(webPackageJson.dependencies['@subforge/shared'], '0.1.0', 'web should use npm-compatible workspace version for shared');
+
+const workerPackageJson = JSON.parse(readFileSync('apps/worker/package.json', 'utf8'));
+assert.equal(workerPackageJson.dependencies['@subforge/core'], '0.1.0', 'worker should use npm-compatible workspace version for core');
+assert.equal(workerPackageJson.dependencies['@subforge/shared'], '0.1.0', 'worker should use npm-compatible workspace version for shared');
+assert.equal(workerPackageJson.scripts.build, 'wrangler deploy --dry-run --env= --config ../../wrangler.toml', 'worker dry-run build script');
+assert.equal(workerPackageJson.scripts['build:staging'], 'wrangler deploy --dry-run --env staging --config ../../wrangler.toml', 'worker staging dry-run build script');
+assert.equal(workerPackageJson.scripts.deploy, 'wrangler deploy --env= --config ../../wrangler.toml', 'worker deploy script');
+assert.equal(workerPackageJson.scripts['deploy:staging'], 'wrangler deploy --env staging --config ../../wrangler.toml', 'worker staging deploy script');
+assert.equal(workerPackageJson.scripts['db:migrations:apply'], 'wrangler d1 migrations apply DB --remote --env= --config ../../wrangler.toml', 'worker migration script');
+assert.equal(workerPackageJson.scripts['db:migrations:apply:staging'], 'wrangler d1 migrations apply DB --remote --env staging --config ../../wrangler.toml', 'worker staging migration script');
+assert.match(workerPackageJson.devDependencies.wrangler, /^\^4\./, 'worker should use wrangler v4');
 
 const corePackageJson = JSON.parse(readFileSync('packages/core/package.json', 'utf8'));
 assert.equal(corePackageJson.dependencies['@subforge/shared'], '0.1.0', 'core should use npm-compatible workspace version for shared');
 
 const readme = readFileSync('README.md', 'utf8');
 assertIncludes(readme, 'PREVIEW_CACHE_TTL', 'README env docs');
+assertIncludes(readme, 'ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC', 'README login rate limit docs');
+assertIncludes(readme, 'SUBSCRIPTION_RATE_LIMIT_MAX_REQUESTS', 'README subscription rate limit docs');
 assertIncludes(readme, '规则源支持 `text` / `yaml` / `json`', 'README sync docs');
+assertIncludes(readme, '错误码', 'README sync error grading docs');
 assertIncludes(readme, 'Deploy to Cloudflare', 'README deploy button');
 assertIncludes(readme, '首次安装向导', 'README setup wizard docs');
 assertIncludes(readme, 'wrangler@4.45.0', 'README wrangler version docs');
 assertIncludes(readme, 'npm run deploy', 'README deploy command docs');
-assertIncludes(readme, 'npm run db:migrations:apply:local', 'README local migration docs');
-assertIncludes(readme, 'npm run dev:worker', 'README worker dev docs');
-assertIncludes(readme, 'npm run dev:web', 'README web dev docs');
-assertIncludes(readme, 'npm run test:smoke', 'README smoke docs');
-assertIncludes(readme, '节点管理与订阅使用说明', 'README node usage docs');
-assertIncludes(readme, '文档导航与阅读顺序', 'README docs navigation docs');
-assertIncludes(readme, '分享链接粘贴导入', 'README node import docs');
-assertIncludes(readme, '`ss://`', 'README ss import docs');
-assertIncludes(readme, '`hysteria2://`', 'README hysteria2 import docs');
-assertIncludes(readme, '订阅 URL 做一次性远程抓取预览', 'README node import preview docs');
-assertIncludes(readme, 'Base64 包装订阅文本', 'README base64 import docs');
-assertIncludes(readme, '远程节点源持续同步', 'README node import limitation docs');
-assertIncludes(readme, '结构化字段向导', 'README node guided form docs');
-assertIncludes(readme, '多端口 authority 仍未覆盖', 'README hysteria2 multi-port docs');
-assertIncludes(readme, 'npx wrangler versions upload', 'README versions upload warning docs');
-assertIncludes(readme, 'no such table: admins', 'README D1 missing table docs');
-assertIncludes(readme, 'sqlite_master', 'README sqlite_master troubleshooting docs');
-assertIncludes(readme, '首次使用 5 分钟路径', 'README quickstart docs');
-assertIncludes(readme, '抓取并预览', 'README node preview action docs');
-assertIncludes(readme, 'branch preview / non-production build', 'README preview build docs');
-assertIncludes(readme, '节点协议示例库', 'README protocol examples docs');
-assertIncludes(readme, '导入成功但订阅没变化排障指南', 'README node troubleshooting docs');
-assertIncludes(readme, 'API参考与接口约定', 'README api reference docs');
-assertIncludes(readme, '节点字段字典', 'README node field dictionary docs');
-assertIncludes(readme, '常见错误与返回语义', 'README common error docs');
-assertIncludes(readme, '发布前检查清单', 'README release checklist docs');
+assertIncludes(readme, 'npm run init:local', 'README local init docs');
+assertIncludes(readme, 'npm run init:remote', 'README remote init docs');
+assertIncludes(readme, 'npm run test:unit', 'README unit test docs');
+assertIncludes(readme, 'npm run ci:verify', 'README ci verify docs');
+assertIncludes(readme, 'release/*', 'README release branch strategy docs');
+assertIncludes(readme, 'FAILURE_WEBHOOK_URL', 'README failure webhook docs');
+assertIncludes(readme, 'npm ci', 'README npm ci docs');
+assertIncludes(readme, '发布与回滚 checklist', 'README release rollback docs');
+assertIncludes(readme, 'D1 备份 / 恢复 SOP', 'README d1 backup restore docs');
+assertIncludes(readme, '.github/workflows/d1-backup.yml', 'README d1 backup workflow docs');
+assertIncludes(readme, 'npm run d1:restore:drill', 'README restore drill docs');
+assertIncludes(readme, 'D1_BACKUP_ARCHIVE_PASSPHRASE', 'README backup passphrase docs');
+assertIncludes(readme, 'D1_BACKUP_ARCHIVE_S3_URI', 'README backup object storage docs');
+assertIncludes(readme, 'D1_BACKUP_ARCHIVE_ENDPOINT_URL', 'README backup endpoint docs');
+assertIncludes(readme, 'aws s3 cp', 'README backup object storage command docs');
+assertIncludes(readme, 'bucket lifecycle', 'README backup lifecycle docs');
+assertIncludes(readme, 'npm run backup:d1:decrypt', 'README backup decrypt docs');
+assertIncludes(readme, '节点页支持 JSON 批量导入', 'README node import docs');
+assertIncludes(readme, '远程节点源', 'README remote node sync docs');
+assertIncludes(readme, 'docs/限流与安全策略.md', 'README security guide entry');
+assertIncludes(readme, 'docs/API错误码与响应头说明.md', 'README api guide entry');
+assertIncludes(readme, 'docs/API错误响应示例库.md', 'README api error examples guide entry');
+assertIncludes(readme, 'docs/排障与常见问题.md', 'README troubleshooting guide entry');
+assertIncludes(readme, 'docs/API接口矩阵与OpenAPI草案.md', 'README api matrix guide entry');
+assertIncludes(readme, 'openapi.yaml', 'README openapi guide entry');
+assertIncludes(readme, 'docs/数据模型与表结构说明.md', 'README data model guide entry');
+assertIncludes(readme, 'docs/架构图与ER图.md', 'README architecture guide entry');
+assertIncludes(readme, 'docs/运维Runbook与告警处理.md', 'README runbook guide entry');
+assertIncludes(readme, 'CHANGELOG.md', 'README changelog entry');
+assertIncludes(readme, 'docs/INDEX.md', 'README docs index entry');
 
 const deployGuide = readFileSync('docs/部署指南.md', 'utf8');
 assertIncludes(deployGuide, 'wrangler@4.45.0+', 'deploy guide wrangler version docs');
 assertIncludes(deployGuide, 'npm run build', 'deploy guide build docs');
 assertIncludes(deployGuide, 'npm run deploy', 'deploy guide deploy docs');
-assertIncludes(deployGuide, 'npm run db:migrations:apply:local', 'deploy guide local migration docs');
-assertIncludes(deployGuide, 'npm run db:migrations:apply', 'deploy guide remote migration docs');
-assertIncludes(deployGuide, 'npm run dev:worker', 'deploy guide worker dev docs');
-assertIncludes(deployGuide, 'npm run dev:web', 'deploy guide web dev docs');
-assertIncludes(deployGuide, 'npm run test:smoke', 'deploy guide smoke docs');
-assertIncludes(deployGuide, 'npx wrangler versions upload', 'deploy guide versions upload warning docs');
-assertIncludes(deployGuide, 'no such table: admins', 'deploy guide D1 missing table docs');
-assertIncludes(deployGuide, 'SQL Console', 'deploy guide console docs');
-assertIncludes(deployGuide, 'sqlite_master', 'deploy guide sqlite_master docs');
-assertIncludes(deployGuide, '加载安装状态', 'deploy guide setup loading docs');
-assertIncludes(deployGuide, '001_init.sql', 'deploy guide init migration docs');
-assertIncludes(deployGuide, '002_admin_session_revocation.sql', 'deploy guide follow-up migration docs');
-assertIncludes(deployGuide, 'Explore data', 'deploy guide explore data warning docs');
-assertIncludes(deployGuide, 'Preview 构建要不要先开', 'deploy guide preview env docs');
-assertIncludes(deployGuide, '`hy2://`', 'deploy guide hy2 alias docs');
-assertIncludes(deployGuide, 'cipher` / `password` / `plugin`', 'deploy guide ss guide scope docs');
-assertIncludes(deployGuide, '多端口 authority 也还没覆盖', 'deploy guide hysteria2 multi-port docs');
-assertIncludes(deployGuide, '是否完成用户绑定', 'deploy guide subscription troubleshooting docs');
-assertIncludes(deployGuide, '节点协议示例库.md', 'deploy guide protocol examples link docs');
-assertIncludes(deployGuide, '导入成功但订阅没变化排障指南.md', 'deploy guide troubleshooting link docs');
-assertIncludes(deployGuide, '文档导航与阅读顺序.md', 'deploy guide docs navigation link docs');
-assertIncludes(deployGuide, 'API参考与接口约定.md', 'deploy guide api reference link docs');
-assertIncludes(deployGuide, '节点字段字典.md', 'deploy guide node field dictionary link docs');
-assertIncludes(deployGuide, '常见错误与返回语义.md', 'deploy guide common error link docs');
-assertIncludes(deployGuide, '发布前检查清单.md', 'deploy guide release checklist link docs');
+assertIncludes(deployGuide, 'npm run init:local', 'deploy guide local init docs');
+assertIncludes(deployGuide, 'npm run init:remote', 'deploy guide remote init docs');
+assertIncludes(deployGuide, 'npm run test:unit', 'deploy guide unit test docs');
+assertIncludes(deployGuide, 'npm run ci:verify', 'deploy guide ci verify docs');
+assertIncludes(deployGuide, 'npm run deploy:staging', 'deploy guide staging deploy docs');
+assertIncludes(deployGuide, 'FAILURE_WEBHOOK_URL', 'deploy guide failure webhook docs');
+assertIncludes(deployGuide, 'release/*', 'deploy guide release branch docs');
+assertIncludes(deployGuide, 'package-lock.json', 'deploy guide lockfile docs');
+assertIncludes(deployGuide, 'npm ci', 'deploy guide npm ci docs');
+assertIncludes(deployGuide, 'workflow_dispatch', 'deploy guide workflow dispatch docs');
+assertIncludes(deployGuide, 'git_ref', 'deploy guide git ref docs');
+assertIncludes(deployGuide, 'wrangler d1 export subforge --remote', 'deploy guide d1 export docs');
+assertIncludes(deployGuide, 'wrangler d1 execute DB --remote', 'deploy guide d1 restore docs');
+assertIncludes(deployGuide, 'npm run backup:d1', 'deploy guide d1 backup script docs');
+assertIncludes(deployGuide, 'npm run d1:restore:drill', 'deploy guide restore drill docs');
+assertIncludes(deployGuide, 'npm run backup:d1:decrypt', 'deploy guide backup decrypt docs');
+assertIncludes(deployGuide, 'D1_BACKUP_ARCHIVE_PASSPHRASE', 'deploy guide backup passphrase docs');
+assertIncludes(deployGuide, 'D1_BACKUP_ARCHIVE_S3_URI', 'deploy guide backup object storage uri docs');
+assertIncludes(deployGuide, 'D1_BACKUP_ARCHIVE_ENDPOINT_URL', 'deploy guide backup endpoint docs');
+assertIncludes(deployGuide, 'D1_BACKUP_ARCHIVE_AWS_REGION', 'deploy guide backup region docs');
+assertIncludes(deployGuide, 'D1_BACKUP_ARCHIVE_SSE', 'deploy guide backup sse docs');
+assertIncludes(deployGuide, 'D1_BACKUP_ARCHIVE_KMS_KEY_ID', 'deploy guide backup kms docs');
+assertIncludes(deployGuide, 'D1_BACKUP_ARCHIVE_STORAGE_CLASS', 'deploy guide backup storage class docs');
+assertIncludes(deployGuide, 'D1_BACKUP_ARCHIVE_AWS_ACCESS_KEY_ID', 'deploy guide backup access key docs');
+assertIncludes(deployGuide, 'aws s3 cp', 'deploy guide backup object storage command docs');
+assertIncludes(deployGuide, 'bucket lifecycle', 'deploy guide backup lifecycle docs');
+assertIncludes(deployGuide, '.github/workflows/d1-backup.yml', 'deploy guide d1 backup workflow docs');
+assertIncludes(deployGuide, '03:15 UTC', 'deploy guide d1 backup schedule docs');
+assertIncludes(deployGuide, '.sha256', 'deploy guide backup checksum docs');
+assertIncludes(deployGuide, '参数是数据库名，不是绑定名', 'deploy guide d1 export name note');
+assertIncludes(deployGuide, '空库 / 新库', 'deploy guide empty db restore note');
+assertIncludes(deployGuide, '没有自动 down migration', 'deploy guide rollback boundary docs');
+assertIncludes(deployGuide, 'GitHub Actions', 'deploy guide github actions docs');
+assertIncludes(deployGuide, 'Dashboard 首次部署前确认清单', 'deploy guide dashboard checklist docs');
+assertIncludes(deployGuide, '绑定 / Secret / 调度对照', 'deploy guide binding matrix docs');
+assertIncludes(deployGuide, '部署后首轮排障观察点', 'deploy guide first-troubleshooting docs');
+assertIncludes(deployGuide, '节点 JSON 批量导入', 'deploy guide node import docs');
+assertIncludes(deployGuide, '远程节点源', 'deploy guide remote node sync docs');
+assertIncludes(deployGuide, '阶段、错误码', 'deploy guide sync error details docs');
+assertIncludes(deployGuide, 'operatorHint', 'deploy guide sync operator hint docs');
+assertIncludes(deployGuide, 'ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC', 'deploy guide login rate limit vars');
+assertIncludes(deployGuide, 'SUBSCRIPTION_RATE_LIMIT_MAX_REQUESTS', 'deploy guide subscription rate limit vars');
 
-const automationPlan = readFileSync('docs/自动化验证与CI计划.md', 'utf8');
-assertIncludes(automationPlan, 'npm test', 'automation plan test command docs');
-assertIncludes(automationPlan, 'GitHub Actions', 'automation plan ci docs');
-assertIncludes(automationPlan, '第二十二批自动化验证执行清单.md', 'automation plan twenty-second batch docs');
-assertIncludes(automationPlan, '第二十三批自动化验证执行清单.md', 'automation plan twenty-third batch docs');
-assertIncludes(automationPlan, '第二十五批自动化验证执行清单.md', 'automation plan twenty-fifth batch docs');
-assertIncludes(automationPlan, '第二十六批自动化验证执行清单.md', 'automation plan twenty-sixth batch docs');
-assertIncludes(automationPlan, '长链路回归', 'automation plan long-chain regression docs');
+const securityGuide = readFileSync('docs/限流与安全策略.md', 'utf8');
+assertIncludes(securityGuide, '管理员登录失败限流', 'security guide admin login section');
+assertIncludes(securityGuide, '公开订阅频控', 'security guide subscription section');
+assertIncludes(securityGuide, 'TOO_MANY_REQUESTS', 'security guide too many requests docs');
 
-const implementationPlan = readFileSync('docs/实施方案.md', 'utf8');
-assertIncludes(implementationPlan, '`hysteria2://` / `hy2://`', 'implementation plan hysteria2 import docs');
-assertIncludes(implementationPlan, '`cipher` / `password` / `plugin`', 'implementation plan ss guide scope docs');
-assertIncludes(implementationPlan, '是否已绑定用户', 'implementation plan subscription troubleshooting docs');
+const apiGuide = readFileSync('docs/API错误码与响应头说明.md', 'utf8');
+assertIncludes(apiGuide, 'Authorization: Bearer', 'api guide bearer auth docs');
+assertIncludes(apiGuide, 'x-subforge-cache-key', 'api guide cache header docs');
+assertIncludes(apiGuide, 'docs/API错误响应示例库.md', 'api guide example library entry');
+assertIncludes(apiGuide, '当前 Worker 代码没有稳定的结构化 JSON 5xx 契约', 'api guide 5xx note');
+assertIncludes(apiGuide, 'TOO_MANY_REQUESTS', 'api guide error code docs');
 
-const knownIssues = readFileSync('docs/已知问题与修复计划.md', 'utf8');
-assertIncludes(knownIssues, 'docs/第二十二批自动化验证执行清单.md', 'known issues twenty-second batch docs');
-assertIncludes(knownIssues, 'docs/第二十三批自动化验证执行清单.md', 'known issues twenty-third batch docs');
-assertIncludes(knownIssues, 'docs/第二十五批自动化验证执行清单.md', 'known issues twenty-fifth batch docs');
-assertIncludes(knownIssues, 'docs/第二十六批自动化验证执行清单.md', 'known issues twenty-sixth batch docs');
-assertIncludes(knownIssues, '协议级字段校验补强', 'known issues protocol validation docs');
-assertIncludes(knownIssues, '长链路回归', 'known issues long-chain regression docs');
+const apiErrorExamplesGuide = readFileSync('docs/API错误响应示例库.md', 'utf8');
+assertIncludes(apiErrorExamplesGuide, '400 Bad Request', 'api error examples bad request docs');
+assertIncludes(apiErrorExamplesGuide, 'missing bearer token', 'api error examples unauthorized docs');
+assertIncludes(apiErrorExamplesGuide, 'subscription token or template not found', 'api error examples subscription not found docs');
+assertIncludes(apiErrorExamplesGuide, 'too many login attempts, please retry later', 'api error examples login rate limit docs');
+assertIncludes(apiErrorExamplesGuide, '当前仓库还没有正式承诺一个应用层 JSON 5xx 契约', 'api error examples 5xx note');
 
-const protocolExamples = readFileSync('docs/节点协议示例库.md', 'utf8');
-assertIncludes(protocolExamples, '分享链接示例', 'protocol examples share-link docs');
-assertIncludes(protocolExamples, '`hysteria2`', 'protocol examples hysteria2 docs');
-assertIncludes(protocolExamples, '结构化字段示例', 'protocol examples structured docs');
-assertIncludes(protocolExamples, '常见报错对照', 'protocol examples error glossary docs');
-assertIncludes(protocolExamples, 'hysteria2 节点当前仅支持 params.obfs = "salamander"', 'protocol examples hysteria2 error docs');
+const troubleshootingGuide = readFileSync('docs/排障与常见问题.md', 'utf8');
+assertIncludes(troubleshootingGuide, 'Unexpected token', 'troubleshooting guide html-response docs');
+assertIncludes(troubleshootingGuide, '429', 'troubleshooting guide rate limit docs');
+assertIncludes(troubleshootingGuide, 'npm ci', 'troubleshooting guide npm ci docs');
+assertIncludes(troubleshootingGuide, 'x-subforge-cache-key', 'troubleshooting guide cache header docs');
 
-const nodeTroubleshooting = readFileSync('docs/导入成功但订阅没变化排障指南.md', 'utf8');
-assertIncludes(nodeTroubleshooting, '用户”页是否真的完成绑定', 'node troubleshooting binding docs');
-assertIncludes(nodeTroubleshooting, '/s/:token/mihomo', 'node troubleshooting public subscription docs');
-assertIncludes(nodeTroubleshooting, '未知 query 参数会直接报 unsupported', 'node troubleshooting unsupported docs');
-assertIncludes(nodeTroubleshooting, '预览有变化但公开订阅没变化', 'node troubleshooting preview-public branch docs');
-assertIncludes(nodeTroubleshooting, '客户端或浏览器是否缓存了旧内容', 'node troubleshooting client cache docs');
+const apiMatrixGuide = readFileSync('docs/API接口矩阵与OpenAPI草案.md', 'utf8');
+assertIncludes(apiMatrixGuide, '/api/users', 'api matrix users route docs');
+assertIncludes(apiMatrixGuide, '/api/nodes/import/remote', 'api matrix remote node route docs');
+assertIncludes(apiMatrixGuide, 'openapi.yaml', 'api matrix formal openapi docs');
+assertIncludes(apiMatrixGuide, 'docs/API错误响应示例库.md', 'api matrix error example docs');
+assertIncludes(apiMatrixGuide, '关键请求 / 成功 / 错误 examples', 'api matrix example coverage docs');
+assertIncludes(apiMatrixGuide, 'OpenAPI', 'api matrix openapi draft docs');
 
-const secondBatchPlan = readFileSync('docs/第二批自动化验证执行清单.md', 'utf8');
-assertIncludes(secondBatchPlan, '缓存失效 helper', 'second batch plan cache scope');
-assertIncludes(secondBatchPlan, '管理员鉴权语义', 'second batch plan auth scope');
-assertIncludes(secondBatchPlan, '审计日志脱敏', 'second batch plan audit scope');
+assert.ok(existsSync('openapi.yaml'), 'openapi.yaml should exist');
+assert.ok(existsSync('scripts/openapi-contract-check.mjs'), 'openapi contract check script should exist');
+const openapiContractScript = readFileSync('scripts/openapi-contract-check.mjs', 'utf8');
+assertIncludes(openapiContractScript, 'PreviewMetadata schema should exist', 'openapi contract preview metadata check');
+assertIncludes(openapiContractScript, 'apps/web/src/api-routes.js', 'openapi contract web api check');
+assertIncludes(openapiContractScript, 'should be public', 'openapi contract public auth check');
 
-const thirdBatchPlan = readFileSync('docs/第三批自动化验证执行清单.md', 'utf8');
-assertIncludes(thirdBatchPlan, '模板默认切换', 'third batch plan template scope');
-assertIncludes(thirdBatchPlan, '规则源启停', 'third batch plan rule source scope');
-assertIncludes(thirdBatchPlan, '规则源同步成功 / 跳过', 'third batch plan sync scope');
+const openapiSpec = readFileSync('openapi.yaml', 'utf8');
+assertIncludes(openapiSpec, 'openapi: 3.1.0', 'openapi version');
+assertIncludes(openapiSpec, '/api/users:', 'openapi users path');
+assertIncludes(openapiSpec, '/api/nodes/import/remote:', 'openapi remote node path');
+assertIncludes(openapiSpec, '/api/rule-sources/{ruleSourceId}/sync:', 'openapi rule source sync path');
+assertIncludes(openapiSpec, '/api/preview/{userId}/{target}:', 'openapi preview path');
+assertIncludes(openapiSpec, '/s/{token}/{target}:', 'openapi public subscription path');
+assertIncludes(openapiSpec, 'bearerAuth', 'openapi bearer auth');
+assertIncludes(openapiSpec, 'x-subforge-cache-key', 'openapi cache header');
+assertIncludes(openapiSpec, 'invalidJsonBody', 'openapi bad request example');
+assertIncludes(openapiSpec, 'missingBearerToken', 'openapi unauthorized example');
+assertIncludes(openapiSpec, 'setupAlreadyCompleted', 'openapi forbidden example');
+assertIncludes(openapiSpec, 'subscriptionUserNotFound', 'openapi not found example');
+assertIncludes(openapiSpec, 'tooManyLoginAttempts', 'openapi rate limit example');
+assertIncludes(openapiSpec, 'healthyDevelopment', 'openapi health success example');
+assertIncludes(openapiSpec, 'setupInitialized', 'openapi setup status success example');
+assertIncludes(openapiSpec, 'bootstrapSuccess', 'openapi bootstrap success example');
+assertIncludes(openapiSpec, 'loginSuccess', 'openapi login success example');
+assertIncludes(openapiSpec, 'createUserRequest', 'openapi create user request example');
+assertIncludes(openapiSpec, 'wrappedNodeImportPayload', 'openapi node import payload example');
+assertIncludes(openapiSpec, 'remoteSyncChanged', 'openapi remote node import success example');
+assertIncludes(openapiSpec, 'templateCreated', 'openapi template success example');
+assertIncludes(openapiSpec, 'ruleSourceSyncUpdated', 'openapi rule source sync success example');
+assertIncludes(openapiSpec, 'previewMiss', 'openapi preview success example');
+assertIncludes(openapiSpec, 'mihomoSubscription', 'openapi public yaml example');
+assertIncludes(openapiSpec, 'PreviewMetadata:', 'openapi preview metadata schema');
+assertIncludes(openapiSpec, 'TOO_MANY_REQUESTS', 'openapi error codes');
 
-const fourthBatchPlan = readFileSync('docs/第四批自动化验证执行清单.md', 'utf8');
-assertIncludes(fourthBatchPlan, '同步失败路径', 'fourth batch plan failure scope');
-assertIncludes(fourthBatchPlan, '/api/rule-sources/:id/sync', 'fourth batch plan sync route scope');
+const dataModelGuide = readFileSync('docs/数据模型与表结构说明.md', 'utf8');
+assertIncludes(dataModelGuide, 'rule_snapshots', 'data model rule snapshots docs');
+assertIncludes(dataModelGuide, 'idx_rule_snapshots_hash', 'data model index docs');
+assertIncludes(dataModelGuide, 'docs/架构图与ER图.md', 'data model architecture guide entry');
 
-const fifthBatchPlan = readFileSync('docs/第五批自动化验证执行清单.md', 'utf8');
-assertIncludes(fifthBatchPlan, '首次安装与管理员登录闭环', 'fifth batch plan setup scope');
-assertIncludes(fifthBatchPlan, '预览与公开订阅 miss 路径', 'fifth batch plan preview and subscription scope');
-assertIncludes(fifthBatchPlan, 'health / 静态资源回退 / Cron 触发', 'fifth batch plan deployment smoke scope');
+const architectureGuide = readFileSync('docs/架构图与ER图.md', 'utf8');
+assertIncludes(architectureGuide, 'Mermaid', 'architecture guide mermaid docs');
+assertIncludes(architectureGuide, 'apps/web', 'architecture guide web layer');
+assertIncludes(architectureGuide, 'apps/worker', 'architecture guide worker layer');
+assertIncludes(architectureGuide, 'SUB_CACHE', 'architecture guide kv cache');
+assertIncludes(architectureGuide, 'GitHub Actions', 'architecture guide backup plane');
+assertIncludes(architectureGuide, 'rule_snapshots', 'architecture guide rule snapshots entity');
+assertIncludes(architectureGuide, 'user_node_map', 'architecture guide user node mapping');
+assertIncludes(architectureGuide, 'erDiagram', 'architecture guide er diagram');
+assertIncludes(architectureGuide, 'flowchart LR', 'architecture guide runtime diagram');
 
-const sixthBatchPlan = readFileSync('docs/第六批自动化验证执行清单.md', 'utf8');
-assertIncludes(sixthBatchPlan, '用户写入链路', 'sixth batch plan user write scope');
-assertIncludes(sixthBatchPlan, '节点写入链路', 'sixth batch plan node write scope');
-assertIncludes(sixthBatchPlan, '模板写入链路', 'sixth batch plan template write scope');
+const runbookGuide = readFileSync('docs/运维Runbook与告警处理.md', 'utf8');
+assertIncludes(runbookGuide, '/health', 'runbook health check docs');
+assertIncludes(runbookGuide, 'Unexpected token', 'runbook html fallback docs');
+assertIncludes(runbookGuide, 'npm run ci:verify', 'runbook ci verify docs');
+assertIncludes(runbookGuide, 'npm run deploy', 'runbook deploy docs');
+assertIncludes(runbookGuide, 'release/*', 'runbook release branch docs');
+assertIncludes(runbookGuide, 'workflow_dispatch', 'runbook workflow dispatch docs');
+assertIncludes(runbookGuide, 'git_ref', 'runbook git ref docs');
+assertIncludes(runbookGuide, 'npm run backup:d1', 'runbook d1 export docs');
+assertIncludes(runbookGuide, 'wrangler d1 execute DB --remote', 'runbook d1 restore docs');
+assertIncludes(runbookGuide, 'npm run backup:d1', 'runbook d1 backup script docs');
+assertIncludes(runbookGuide, 'npm run d1:restore:drill', 'runbook restore drill docs');
+assertIncludes(runbookGuide, 'npm run backup:d1:decrypt', 'runbook backup decrypt docs');
+assertIncludes(runbookGuide, 'D1_BACKUP_ARCHIVE_PASSPHRASE', 'runbook backup passphrase docs');
+assertIncludes(runbookGuide, 'D1_BACKUP_ARCHIVE_S3_URI', 'runbook backup object storage uri docs');
+assertIncludes(runbookGuide, 'D1_BACKUP_ARCHIVE_ENDPOINT_URL', 'runbook backup endpoint docs');
+assertIncludes(runbookGuide, 'D1_BACKUP_ARCHIVE_SSE', 'runbook backup sse docs');
+assertIncludes(runbookGuide, 'D1_BACKUP_ARCHIVE_KMS_KEY_ID', 'runbook backup kms docs');
+assertIncludes(runbookGuide, 'aws s3 cp', 'runbook backup object storage command docs');
+assertIncludes(runbookGuide, 'bucket lifecycle', 'runbook backup lifecycle docs');
+assertIncludes(runbookGuide, '.github/workflows/d1-backup.yml', 'runbook d1 backup workflow docs');
+assertIncludes(runbookGuide, '03:15 UTC', 'runbook d1 backup schedule docs');
+assertIncludes(runbookGuide, '.sha256', 'runbook backup checksum docs');
+assertIncludes(runbookGuide, 'full export 同时包含 schema + data', 'runbook d1 full export note');
+assertIncludes(runbookGuide, '异地加密保存', 'runbook d1 retention docs');
+assertIncludes(runbookGuide, '没有自动化 D1 down migration', 'runbook rollback boundary docs');
+assertIncludes(runbookGuide, 'failure-alert.yml', 'runbook failure alert workflow docs');
+assertIncludes(runbookGuide, 'FAILURE_WEBHOOK_URL', 'runbook failure webhook docs');
 
-const seventhBatchPlan = readFileSync('docs/第七批自动化验证执行清单.md', 'utf8');
-assertIncludes(seventhBatchPlan, '首次安装向导的校验边界', 'seventh batch plan setup validation scope');
-assertIncludes(seventhBatchPlan, 'Worker 网关与退出语义边界', 'seventh batch plan gateway scope');
-assertIncludes(seventhBatchPlan, '本地部署前 smoke 配置校验', 'seventh batch plan smoke scope');
+const changelog = readFileSync('CHANGELOG.md', 'utf8');
+assertIncludes(changelog, '[0.1.0]', 'changelog initial release entry');
+assertIncludes(changelog, '管理员登录失败限流', 'changelog security docs');
+assertIncludes(changelog, 'openapi.yaml', 'changelog openapi docs');
+assertIncludes(changelog, 'docs/API错误响应示例库.md', 'changelog api error examples docs');
+assertIncludes(changelog, 'docs/架构图与ER图.md', 'changelog architecture docs');
+assertIncludes(changelog, 'D1_BACKUP_ARCHIVE_S3_URI', 'changelog backup object storage docs');
+assertIncludes(changelog, 'bucket lifecycle', 'changelog backup lifecycle docs');
 
-const eleventhBatchPlan = readFileSync('docs/第十一批自动化验证执行清单.md', 'utf8');
-assertIncludes(eleventhBatchPlan, '节点写接口的未实现字段语义收紧', 'eleventh batch plan node semantics scope');
-assertIncludes(eleventhBatchPlan, 'sourceType', 'eleventh batch plan sourceType scope');
-assertIncludes(eleventhBatchPlan, 'credentials', 'eleventh batch plan metadata scope');
-
-const twelfthBatchPlan = readFileSync('docs/第十二批自动化验证执行清单.md', 'utf8');
-assertIncludes(twelfthBatchPlan, '默认模板只能指向启用模板', 'twelfth batch plan default-template scope');
-assertIncludes(twelfthBatchPlan, 'set-default', 'twelfth batch plan set-default scope');
-
-const thirteenthBatchPlan = readFileSync('docs/第十三批自动化验证执行清单.md', 'utf8');
-assertIncludes(thirteenthBatchPlan, '禁用中的默认模板不会继续保留默认标记', 'thirteenth batch plan invariant scope');
-assertIncludes(thirteenthBatchPlan, 'PATCH /api/templates/:id', 'thirteenth batch plan patch scope');
-
-const nodeUsageGuide = readFileSync('docs/节点管理与订阅使用说明.md', 'utf8');
-assertIncludes(nodeUsageGuide, '当前仓库中的节点管理能力以“手动录入 + 分享链接导入 + 订阅 URL 远程预览导入” 为主', 'node usage guide manual scope');
-assertIncludes(nodeUsageGuide, '当前支持的是“一次性导入预览”', 'node usage guide import limitation');
-assertIncludes(nodeUsageGuide, 'Base64 包装订阅文本', 'node usage guide base64 import docs');
-assertIncludes(nodeUsageGuide, '`ss://`', 'node usage guide ss import docs');
-assertIncludes(nodeUsageGuide, '`hysteria2://`', 'node usage guide hysteria2 import docs');
-assertIncludes(nodeUsageGuide, '协议都支持了吗', 'node usage guide protocol faq docs');
-assertIncludes(nodeUsageGuide, '后台实际点按顺序', 'node usage guide click path docs');
-assertIncludes(nodeUsageGuide, '模板', 'node usage guide template step docs');
-assertIncludes(nodeUsageGuide, '创建完成后应该看到什么', 'node usage guide expected result docs');
-assertIncludes(nodeUsageGuide, '结构化字段和 JSON 以哪个为准', 'node usage guide guided sync docs');
-assertIncludes(nodeUsageGuide, '抓取并预览', 'node usage guide preview action docs');
-assertIncludes(nodeUsageGuide, '文档导航与阅读顺序.md', 'node usage guide docs navigation link docs');
-assertIncludes(nodeUsageGuide, '批量创建 N 个节点', 'node usage guide batch import docs');
-assertIncludes(nodeUsageGuide, '远程来源', 'node usage guide remote summary docs');
-assertIncludes(nodeUsageGuide, 'Clash / sing-box 全量配置', 'node usage guide unsupported config docs');
-assertIncludes(nodeUsageGuide, '修改 `vless` / `trojan` / `vmess` / `ss` / `hysteria2` 协议向导', 'node usage guide guided sync docs');
-assertIncludes(nodeUsageGuide, '当前向导与导入的实际映射', 'node usage guide protocol mapping docs');
-assertIncludes(nodeUsageGuide, 'authority 里的多端口写法当前还不支持', 'node usage guide hysteria2 multi-port docs');
-assertIncludes(nodeUsageGuide, 'API参考与接口约定.md', 'node usage guide api reference link docs');
-assertIncludes(nodeUsageGuide, '节点字段字典.md', 'node usage guide node field dictionary link docs');
-assertIncludes(nodeUsageGuide, '常见错误与返回语义.md', 'node usage guide common error link docs');
-assertIncludes(nodeUsageGuide, '发布前检查清单.md', 'node usage guide release checklist link docs');
-
-const protocolMatrix = readFileSync('docs/协议支持矩阵与落地计划.md', 'utf8');
-assertIncludes(protocolMatrix, '当前协议支持矩阵', 'protocol matrix current support docs');
-assertIncludes(protocolMatrix, '`hysteria2`', 'protocol matrix hysteria2 docs');
-assertIncludes(protocolMatrix, '结构化协议向导', 'protocol matrix guided scope docs');
-assertIncludes(protocolMatrix, '推荐的下一阶段顺序', 'protocol matrix roadmap docs');
-assertIncludes(protocolMatrix, '后续补协议时的落地清单', 'protocol matrix landing checklist docs');
-assertIncludes(protocolMatrix, '第二十二批自动化验证执行清单.md', 'protocol matrix twenty-second batch docs');
-assertIncludes(protocolMatrix, 'packages/core/src/node-import.ts', 'protocol matrix parser touchpoint docs');
-assertIncludes(protocolMatrix, '文档写法约束', 'protocol matrix wording rules docs');
-assertIncludes(protocolMatrix, '| `ss` | 支持 | 支持 | 支持 | 支持 | 支持 |', 'protocol matrix ss all-layer docs');
-assertIncludes(protocolMatrix, '| `hysteria2` | 支持 | 支持 | 支持 | 支持 | 支持 |', 'protocol matrix hysteria2 all-layer docs');
-assertIncludes(protocolMatrix, '当前已知细粒度限制', 'protocol matrix protocol caveat docs');
-assertIncludes(protocolMatrix, '多端口写法当前还不支持', 'protocol matrix hysteria2 multi-port docs');
-
-const fourteenthBatchPlan = readFileSync('docs/第十四批自动化验证执行清单.md', 'utf8');
-assertIncludes(fourteenthBatchPlan, '节点管理可用性补强', 'fourteenth batch plan node usability scope');
-assertIncludes(fourteenthBatchPlan, 'credentials', 'fourteenth batch plan metadata scope');
-
-const fifteenthBatchPlan = readFileSync('docs/第十五批自动化验证执行清单.md', 'utf8');
-assertIncludes(fifteenthBatchPlan, '节点协议向导补强', 'fifteenth batch plan node guided scope');
-assertIncludes(fifteenthBatchPlan, 'vless', 'fifteenth batch plan protocol scope');
-
-const sixteenthBatchPlan = readFileSync('docs/第十六批自动化验证执行清单.md', 'utf8');
-assertIncludes(sixteenthBatchPlan, '分享链接导入补强', 'sixteenth batch plan node import scope');
-assertIncludes(sixteenthBatchPlan, 'vmess://', 'sixteenth batch plan vmess scope');
-
-const seventeenthBatchPlan = readFileSync('docs/第十七批自动化验证执行清单.md', 'utf8');
-assertIncludes(seventeenthBatchPlan, '订阅 URL 远程抓取预览导入', 'seventeenth batch plan remote import scope');
-assertIncludes(seventeenthBatchPlan, 'node-import/preview', 'seventeenth batch plan route scope');
-
-const eighteenthBatchPlan = readFileSync('docs/第十八批自动化验证执行清单.md', 'utf8');
-assertIncludes(eighteenthBatchPlan, 'Base64 订阅文本解包补强', 'eighteenth batch plan base64 import scope');
-assertIncludes(eighteenthBatchPlan, 'base64_text', 'eighteenth batch plan encoding scope');
-
-const nineteenthBatchPlan = readFileSync('docs/第十九批自动化验证执行清单.md', 'utf8');
-assertIncludes(nineteenthBatchPlan, '`ss://` 分享链接导入补强', 'nineteenth batch plan ss import scope');
-assertIncludes(nineteenthBatchPlan, '`ss://`', 'nineteenth batch plan protocol scope');
-
-const twentiethBatchPlan = readFileSync('docs/第二十批自动化验证执行清单.md', 'utf8');
-assertIncludes(twentiethBatchPlan, '协议支持矩阵与落地路线文档补强', 'twentieth batch plan docs scope');
-assertIncludes(twentiethBatchPlan, '协议支持矩阵', 'twentieth batch plan matrix scope');
-
-const twentyFirstBatchPlan = readFileSync('docs/第二十一批自动化验证执行清单.md', 'utf8');
-assertIncludes(twentyFirstBatchPlan, '`ss` 向导与 `hysteria2` 导入文档细化', 'twenty-first batch plan docs scope');
-assertIncludes(twentyFirstBatchPlan, '字段映射', 'twenty-first batch plan mapping scope');
-assertIncludes(twentyFirstBatchPlan, '多端口', 'twenty-first batch plan multi-port scope');
-
-const twentySecondBatchPlan = readFileSync('docs/第二十二批自动化验证执行清单.md', 'utf8');
-assertIncludes(twentySecondBatchPlan, '实际落地结果', 'twenty-second batch plan docs scope');
-assertIncludes(twentySecondBatchPlan, '`hysteria2` 结构化协议向导', 'twenty-second batch plan hysteria2 guide scope');
-assertIncludes(twentySecondBatchPlan, '协议级字段校验', 'twenty-second batch plan protocol validation scope');
-assertIncludes(twentySecondBatchPlan, '节点协议示例库', 'twenty-second batch plan example library scope');
-assertIncludes(twentySecondBatchPlan, '长链路回归', 'twenty-second batch plan long-chain regression scope');
-assertIncludes(twentySecondBatchPlan, '排障指南', 'twenty-second batch plan troubleshooting scope');
-
-const twentyThirdBatchPlan = readFileSync('docs/第二十三批自动化验证执行清单.md', 'utf8');
-assertIncludes(twentyThirdBatchPlan, '文档增强结果', 'twenty-third batch plan docs scope');
-assertIncludes(twentyThirdBatchPlan, '常见报错对照', 'twenty-third batch plan error glossary scope');
-assertIncludes(twentyThirdBatchPlan, '预览有变化但公开订阅没变化', 'twenty-third batch plan preview-public scope');
-assertIncludes(twentyThirdBatchPlan, '部署指南', 'twenty-third batch plan deploy guide scope');
-
-const twentyFourthBatchPlan = readFileSync('docs/第二十四批自动化验证执行清单.md', 'utf8');
-assertIncludes(twentyFourthBatchPlan, '文档入口优化结果', 'twenty-fourth batch plan docs scope');
-assertIncludes(twentyFourthBatchPlan, '统一文档导航页', 'twenty-fourth batch plan navigation scope');
-assertIncludes(twentyFourthBatchPlan, 'README', 'twenty-fourth batch plan readme scope');
-assertIncludes(twentyFourthBatchPlan, 'smoke', 'twenty-fourth batch plan smoke scope');
-
-const twentyFifthBatchPlan = readFileSync('docs/第二十五批自动化验证执行清单.md', 'utf8');
-assertIncludes(twentyFifthBatchPlan, 'API参考与接口约定.md', 'twenty-fifth batch plan api scope');
-assertIncludes(twentyFifthBatchPlan, '节点字段字典.md', 'twenty-fifth batch plan field dictionary scope');
-assertIncludes(twentyFifthBatchPlan, '常见错误与返回语义.md', 'twenty-fifth batch plan error semantics scope');
-assertIncludes(twentyFifthBatchPlan, '开发 / 运维 / 运营', 'twenty-fifth batch plan role-based navigation scope');
-assertIncludes(twentyFifthBatchPlan, 'smoke', 'twenty-fifth batch plan smoke scope');
-
-const twentySixthBatchPlan = readFileSync('docs/第二十六批自动化验证执行清单.md', 'utf8');
-assertIncludes(twentySixthBatchPlan, '状态码速查', 'twenty-sixth batch plan status code scope');
-assertIncludes(twentySixthBatchPlan, '完整请求 / 响应示例', 'twenty-sixth batch plan api examples scope');
-assertIncludes(twentySixthBatchPlan, '`ss` / `hysteria2` 导入字段映射表', 'twenty-sixth batch plan field mapping scope');
-assertIncludes(twentySixthBatchPlan, '发布前检查清单.md', 'twenty-sixth batch plan release checklist scope');
-assertIncludes(twentySixthBatchPlan, 'smoke', 'twenty-sixth batch plan smoke scope');
-
-const apiReference = readFileSync('docs/API参考与接口约定.md', 'utf8');
-assertIncludes(apiReference, '统一约定', 'api reference conventions docs');
-assertIncludes(apiReference, '按资源分组的状态码速查', 'api reference status code table docs');
-assertIncludes(apiReference, 'GET /api/setup/status', 'api reference setup status route');
-assertIncludes(apiReference, 'POST /api/node-import/preview', 'api reference node import preview route');
-assertIncludes(apiReference, '完整请求 / 响应示例', 'api reference full example docs');
-assertIncludes(apiReference, 'POST /api/nodes', 'api reference create node route');
-assertIncludes(apiReference, 'GET /s/:token/:target', 'api reference public subscription route');
-assertIncludes(apiReference, '整组替换', 'api reference replace binding semantics');
-
-const nodeFieldDictionary = readFileSync('docs/节点字段字典.md', 'utf8');
-assertIncludes(nodeFieldDictionary, '节点统一结构', 'node field dictionary structure docs');
-assertIncludes(nodeFieldDictionary, 'credentials', 'node field dictionary credentials docs');
-assertIncludes(nodeFieldDictionary, 'params', 'node field dictionary params docs');
-assertIncludes(nodeFieldDictionary, '导入字段 -> 最终 metadata 对照', 'node field dictionary mapping table docs');
-assertIncludes(nodeFieldDictionary, '`ss` 导入字段 -> 最终 metadata 对照', 'node field dictionary ss mapping docs');
-assertIncludes(nodeFieldDictionary, '`hysteria2` / `hy2` 导入字段 -> 最终 metadata 对照', 'node field dictionary hysteria2 mapping docs');
-assertIncludes(nodeFieldDictionary, '`hy2` 会归一化为 `hysteria2`', 'node field dictionary hy2 canonicalization docs');
-assertIncludes(nodeFieldDictionary, 'authority 里的多端口写法当前还不支持', 'node field dictionary hysteria2 multi-port docs');
-
-const commonErrors = readFileSync('docs/常见错误与返回语义.md', 'utf8');
-assertIncludes(commonErrors, 'AppErrorShape', 'common errors app error shape docs');
-assertIncludes(commonErrors, '看到这个错误先去看哪份文档', 'common errors doc routing docs');
-assertIncludes(commonErrors, 'missing bearer token', 'common errors auth docs');
-assertIncludes(commonErrors, 'remote sourceType is not supported yet', 'common errors node source docs');
-assertIncludes(commonErrors, '容易误解的成功语义', 'common errors success semantics docs');
-assertIncludes(commonErrors, 'GET /s/:token/:target', 'common errors public subscription docs');
-assertIncludes(commonErrors, 'docs/发布前检查清单.md', 'common errors release checklist link docs');
-
-const releaseChecklist = readFileSync('docs/发布前检查清单.md', 'utf8');
-assertIncludes(releaseChecklist, 'GET /health', 'release checklist health docs');
-assertIncludes(releaseChecklist, 'POST /api/node-import/preview', 'release checklist import preview docs');
-assertIncludes(releaseChecklist, 'x-subforge-preview-cache: miss', 'release checklist preview cache docs');
-assertIncludes(releaseChecklist, 'x-subforge-cache: hit', 'release checklist subscription cache docs');
-assertIncludes(releaseChecklist, '最小发布通过口径', 'release checklist release gate docs');
-
-const docsNavigation = readFileSync('docs/文档导航与阅读顺序.md', 'utf8');
-assertIncludes(docsNavigation, '第一次接手这个项目应该看哪里', 'docs navigation onboarding docs');
-assertIncludes(docsNavigation, '按场景跳转', 'docs navigation scenario docs');
-assertIncludes(docsNavigation, '按角色阅读路径', 'docs navigation role-based docs');
-assertIncludes(docsNavigation, '开发者', 'docs navigation developer docs');
-assertIncludes(docsNavigation, '部署 / 运维', 'docs navigation ops docs');
-assertIncludes(docsNavigation, '运营 / 后台使用', 'docs navigation operator docs');
-assertIncludes(docsNavigation, '核心文档分工', 'docs navigation roles docs');
-assertIncludes(docsNavigation, 'docs/部署指南.md', 'docs navigation deploy link docs');
-assertIncludes(docsNavigation, 'docs/导入成功但订阅没变化排障指南.md', 'docs navigation troubleshooting link docs');
-assertIncludes(docsNavigation, 'docs/API参考与接口约定.md', 'docs navigation api reference link docs');
-assertIncludes(docsNavigation, 'docs/节点字段字典.md', 'docs navigation node field dictionary link docs');
-assertIncludes(docsNavigation, 'docs/常见错误与返回语义.md', 'docs navigation common error link docs');
-assertIncludes(docsNavigation, 'docs/发布前检查清单.md', 'docs navigation release checklist link docs');
-
-const roadmap = readFileSync('.omx/plans/2026-03-07-subforge-roadmap.md', 'utf8');
-assertIncludes(roadmap, 'docs/第二十二批自动化验证执行清单.md', 'roadmap twenty-second batch docs');
-assertIncludes(roadmap, 'docs/第二十三批自动化验证执行清单.md', 'roadmap twenty-third batch docs');
-assertIncludes(roadmap, 'docs/第二十四批自动化验证执行清单.md', 'roadmap twenty-fourth batch docs');
-assertIncludes(roadmap, 'docs/第二十五批自动化验证执行清单.md', 'roadmap twenty-fifth batch docs');
-assertIncludes(roadmap, 'docs/第二十六批自动化验证执行清单.md', 'roadmap twenty-sixth batch docs');
-assertIncludes(roadmap, '协议级校验', 'roadmap protocol validation docs');
-assertIncludes(roadmap, '独立排障文档', 'roadmap troubleshooting docs');
-assertIncludes(roadmap, '发布前检查清单', 'roadmap release checklist docs');
+const docsIndex = readFileSync('docs/INDEX.md', 'utf8');
+assertIncludes(docsIndex, '文档导航', 'docs index title');
+assertIncludes(docsIndex, 'docs/部署指南.md', 'docs index deploy entry');
+assertIncludes(docsIndex, 'Dashboard / Git 导入', 'docs index deploy description');
+assertIncludes(docsIndex, 'staging / production', 'docs index branch strategy docs');
+assertIncludes(docsIndex, 'failure summary / webhook', 'docs index failure alert docs');
+assertIncludes(docsIndex, '发布 / 回滚 checklist', 'docs index release rollback docs');
+assertIncludes(docsIndex, 'D1 备份 / 恢复 SOP', 'docs index d1 backup docs');
+assertIncludes(docsIndex, '自动化 D1 定期备份脚本 / 恢复演练', 'docs index d1 backup automation docs');
+assertIncludes(docsIndex, '备份产物异地加密归档 / 对象存储同步 / 生命周期管理', 'docs index d1 archive lifecycle docs');
+assertIncludes(docsIndex, '生命周期告警', 'docs index next-doc suggestion');
+assertIncludes(docsIndex, 'npm run ci:verify', 'docs index ci verify description');
+assertIncludes(docsIndex, 'docs/API接口矩阵与OpenAPI草案.md', 'docs index api matrix entry');
+assertIncludes(docsIndex, 'docs/API错误响应示例库.md', 'docs index api error examples entry');
+assertIncludes(docsIndex, 'openapi.yaml', 'docs index openapi entry');
+assertIncludes(docsIndex, 'docs/架构图与ER图.md', 'docs index architecture entry');
 
 const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8');
-assertIncludes(ciWorkflow, 'npm ci', 'ci install step');
-assertIncludes(ciWorkflow, 'npm run typecheck', 'ci typecheck step');
-assertIncludes(ciWorkflow, 'npm run build', 'ci build step');
-assertIncludes(ciWorkflow, 'npm run test:smoke', 'ci smoke step');
-assertIncludes(ciWorkflow, 'npm test', 'ci test step');
+assertIncludes(ciWorkflow, 'workflow_dispatch:', 'ci manual trigger');
+assertIncludes(ciWorkflow, 'cancel-in-progress: true', 'ci concurrency cancel');
+assertIncludes(ciWorkflow, 'cache-dependency-path: package-lock.json', 'ci cache dependency path');
+assertIncludes(ciWorkflow, 'npm ci', 'ci npm ci command');
+assertIncludes(ciWorkflow, 'npm run ci:verify', 'ci verify command');
+
+const deployWorkflow = readFileSync('.github/workflows/deploy.yml', 'utf8');
+const d1BackupWorkflow = readFileSync('.github/workflows/d1-backup.yml', 'utf8');
+const failureAlertWorkflow = readFileSync('.github/workflows/failure-alert.yml', 'utf8');
+const backupCrypto = readFileSync('scripts/d1-backup-crypto.mjs', 'utf8');
+assertIncludes(deployWorkflow, 'release/**', 'deploy release branch trigger');
+assertIncludes(deployWorkflow, 'target_environment', 'deploy workflow target input');
+assertIncludes(deployWorkflow, 'npm run deploy:staging', 'deploy workflow staging command');
+assertIncludes(deployWorkflow, 'environment: ${{ needs.plan.outputs.github_environment }}', 'deploy workflow dynamic environment');
+assertIncludes(deployWorkflow, 'cache-dependency-path: package-lock.json', 'deploy cache dependency path');
+assertIncludes(deployWorkflow, 'npm ci', 'deploy npm ci command');
+assertIncludes(deployWorkflow, 'npm run ci:verify', 'deploy verify command');
+assertIncludes(deployWorkflow, 'cloudflare/wrangler-action@v3', 'deploy wrangler action');
+assertIncludes(deployWorkflow, 'CLOUDFLARE_API_TOKEN', 'deploy api token secret');
+assertIncludes(deployWorkflow, 'CLOUDFLARE_ACCOUNT_ID', 'deploy account secret');
+assertIncludes(deployWorkflow, 'ADMIN_JWT_SECRET', 'deploy runtime secret');
+assertIncludes(deployWorkflow, 'npm run deploy', 'deploy root deploy command');
+assertIncludes(d1BackupWorkflow, 'schedule:', 'd1 backup schedule trigger');
+assertIncludes(d1BackupWorkflow, 'workflow_dispatch:', 'd1 backup manual trigger');
+assertIncludes(d1BackupWorkflow, 'backup_scope', 'd1 backup scope input');
+assertIncludes(d1BackupWorkflow, 'npm run backup:d1', 'd1 backup npm script');
+assertIncludes(d1BackupWorkflow, 'actions/upload-artifact@v4', 'd1 backup artifact upload');
+assertIncludes(d1BackupWorkflow, 'CLOUDFLARE_API_TOKEN', 'd1 backup api token secret');
+assertIncludes(d1BackupWorkflow, 'D1_BACKUP_ARCHIVE_PASSPHRASE', 'd1 backup passphrase secret');
+assertIncludes(d1BackupWorkflow, 'D1_BACKUP_ARCHIVE_S3_URI', 'd1 backup object storage uri');
+assertIncludes(d1BackupWorkflow, 'D1_BACKUP_ARCHIVE_ENDPOINT_URL', 'd1 backup object storage endpoint');
+assertIncludes(d1BackupWorkflow, 'D1_BACKUP_ARCHIVE_SSE', 'd1 backup object storage sse');
+assertIncludes(d1BackupWorkflow, 'D1_BACKUP_ARCHIVE_KMS_KEY_ID', 'd1 backup object storage kms');
+assertIncludes(d1BackupWorkflow, 'D1_BACKUP_ARCHIVE_STORAGE_CLASS', 'd1 backup object storage class');
+assertIncludes(d1BackupWorkflow, '--encrypt --delete-plain --passphrase-env D1_BACKUP_ARCHIVE_PASSPHRASE', 'd1 backup encryption command');
+assertIncludes(d1BackupWorkflow, 's3 cp backups/d1/', 'd1 backup object storage copy command');
+assertIncludes(d1BackupWorkflow, '--sse-kms-key-id', 'd1 backup object storage kms cli flag');
+assertIncludes(d1BackupWorkflow, 'Bucket lifecycle should be configured on the target bucket / prefix outside this repo.', 'd1 backup object storage lifecycle summary');
+assertIncludes(d1BackupWorkflow, '.sha256', 'd1 backup checksum artifact');
+assertIncludes(d1BackupWorkflow, "cron: '15 3 * * *'", 'd1 backup schedule cron');
+assertIncludes(failureAlertWorkflow, 'workflow_run:', 'failure alert workflow trigger');
+assertIncludes(failureAlertWorkflow, 'D1 Backup', 'failure alert d1 backup workflow');
+assertIncludes(failureAlertWorkflow, 'FAILURE_WEBHOOK_URL', 'failure alert webhook secret');
+assertIncludes(failureAlertWorkflow, 'curl --fail --show-error --silent', 'failure alert curl command');
+
+assertIncludes(backupCrypto, 'aes-256-gcm', 'backup crypto algorithm');
+assertIncludes(backupCrypto, 'createCipheriv', 'backup crypto encrypt helper');
+assertIncludes(backupCrypto, 'createDecipheriv', 'backup crypto decrypt helper');
 
 const webApi = readFileSync('apps/web/src/api.ts', 'utf8');
 assertIncludes(webApi, "const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';", 'web api same-origin default');
-assertIncludes(webApi, "mode: 'client_only' | 'server_revoked';", 'web api logout mode');
+const webApiRoutes = readFileSync('apps/web/src/api-routes.js', 'utf8');
+assertIncludes(webApiRoutes, '/api/nodes/import/remote', 'web api remote node route');
 
 const viteConfig = readFileSync('apps/web/vite.config.ts', 'utf8');
 assertIncludes(viteConfig, "'/api': 'http://127.0.0.1:8787'", 'vite api proxy');
@@ -424,17 +418,44 @@ assertIncludes(viteConfig, "'/s': 'http://127.0.0.1:8787'", 'vite subscription p
 const workerIndex = readFileSync('apps/worker/src/index.ts', 'utf8');
 assertIncludes(workerIndex, 'handleSetupStatus', 'worker setup status handler');
 assertIncludes(workerIndex, 'handleSetupBootstrap', 'worker setup bootstrap handler');
-assertIncludes(workerIndex, 'admin session has been revoked', 'worker revoked-session guard');
-assertIncludes(workerIndex, "mode: 'server_revoked'", 'worker logout response mode');
-assertIncludes(workerIndex, 'remote sourceType is not supported yet', 'worker node source validation');
-assertIncludes(workerIndex, 'handleNodeImportPreview', 'worker node import preview handler');
-assertIncludes(workerIndex, 'must be a JSON object or null', 'worker node metadata validation message');
-assertIncludes(workerIndex, 'readNullableObjectField', 'worker node metadata validation helper');
-assertIncludes(workerIndex, 'default template must be enabled', 'worker template default-state validation');
-assertIncludes(workerIndex, 'return await handleApiRequest(request, env, segments.slice(1));', 'worker api await handling');
-assertIncludes(workerIndex, 'return await env.ASSETS.fetch(request);', 'worker assets fallback');
+assertIncludes(workerIndex, 'handleNodeImport', 'worker node import handler');
+assertIncludes(workerIndex, 'handleRemoteNodeImport', 'worker remote node import handler');
+assertIncludes(workerIndex, 'TOO_MANY_REQUESTS', 'worker too many requests error handling');
+assertIncludes(workerIndex, 'subscription request rate limit exceeded', 'worker subscription rate limit message');
+assertIncludes(workerIndex, 'node.import', 'worker node import audit action');
+assertIncludes(workerIndex, 'node.import_remote', 'worker remote node import audit action');
+assertIncludes(workerIndex, 'buildUserAuditPayload', 'worker audit payload helpers');
+assertIncludes(workerIndex, 'rayId', 'worker audit request ray id');
+assertIncludes(workerIndex, 'env.ASSETS.fetch(request);', 'worker assets fallback');
 
-const revocationMigration = readFileSync('migrations/002_admin_session_revocation.sql', 'utf8');
-assertIncludes(revocationMigration, 'ALTER TABLE admins ADD COLUMN session_not_before TEXT;', 'revocation migration');
+const rateLimit = readFileSync('apps/worker/src/rate-limit.ts', 'utf8');
+assertIncludes(rateLimit, 'peekAdminLoginRateLimit', 'worker admin login rate limit helper');
+assertIncludes(rateLimit, 'consumeSubscriptionRateLimit', 'worker subscription rate limit helper');
+
+const sharedDomain = readFileSync('packages/shared/src/domain.ts', 'utf8');
+assertIncludes(sharedDomain, 'targetDisplayName?: string | null;', 'shared audit target display field');
+assertIncludes(sharedDomain, 'requestMeta?: AuditRequestMeta | null;', 'shared audit request meta field');
+
+const workerRepository = readFileSync('apps/worker/src/repository.ts', 'utf8');
+assertIncludes(workerRepository, 'target_display_name', 'worker audit target display query');
+assertIncludes(workerRepository, 'mapAuditRequestMeta', 'worker audit request meta mapping');
+
+const webApp = readFileSync('apps/web/src/App.tsx', 'utf8');
+assertIncludes(webApp, 'formatAuditActionLabel', 'web audit action formatter');
+assertIncludes(webApp, 'renderAuditRequest', 'web audit request renderer');
+
+const workerSyncDiagnostics = readFileSync('apps/worker/src/rule-sync-diagnostics.ts', 'utf8');
+assertIncludes(workerSyncDiagnostics, 'operatorHint', 'worker sync operator hint field');
+assertIncludes(workerSyncDiagnostics, 'contentPreview', 'worker sync content preview field');
+
+const workerSync = readFileSync('apps/worker/src/sync.ts', 'utf8');
+assertIncludes(workerSync, 'FETCH_TIMEOUT', 'worker sync timeout grading');
+assertIncludes(workerSync, 'UNSUPPORTED_JSON_SHAPE', 'worker sync json shape grading');
+assertIncludes(workerSync, 'duplicateRuleCount', 'worker sync parse metrics');
+assertIncludes(workerSync, 'buildRuleSourceSyncDiagnostics', 'worker sync diagnostics helper usage');
+
+const webSync = readFileSync('apps/web/src/App.tsx', 'utf8');
+assertIncludes(webSync, 'formatSyncErrorCodeLabel', 'web sync error code formatter');
+assertIncludes(webSync, 'supportedShapes', 'web sync supported shapes rendering');
 
 console.log('Smoke checks passed.');

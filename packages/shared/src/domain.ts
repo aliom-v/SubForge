@@ -104,6 +104,16 @@ export interface SyncLogRecord {
   createdAt: string;
 }
 
+export interface AuditRequestMeta {
+  ip?: string | null;
+  country?: string | null;
+  colo?: string | null;
+  userAgent?: string | null;
+  method?: string | null;
+  path?: string | null;
+  rayId?: string | null;
+}
+
 export interface AuditLogRecord {
   id: string;
   actorAdminId: string;
@@ -111,6 +121,8 @@ export interface AuditLogRecord {
   action: string;
   targetType: string;
   targetId?: string | null;
+  targetDisplayName?: string | null;
+  requestMeta?: AuditRequestMeta | null;
   payload?: Record<string, JsonValue> | null;
   createdAt: string;
 }
