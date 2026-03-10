@@ -90,6 +90,9 @@ assert.ok(existsSync('package-lock.json'), 'package-lock.json should exist');
 const gitignore = readFileSync('.gitignore', 'utf8');
 assertIncludes(gitignore, 'backups/d1/', 'gitignore d1 backup artifacts');
 
+assert.equal(readFileSync('.nvmrc', 'utf8').trim(), '20', 'repo should pin Node.js 20 via .nvmrc');
+assert.equal(readFileSync('.node-version', 'utf8').trim(), '20', 'repo should pin Node.js 20 via .node-version');
+
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
 assert.equal(packageJson.scripts.build, 'npm run build:web', 'root build script');
 assert.equal(packageJson.scripts.deploy, 'npm run db:migrations:apply && npm run deploy:worker', 'root deploy script');
@@ -118,12 +121,12 @@ assert.equal(webPackageJson.dependencies['@subforge/shared'], '0.1.0', 'web shou
 const workerPackageJson = JSON.parse(readFileSync('apps/worker/package.json', 'utf8'));
 assert.equal(workerPackageJson.dependencies['@subforge/core'], '0.1.0', 'worker should use npm-compatible workspace version for core');
 assert.equal(workerPackageJson.dependencies['@subforge/shared'], '0.1.0', 'worker should use npm-compatible workspace version for shared');
-assert.equal(workerPackageJson.scripts.build, 'wrangler deploy --dry-run --env= --config ../../wrangler.toml', 'worker dry-run build script');
-assert.equal(workerPackageJson.scripts['build:staging'], 'wrangler deploy --dry-run --env staging --config ../../wrangler.toml', 'worker staging dry-run build script');
-assert.equal(workerPackageJson.scripts.deploy, 'wrangler deploy --env= --config ../../wrangler.toml', 'worker deploy script');
-assert.equal(workerPackageJson.scripts['deploy:staging'], 'wrangler deploy --env staging --config ../../wrangler.toml', 'worker staging deploy script');
-assert.equal(workerPackageJson.scripts['db:migrations:apply'], 'wrangler d1 migrations apply DB --remote --env= --config ../../wrangler.toml', 'worker migration script');
-assert.equal(workerPackageJson.scripts['db:migrations:apply:staging'], 'wrangler d1 migrations apply DB --remote --env staging --config ../../wrangler.toml', 'worker staging migration script');
+assert.equal(workerPackageJson.scripts.build, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --env= --config ../../wrangler.toml', 'worker dry-run build script');
+assert.equal(workerPackageJson.scripts['build:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --env staging --config ../../wrangler.toml', 'worker staging dry-run build script');
+assert.equal(workerPackageJson.scripts.deploy, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --env= --config ../../wrangler.toml', 'worker deploy script');
+assert.equal(workerPackageJson.scripts['deploy:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js deploy --env staging --config ../../wrangler.toml', 'worker staging deploy script');
+assert.equal(workerPackageJson.scripts['db:migrations:apply'], 'node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --env= --config ../../wrangler.toml', 'worker migration script');
+assert.equal(workerPackageJson.scripts['db:migrations:apply:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --env staging --config ../../wrangler.toml', 'worker staging migration script');
 assert.match(workerPackageJson.devDependencies.wrangler, /^\^4\./, 'worker should use wrangler v4');
 
 const corePackageJson = JSON.parse(readFileSync('packages/core/package.json', 'utf8'));

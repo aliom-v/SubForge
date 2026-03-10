@@ -169,6 +169,7 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 - `.github/workflows/deploy.yml` 现在采用简单分支策略：`release/*` 分支 push 自动走 `staging` 环境，`main` 分支 push 自动走 `production` 环境；手动触发时也可显式选择 `staging` / `production`
 - staging 发布会执行 `npm run deploy:staging`，production 发布继续执行 `npm run deploy`；两者都会先复用同一条 `npm run ci:verify`
 - CI workflow 会取消同一分支上被后续提交覆盖的旧检查；deploy workflow 会按环境分开串行，避免 staging / production 互相抢占
+- 仓库根目录已提交 `.nvmrc` 与 `.node-version` 并固定为 `20`，用于让 Cloudflare Workers Builds 与 GitHub Actions 的 Node 版本保持一致
 - 仓库已提交 `package-lock.json`，workflow 当前默认使用 `npm ci`；如需更新依赖版本，再在本地执行 `npm install`
 - 新增 `.github/workflows/d1-backup.yml`：每天定时为 production 导出一份 D1 备份，默认保留 `30` 天；如配置 `D1_BACKUP_ARCHIVE_PASSPHRASE`，会自动加密后再上传 artifact
 - 如需把备份继续同步到 S3 兼容对象存储，可配置 `D1_BACKUP_ARCHIVE_S3_URI`、`D1_BACKUP_ARCHIVE_ENDPOINT_URL`、`D1_BACKUP_ARCHIVE_SSE`、`D1_BACKUP_ARCHIVE_KMS_KEY_ID` 等变量 / Secret；workflow 会额外执行 `aws s3 cp`，并在 summary 中提示 bucket lifecycle 需在存储侧配置
