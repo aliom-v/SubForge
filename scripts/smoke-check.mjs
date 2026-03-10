@@ -101,6 +101,7 @@ assert.equal(packageJson.scripts['init:remote'], 'node scripts/init-instance.mjs
 assert.equal(packageJson.scripts['test:smoke'], 'node scripts/smoke-check.mjs', 'smoke script');
 assert.equal(packageJson.scripts['test:contract'], 'node scripts/openapi-contract-check.mjs', 'contract script');
 assert.equal(packageJson.scripts['test:unit'], 'node scripts/run-unit-tests.mjs', 'unit test script');
+assert.match(packageJson.devDependencies?.esbuild ?? '', /^\^0\.21\./, 'root should declare esbuild for test helpers');
 assert.equal(packageJson.scripts['ci:verify'], 'npm run test:contract && npm run test:smoke && npm test && npm run test:unit && npm run typecheck && npm run build && npm run build:worker', 'ci verify script');
 assert.equal(packageJson.scripts['build:worker:staging'], 'npm run build:staging --workspace @subforge/worker', 'root staging worker build script');
 assert.equal(packageJson.scripts['deploy:staging'], 'npm run db:migrations:apply:staging && npm run deploy:worker:staging', 'root staging deploy script');

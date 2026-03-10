@@ -50,7 +50,7 @@ export async function loadTsModule(relativePath) {
     bundle: true,
     format: 'esm',
     platform: 'node',
-    target: 'node22',
+    target: 'node20',
     sourcemap: 'inline',
     write: false,
     legalComments: 'none'

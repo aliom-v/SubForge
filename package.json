@@ -58,5 +58,8 @@
         "description": "KV namespace used for public subscription and preview cache entries."
       }
     }
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5"
   }
 }
