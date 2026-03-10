@@ -5,13 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "node ../../node_modules/wrangler/bin/wrangler.js dev --config ../../wrangler.toml",
-    "build": "node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --env= --config ../../wrangler.toml",
+    "build": "node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --config ../../wrangler.toml",
     "build:staging": "node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --env staging --config ../../wrangler.toml",
-    "deploy": "node ../../node_modules/wrangler/bin/wrangler.js deploy --env= --config ../../wrangler.toml",
+    "deploy": "node ../../node_modules/wrangler/bin/wrangler.js deploy --config ../../wrangler.toml",
     "deploy:staging": "node ../../node_modules/wrangler/bin/wrangler.js deploy --env staging --config ../../wrangler.toml",
     "typecheck": "node ../../node_modules/typescript/bin/tsc --noEmit",
     "db:migrations:apply:local": "node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --local --config ../../wrangler.toml",
-    "db:migrations:apply": "node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --env= --config ../../wrangler.toml",
+    "db:migrations:apply": "node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --config ../../wrangler.toml",
     "db:migrations:apply:staging": "node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --env staging --config ../../wrangler.toml"
   },
   "dependencies": {

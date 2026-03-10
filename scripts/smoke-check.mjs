@@ -79,8 +79,9 @@ assertIncludes(wrangler, '[assets]', 'wrangler assets config');
 assertIncludes(wrangler, 'directory = "./apps/web/dist"', 'wrangler assets directory');
 assertIncludes(wrangler, 'not_found_handling = "single-page-application"', 'wrangler spa handling');
 assertIncludes(wrangler, 'run_worker_first = true', 'wrangler worker-first flag');
+assertIncludes(wrangler, 'name = "subforge"', 'wrangler production worker name');
 assertIncludes(wrangler, '[env.staging]', 'wrangler staging env');
-assertIncludes(wrangler, 'name = "subforge-worker-staging"', 'wrangler staging worker name');
+assertIncludes(wrangler, 'name = "subforge-staging"', 'wrangler staging worker name');
 assertIncludes(wrangler, 'database_name = "subforge-staging"', 'wrangler staging d1 name');
 assert.ok(!wrangler.includes('YOUR_D1_DATABASE_ID'), 'wrangler should not contain D1 placeholder ids');
 assert.ok(!wrangler.includes('YOUR_KV_NAMESPACE_ID'), 'wrangler should not contain KV placeholder ids');
@@ -122,11 +123,11 @@ assert.equal(webPackageJson.dependencies['@subforge/shared'], '0.1.0', 'web shou
 const workerPackageJson = JSON.parse(readFileSync('apps/worker/package.json', 'utf8'));
 assert.equal(workerPackageJson.dependencies['@subforge/core'], '0.1.0', 'worker should use npm-compatible workspace version for core');
 assert.equal(workerPackageJson.dependencies['@subforge/shared'], '0.1.0', 'worker should use npm-compatible workspace version for shared');
-assert.equal(workerPackageJson.scripts.build, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --env= --config ../../wrangler.toml', 'worker dry-run build script');
+assert.equal(workerPackageJson.scripts.build, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --config ../../wrangler.toml', 'worker dry-run build script');
 assert.equal(workerPackageJson.scripts['build:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --env staging --config ../../wrangler.toml', 'worker staging dry-run build script');
-assert.equal(workerPackageJson.scripts.deploy, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --env= --config ../../wrangler.toml', 'worker deploy script');
+assert.equal(workerPackageJson.scripts.deploy, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --config ../../wrangler.toml', 'worker deploy script');
 assert.equal(workerPackageJson.scripts['deploy:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js deploy --env staging --config ../../wrangler.toml', 'worker staging deploy script');
-assert.equal(workerPackageJson.scripts['db:migrations:apply'], 'node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --env= --config ../../wrangler.toml', 'worker migration script');
+assert.equal(workerPackageJson.scripts['db:migrations:apply'], 'node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --config ../../wrangler.toml', 'worker migration script');
 assert.equal(workerPackageJson.scripts['db:migrations:apply:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --env staging --config ../../wrangler.toml', 'worker staging migration script');
 assert.match(workerPackageJson.devDependencies.wrangler, /^\^4\./, 'worker should use wrangler v4');
 
@@ -385,6 +386,7 @@ assertIncludes(deployWorkflow, 'cloudflare/wrangler-action@v3', 'deploy wrangler
 assertIncludes(deployWorkflow, 'CLOUDFLARE_API_TOKEN', 'deploy api token secret');
 assertIncludes(deployWorkflow, 'CLOUDFLARE_ACCOUNT_ID', 'deploy account secret');
 assertIncludes(deployWorkflow, 'ADMIN_JWT_SECRET', 'deploy runtime secret');
+assertIncludes(deployWorkflow, 'Validate Cloudflare deployment secrets', 'deploy secret validation step');
 assertIncludes(deployWorkflow, 'npm run deploy', 'deploy root deploy command');
 assertIncludes(d1BackupWorkflow, 'schedule:', 'd1 backup schedule trigger');
 assertIncludes(d1BackupWorkflow, 'workflow_dispatch:', 'd1 backup manual trigger');

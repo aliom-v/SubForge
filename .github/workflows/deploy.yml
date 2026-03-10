@@ -43,7 +43,7 @@ jobs:
               github_environment="production"
               migration_command="npm run db:migrations:apply"
               deploy_command="npm run deploy"
-              wrangler_command="deploy --env= --config ../../wrangler.toml"
+              wrangler_command="deploy --config ../../wrangler.toml"
             else
               github_environment="staging"
               migration_command="npm run db:migrations:apply:staging"
@@ -63,7 +63,7 @@ jobs:
             if [ "$github_environment" = "production" ]; then
               migration_command="npm run db:migrations:apply"
               deploy_command="npm run deploy"
-              wrangler_command="deploy --env= --config ../../wrangler.toml"
+              wrangler_command="deploy --config ../../wrangler.toml"
             else
               migration_command="npm run db:migrations:apply:staging"
               deploy_command="npm run deploy:staging"
@@ -84,6 +84,7 @@ jobs:
             echo "- Environment: `${{ steps.plan.outputs.github_environment }}`"
             echo "- Ref: `${{ steps.plan.outputs.checkout_ref }}`"
             echo "- Command: `${{ steps.plan.outputs.deploy_command }}`"
+            echo "- Worker service: `${{ steps.plan.outputs.github_environment == 'production' && 'subforge' || 'subforge-staging' }}`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
@@ -111,6 +112,30 @@ jobs:
 
       - name: Run verification pipeline
         run: npm run ci:verify
+
+      - name: Validate Cloudflare deployment secrets
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ADMIN_JWT_SECRET: ${{ secrets.ADMIN_JWT_SECRET }}
+        run: |
+          missing=0
+          for secret_name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID ADMIN_JWT_SECRET; do
+            if [ -z "${!secret_name}" ]; then
+              echo "::error::Missing required secret ${secret_name} for environment ${{ needs.plan.outputs.github_environment }}."
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          {
+            echo "## Deploy preflight"
+            echo "- Secrets validated for `${{ needs.plan.outputs.github_environment }}`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Apply remote migrations
         run: ${{ needs.plan.outputs.migration_command }}
