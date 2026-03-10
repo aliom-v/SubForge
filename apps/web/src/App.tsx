@@ -55,6 +55,7 @@ import {
   type RuleSourceSyncPayload,
   type SetupStatusPayload
 } from './api';
+import { getErrorMessage, shouldClearProtectedSession } from './error-handling';
 import {
   COMMON_NODE_PROTOCOLS,
   createNodeProtocolGuideState,
@@ -231,18 +232,44 @@ export function App(): JSX.Element {
     setError(messageText);
   }
 
+  function resetSessionState(): void {
+    setAdmin(null);
+    setResources(emptyResources);
+    setPreview(null);
+    setSyncResult(null);
+    setCacheRebuildResult(null);
+    setNodeImportResult(null);
+    setRemoteNodeImportResult(null);
+    setRemoteNodeImportPreview(null);
+    setBindingUserId('');
+    setBindingNodeIds([]);
+  }
+
+  async function clearPersistedSession(refreshSetup = true): Promise<void> {
+    localStorage.removeItem(sessionStorageKey);
+    setToken('');
+    resetSessionState();
+
+    if (refreshSetup) {
+      await refreshSetupStatus();
+    }
+  }
+
+  async function handleProtectedApiError(caughtError: unknown): Promise<void> {
+    if (shouldClearProtectedSession(caughtError)) {
+      await clearPersistedSession();
+    }
+
+    setError(getErrorMessage(caughtError));
+  }
+
   useEffect(() => {
     void refreshSetupStatus();
   }, []);
 
   useEffect(() => {
     if (!token) {
-      setAdmin(null);
-      setResources(emptyResources);
-      setPreview(null);
-      setSyncResult(null);
-      setCacheRebuildResult(null);
-      setNodeImportResult(null);
+      resetSessionState();
       return;
     }
 
@@ -331,16 +358,7 @@ export function App(): JSX.Element {
       setAdmin(me);
       await refreshResources(currentToken);
     } catch (caughtError) {
-      localStorage.removeItem(sessionStorageKey);
-      setToken('');
-      setAdmin(null);
-      setResources(emptyResources);
-      setPreview(null);
-      setSyncResult(null);
-      setCacheRebuildResult(null);
-      setNodeImportResult(null);
-      await refreshSetupStatus();
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -379,7 +397,7 @@ export function App(): JSX.Element {
       const bindings = await fetchUserNodeBindings(token, userId);
       setBindingNodeIds(bindings.filter((item) => item.enabled).map((item) => item.nodeId));
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     }
   }
 
@@ -398,7 +416,7 @@ export function App(): JSX.Element {
       setLoginForm((current) => ({ ...current, password: '' }));
       await refreshSetupStatus();
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -457,15 +475,7 @@ export function App(): JSX.Element {
       }
     }
 
-    localStorage.removeItem(sessionStorageKey);
-    setToken('');
-    setAdmin(null);
-    setResources(emptyResources);
-    setPreview(null);
-    setCacheRebuildResult(null);
-    setNodeImportResult(null);
-    setRemoteNodeImportResult(null);
-    setRemoteNodeImportPreview(null);
+    await clearPersistedSession(false);
     setMessage(logoutMessage);
     setError('');
   }
@@ -481,7 +491,7 @@ export function App(): JSX.Element {
         setMessage(successMessage);
       }
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -624,7 +634,7 @@ export function App(): JSX.Element {
         }，请到“用户”页完成绑定并在“预览”页验证输出`
       );
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -668,7 +678,7 @@ export function App(): JSX.Element {
           : '远程订阅已抓取，但当前没有解析出可导入节点'
       );
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -750,7 +760,7 @@ export function App(): JSX.Element {
         `已处理 ${result.importedCount} 个节点（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 去重 ${result.duplicateCount ?? 0}）`
       );
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -781,7 +791,7 @@ export function App(): JSX.Element {
           : `远程节点源无变化，共 ${result.importedCount} 个节点`
       );
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -898,7 +908,7 @@ export function App(): JSX.Element {
       await refreshResources();
       setMessage(`规则源同步完成：${result.status} / ${result.ruleCount} rules`);
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -927,7 +937,7 @@ export function App(): JSX.Element {
       await refreshResources();
       setMessage(`缓存重建已提交：${result.userCount} 个用户 / ${result.keysRequested} 个缓存键`);
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -950,7 +960,7 @@ export function App(): JSX.Element {
       setPreview(result);
       setMessage('预览已刷新');
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
@@ -2609,8 +2619,4 @@ function ResourceTable(props: { columns: string[]; rows: Array<Array<ReactNode>>
       </table>
     </div>
   );
-}
-
-function getErrorMessage(caughtError: unknown): string {
-  return caughtError instanceof Error ? caughtError.message : '发生未知错误';
 }

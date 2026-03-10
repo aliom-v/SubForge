@@ -48,6 +48,7 @@ npm run ci:verify
 
 - `npm run test:contract`
 - `npm run test:smoke`
+- `npm test`
 - `npm run test:unit`
 - `npm run typecheck`
 - `npm run build`

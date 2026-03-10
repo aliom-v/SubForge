@@ -15,17 +15,21 @@ export const WEB_API_ROUTES = Object.freeze({
   fetchUsers: createRoute('GET', '/api/users'),
   createUser: createRoute('POST', '/api/users'),
   updateUser: createRoute('PATCH', '/api/users/{userId}', (userId) => `/api/users/${userId}`),
+  deleteUser: createRoute('DELETE', '/api/users/{userId}', (userId) => `/api/users/${userId}`),
   resetUserToken: createRoute('POST', '/api/users/{userId}/reset-token', (userId) => `/api/users/${userId}/reset-token`),
   fetchUserNodeBindings: createRoute('GET', '/api/users/{userId}/nodes', (userId) => `/api/users/${userId}/nodes`),
   replaceUserNodeBindings: createRoute('POST', '/api/users/{userId}/nodes', (userId) => `/api/users/${userId}/nodes`),
+  previewNodeImport: createRoute('POST', '/api/node-import/preview'),
   fetchNodes: createRoute('GET', '/api/nodes'),
   createNode: createRoute('POST', '/api/nodes'),
   importNodes: createRoute('POST', '/api/nodes/import'),
   importRemoteNodes: createRoute('POST', '/api/nodes/import/remote'),
   updateNode: createRoute('PATCH', '/api/nodes/{nodeId}', (nodeId) => `/api/nodes/${nodeId}`),
+  deleteNode: createRoute('DELETE', '/api/nodes/{nodeId}', (nodeId) => `/api/nodes/${nodeId}`),
   fetchTemplates: createRoute('GET', '/api/templates'),
   createTemplate: createRoute('POST', '/api/templates'),
   updateTemplate: createRoute('PATCH', '/api/templates/{templateId}', (templateId) => `/api/templates/${templateId}`),
+  deleteTemplate: createRoute('DELETE', '/api/templates/{templateId}', (templateId) => `/api/templates/${templateId}`),
   setDefaultTemplate: createRoute(
     'POST',
     '/api/templates/{templateId}/set-default',
@@ -35,6 +39,11 @@ export const WEB_API_ROUTES = Object.freeze({
   createRuleSource: createRoute('POST', '/api/rule-sources'),
   updateRuleSource: createRoute(
     'PATCH',
+    '/api/rule-sources/{ruleSourceId}',
+    (ruleSourceId) => `/api/rule-sources/${ruleSourceId}`
+  ),
+  deleteRuleSource: createRoute(
+    'DELETE',
     '/api/rule-sources/{ruleSourceId}',
     (ruleSourceId) => `/api/rule-sources/${ruleSourceId}`
   ),

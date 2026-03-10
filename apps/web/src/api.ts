@@ -1,5 +1,6 @@
 import type { ImportedNodePayload, NodeImportContentEncoding } from '@subforge/core';
 import type {
+  AppErrorCode,
   AppErrorShape,
   AuditLogRecord,
   NodeRecord,
@@ -13,7 +14,16 @@ import type {
 
 import { WEB_API_ROUTES } from './api-routes.js';
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+const API_BASE_URL =
+  ((import.meta as ImportMeta & { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL as string | undefined) ??
+  '';
+
+export const APP_API_ERROR_CODES = {
+  networkError: 'NETWORK_ERROR',
+  invalidResponse: 'INVALID_RESPONSE'
+} as const;
+
+export type AppApiErrorCode = AppErrorCode | (typeof APP_API_ERROR_CODES)[keyof typeof APP_API_ERROR_CODES];
 
 export interface AdminSession {
   id: string;
@@ -114,24 +124,114 @@ interface ErrorEnvelope {
   error: AppErrorShape;
 }
 
-async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init.headers ?? {})
-    }
-  });
+export class AppApiError extends Error {
+  code: AppApiErrorCode;
+  status?: number;
+  details?: Record<string, unknown>;
 
-  const data = (await response.json()) as SuccessEnvelope<T> | ErrorEnvelope;
+  constructor(input: {
+    code: AppApiErrorCode;
+    message: string;
+    status?: number;
+    details?: Record<string, unknown>;
+    cause?: unknown;
+  }) {
+    super(input.message, 'cause' in input ? { cause: input.cause } : undefined);
+    this.name = 'AppApiError';
+    this.code = input.code;
+    this.status = input.status;
+    this.details = input.details;
+  }
+}
 
-  if (!response.ok || !data.ok) {
-    const error = 'error' in data ? data.error : { code: 'NOT_FOUND', message: 'request failed' };
-    throw new Error(`${error.code}: ${error.message}`);
+export function isAppApiError(error: unknown): error is AppApiError {
+  return (
+    error instanceof AppApiError ||
+    (isRecord(error) &&
+      error.name === 'AppApiError' &&
+      typeof error.code === 'string' &&
+      typeof error.message === 'string' &&
+      ('status' in error ? typeof error.status === 'number' || error.status === undefined : true))
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isSuccessEnvelope<T>(value: unknown): value is SuccessEnvelope<T> {
+  return isRecord(value) && value.ok === true && 'data' in value;
+}
+
+function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
+  return (
+    isRecord(value) &&
+    value.ok === false &&
+    'error' in value &&
+    isRecord(value.error) &&
+    typeof value.error.code === 'string' &&
+    typeof value.error.message === 'string'
+  );
+}
+
+function parseJsonResponseBody(rawBody: string): unknown {
+  if (!rawBody.trim()) {
+    return null;
   }
 
-  return data.data;
+  try {
+    return JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(init.headers ?? {})
+      }
+    });
+  } catch (cause) {
+    throw new AppApiError({
+      code: APP_API_ERROR_CODES.networkError,
+      message: 'network request failed',
+      cause
+    });
+  }
+
+  const contentType = response.headers.get('content-type') ?? '';
+  const rawBody = await response.text();
+  const data = parseJsonResponseBody(rawBody);
+
+  if (isErrorEnvelope(data)) {
+    throw new AppApiError({
+      code: data.error.code,
+      message: data.error.message,
+      status: response.status,
+      details: data.error.details
+    });
+  }
+
+  if (response.ok && isSuccessEnvelope<T>(data)) {
+    return data.data;
+  }
+
+  throw new AppApiError({
+    code: APP_API_ERROR_CODES.invalidResponse,
+    message: 'server returned an invalid response',
+    status: response.status,
+    details: {
+      contentType,
+      ...(rawBody ? { bodyPreview: rawBody.slice(0, 200) } : {})
+    }
+  });
 }
 
 export async function fetchSetupStatus(): Promise<SetupStatusPayload> {
@@ -188,7 +288,11 @@ export async function updateUser(
 }
 
 export async function deleteUser(token: string, userId: string): Promise<{ deleted: true; userId: string }> {
-  return request(`/api/users/${userId}`, { method: 'DELETE' }, token);
+  return request(
+    WEB_API_ROUTES.deleteUser.buildPath(userId),
+    { method: WEB_API_ROUTES.deleteUser.method },
+    token
+  );
 }
 
 export async function resetUserToken(token: string, userId: string): Promise<UserRecord> {
@@ -262,9 +366,9 @@ export async function importRemoteNodes(token: string, sourceUrl: string): Promi
 
 export async function previewNodeImportFromUrl(token: string, sourceUrl: string): Promise<NodeImportPreviewPayload> {
   return request(
-    '/api/node-import/preview',
+    WEB_API_ROUTES.previewNodeImport.buildPath(),
     {
-      method: 'POST',
+      method: WEB_API_ROUTES.previewNodeImport.method,
       body: JSON.stringify({ sourceUrl })
     },
     token
@@ -292,7 +396,11 @@ export async function updateNode(
 }
 
 export async function deleteNode(token: string, nodeId: string): Promise<{ deleted: true; nodeId: string }> {
-  return request(`/api/nodes/${nodeId}`, { method: 'DELETE' }, token);
+  return request(
+    WEB_API_ROUTES.deleteNode.buildPath(nodeId),
+    { method: WEB_API_ROUTES.deleteNode.method },
+    token
+  );
 }
 
 export async function fetchTemplates(token: string): Promise<TemplateRecord[]> {
@@ -330,7 +438,11 @@ export async function deleteTemplate(
   token: string,
   templateId: string
 ): Promise<{ deleted: true; templateId: string }> {
-  return request(`/api/templates/${templateId}`, { method: 'DELETE' }, token);
+  return request(
+    WEB_API_ROUTES.deleteTemplate.buildPath(templateId),
+    { method: WEB_API_ROUTES.deleteTemplate.method },
+    token
+  );
 }
 
 export async function setDefaultTemplate(token: string, templateId: string): Promise<TemplateRecord> {
@@ -376,7 +488,11 @@ export async function deleteRuleSource(
   token: string,
   ruleSourceId: string
 ): Promise<{ deleted: true; ruleSourceId: string }> {
-  return request(`/api/rule-sources/${ruleSourceId}`, { method: 'DELETE' }, token);
+  return request(
+    WEB_API_ROUTES.deleteRuleSource.buildPath(ruleSourceId),
+    { method: WEB_API_ROUTES.deleteRuleSource.method },
+    token
+  );
 }
 
 export async function syncRuleSource(token: string, ruleSourceId: string): Promise<RuleSourceSyncPayload> {

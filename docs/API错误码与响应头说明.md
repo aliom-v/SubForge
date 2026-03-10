@@ -76,6 +76,7 @@ Authorization: Bearer <admin-session-token>
 
 当前共享错误码定义在 `packages/shared/src/errors.ts`，高频项包括：
 
+- `INTERNAL_ERROR`
 - `VALIDATION_FAILED`
 - `UNAUTHORIZED`
 - `FORBIDDEN`
@@ -98,20 +99,21 @@ Authorization: Bearer <admin-session-token>
 | `403 Forbidden` | `FORBIDDEN` | 管理员账号不可用、初始化已完成后禁止重复 bootstrap |
 | `404 Not Found` | `NOT_FOUND`、`SUBSCRIPTION_USER_NOT_FOUND` | 路由不存在、预览数据不存在、订阅 token / 模板上下文不存在 |
 | `429 Too Many Requests` | `TOO_MANY_REQUESTS` | 登录或公开订阅超出频率限制 |
-| `500` / `502` / `503` / `504` | 不稳定 | 当前 Worker 代码没有稳定的结构化 JSON 5xx 契约 |
+| `500 Internal Server Error` | `INTERNAL_ERROR` | Worker 捕获到未识别运行时异常，返回稳定的结构化 JSON 错误包裹 |
+| `502` / `503` / `504` | 不稳定 | 更常见于 Cloudflare 平台层、网关或上游网络问题，不保证是 SubForge 的 JSON 包裹 |
 
 关于 `5xx` 需要单独强调三点：
 
-- 当前 Worker 代码没有稳定的结构化 JSON 5xx 契约
-- 未识别异常目前会被主入口 catch 后收敛成 `400 VALIDATION_FAILED`
-- 真正看到的 `500` / `502` / `503` / `504` 更可能来自 Cloudflare 平台层或上游网关，格式不一定是 JSON
+- 当前 Worker 对未识别异常已提供稳定的结构化 `500` JSON：`INTERNAL_ERROR`
+- 这个 `500` 主要表示 Worker 内部未归类的运行时故障，而不是请求参数错误
+- 真正看到的 `502` / `503` / `504` 仍更可能来自 Cloudflare 平台层或上游网关，格式不一定是 JSON
 
 ## 5. 响应头速查
 
 | 场景 | 主要接口 | 重点响应头 | 备注 |
 | --- | --- | --- | --- |
 | 健康检查 | `GET /health` | 无专属头；主要看 `ok`、`service`、`env`、`cacheKeyExample`、`time` | 用于确认实例和环境 |
-| 登录与管理员会话 | `POST /api/admin/login`、`GET /api/admin/me`、`POST /api/admin/logout` | `x-subforge-rate-limit-scope: admin_login`、`x-subforge-rate-limit-cleared: true`、`x-subforge-rate-limit-limit`、`x-subforge-rate-limit-remaining`、`x-subforge-rate-limit-reset`、`retry-after` | `POST /api/admin/logout` 当前返回 `{ loggedOut: true }` |
+| 登录与管理员会话 | `POST /api/admin/login`、`GET /api/admin/me`、`POST /api/admin/logout` | `x-subforge-rate-limit-scope: admin_login`、`x-subforge-rate-limit-cleared: true`、`x-subforge-rate-limit-limit`、`x-subforge-rate-limit-remaining`、`x-subforge-rate-limit-reset`、`retry-after` | `POST /api/admin/logout` 当前会返回 `loggedOut`、`serverRevocation`、`mode` 与可选 `revokedAt` |
 | 预览接口 | `GET /api/preview/:userId/:target` | `x-subforge-preview-cache: hit|miss`、`x-subforge-cache-key`、`x-subforge-cache-scope: preview` | 返回 JSON 包裹，`data` 中带 `cacheKey`、`mimeType`、`content`、`metadata` |
 | 公开订阅接口 | `GET /s/:token/:target` | `x-subforge-cache: hit|miss`、`x-subforge-cache-key`、`x-subforge-cache-scope: subscription`、`x-subforge-rate-limit-scope: subscription`、`x-subforge-rate-limit-limit`、`x-subforge-rate-limit-remaining`、`x-subforge-rate-limit-reset`、`retry-after` | 返回订阅原文，频控检查发生在缓存读取前 |
 | 其余后台资源接口 | `/api/users`、`/api/nodes`、`/api/templates`、`/api/rule-sources`、`/api/sync-logs`、`/api/audit-logs`、`/api/cache/rebuild` | 无固定专属头；重点看 HTTP 状态码、`error.code` 与结构化 `details` | 写操作通常会带来审计日志或缓存失效副作用 |

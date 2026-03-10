@@ -25,7 +25,7 @@ All notable changes to this project are documented in this file.
 
 ### DevOps
 
-- 新增 `npm run ci:verify`，复用 `smoke -> unit -> typecheck -> build -> build:worker` 校验链路
+- 新增 `npm run ci:verify`，复用 `contract -> smoke -> npm test -> test:unit -> typecheck -> build -> build:worker` 校验链路
 - `CI` / `Deploy` workflow 改为复用同一条校验脚本，CI 增加手动触发与同分支旧运行自动取消
 - 修正内部 workspace 依赖声明并提交 `package-lock.json`，把 workflow 安装步骤切换为 `npm ci`
 - `.github/workflows/d1-backup.yml` 新增可选对象存储同步，支持 `D1_BACKUP_ARCHIVE_S3_URI`、S3 兼容 endpoint、`D1_BACKUP_ARCHIVE_SSE` / `D1_BACKUP_ARCHIVE_KMS_KEY_ID` 校验与 lifecycle summary

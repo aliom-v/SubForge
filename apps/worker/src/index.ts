@@ -89,7 +89,7 @@ import {
   planRemoteNodeSync,
   type ImportedNodeInput
 } from './node-source';
-import { fetchText, runEnabledRuleSourceSync, syncRuleSourceNow } from './sync';
+import { fetchText, runEnabledRuleSourceSync, syncRuleSourceNow, toFetchTextValidationError } from './sync';
 
 const NODE_IMPORT_LIMIT = 200;
 
@@ -462,6 +462,7 @@ function getErrorStatus(code: string): number {
   if (code === 'UNAUTHORIZED') return 401;
   if (code === 'FORBIDDEN') return 403;
   if (code === 'TOO_MANY_REQUESTS') return 429;
+  if (code === 'INTERNAL_ERROR') return 500;
   return 400;
 }
 
@@ -995,7 +996,19 @@ async function handleNodeImportPreview(request: Request, env: Env, adminId: stri
     return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http/https URL'), 400);
   }
 
-  const upstream = await fetchText(sourceUrl, Number(env.SYNC_HTTP_TIMEOUT_MS || '10000'));
+  let upstream: Awaited<ReturnType<typeof fetchText>>;
+
+  try {
+    upstream = await fetchText(sourceUrl, Number(env.SYNC_HTTP_TIMEOUT_MS || '10000'));
+  } catch (error) {
+    const validationError = toFetchTextValidationError(error, sourceUrl);
+
+    if (validationError) {
+      return fail(validationError, 400);
+    }
+
+    throw error;
+  }
 
   if (!upstream.text) {
     return fail(createAppError('VALIDATION_FAILED', 'upstream content is empty'), 400);
@@ -2091,8 +2104,7 @@ export default {
         return fail(error, getErrorStatus(error.code));
       }
 
-      const message = error instanceof Error ? error.message : 'internal server error';
-      return fail(createAppError('VALIDATION_FAILED', message), 400);
+      return fail(createAppError(APP_ERROR_CODES.internalError), 500);
     }
   },
 

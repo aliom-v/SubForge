@@ -69,9 +69,17 @@ function loadContractSnapshot(filePath) {
   const paths = {};
   let rootSecurity = [];
   let previewMetadataRequired = null;
+  let logoutDataRequired = null;
+  const logoutDataProperties = new Set();
+  const responseNames = new Set();
+  const appErrorCodes = [];
   let inPathsSection = false;
+  let inResponsesSection = false;
   let inSchemasSection = false;
   let inPreviewMetadata = false;
+  let inLogoutData = false;
+  let inAppError = false;
+  let inAppErrorCode = false;
   let currentPath = null;
   let currentMethod = null;
 
@@ -87,8 +95,12 @@ function loadContractSnapshot(filePath) {
 
     if (indentation === 0) {
       inPathsSection = trimmed === 'paths:';
+      inResponsesSection = false;
       inSchemasSection = false;
       inPreviewMetadata = false;
+      inLogoutData = false;
+      inAppError = false;
+      inAppErrorCode = false;
       currentPath = null;
       currentMethod = null;
 
@@ -107,12 +119,32 @@ function loadContractSnapshot(filePath) {
 
     if (trimmed === 'schemas:' && indentation === 2) {
       inSchemasSection = true;
+      inResponsesSection = false;
       inPreviewMetadata = false;
+      inLogoutData = false;
+      continue;
+    }
+
+    if (trimmed === 'responses:' && indentation === 2) {
+      inResponsesSection = true;
+      inSchemasSection = false;
+      inPreviewMetadata = false;
+      inLogoutData = false;
+      inAppError = false;
+      inAppErrorCode = false;
+      continue;
+    }
+
+    if (inResponsesSection && indentation === 4 && trimmed.endsWith(':')) {
+      responseNames.add(trimmed.slice(0, -1));
       continue;
     }
 
     if (inSchemasSection && indentation === 4 && trimmed.endsWith(':')) {
       inPreviewMetadata = trimmed === 'PreviewMetadata:';
+      inLogoutData = trimmed === 'LogoutData:';
+      inAppError = trimmed === 'AppError:';
+      inAppErrorCode = false;
       continue;
     }
 
@@ -120,6 +152,57 @@ function loadContractSnapshot(filePath) {
       const parsed = readYamlArray(lines, index, indentation);
       previewMetadataRequired = parsed.value;
       index = parsed.nextIndex;
+      continue;
+    }
+
+    if (inLogoutData && indentation === 6 && trimmed.startsWith('required:')) {
+      const parsed = readYamlArray(lines, index, indentation);
+      logoutDataRequired = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    if (inLogoutData && indentation === 8 && trimmed.endsWith(':')) {
+      logoutDataProperties.add(trimmed.slice(0, -1));
+      continue;
+    }
+
+    if (inAppError && indentation <= 4) {
+      inAppError = false;
+      inAppErrorCode = false;
+    }
+
+    if (inAppError && indentation === 8 && trimmed === 'code:') {
+      inAppErrorCode = true;
+      continue;
+    }
+
+    if (inAppErrorCode && indentation === 10 && trimmed === 'enum:') {
+      let enumIndex = index + 1;
+
+      while (enumIndex < lines.length) {
+        const enumLine = lines[enumIndex];
+        const enumTrimmed = enumLine.trim();
+
+        if (!enumTrimmed) {
+          enumIndex += 1;
+          continue;
+        }
+
+        const enumIndentation = getIndentation(enumLine);
+        if (enumIndentation <= 10) {
+          break;
+        }
+
+        if (enumIndentation === 12 && enumTrimmed.startsWith('- ')) {
+          appErrorCodes.push(enumTrimmed.slice(2).trim());
+        }
+
+        enumIndex += 1;
+      }
+
+      inAppErrorCode = false;
+      index = enumIndex - 1;
       continue;
     }
 
@@ -140,7 +223,9 @@ function loadContractSnapshot(filePath) {
 
     if (indentation === 4 && /^(get|post|patch|delete|put|head|options):$/.test(trimmed)) {
       currentMethod = trimmed.slice(0, -1);
-      paths[currentPath][currentMethod] = {};
+      paths[currentPath][currentMethod] = {
+        responses: []
+      };
       continue;
     }
 
@@ -158,13 +243,22 @@ function loadContractSnapshot(filePath) {
       const parsed = readYamlArray(lines, index, indentation);
       paths[currentPath][currentMethod].security = parsed.value;
       index = parsed.nextIndex;
+      continue;
+    }
+
+    if (currentMethod && indentation === 8 && /^'[\dXx]{3}':$/.test(trimmed)) {
+      paths[currentPath][currentMethod].responses.push(trimmed.slice(1, -2));
     }
   }
 
   return {
     paths,
     rootSecurity,
-    previewMetadataRequired
+    previewMetadataRequired,
+    logoutDataRequired,
+    logoutDataProperties: [...logoutDataProperties],
+    responseNames: [...responseNames],
+    appErrorCodes
   };
 }
 
@@ -191,9 +285,11 @@ const requiredOperations = [
   'GET /api/users',
   'POST /api/users',
   'PATCH /api/users/{userId}',
+  'DELETE /api/users/{userId}',
   'POST /api/users/{userId}/reset-token',
   'GET /api/users/{userId}/nodes',
   'POST /api/users/{userId}/nodes',
+  'POST /api/node-import/preview',
   'GET /api/nodes',
   'POST /api/nodes',
   'POST /api/nodes/import',
@@ -203,10 +299,12 @@ const requiredOperations = [
   'GET /api/templates',
   'POST /api/templates',
   'PATCH /api/templates/{templateId}',
+  'DELETE /api/templates/{templateId}',
   'POST /api/templates/{templateId}/set-default',
   'GET /api/rule-sources',
   'POST /api/rule-sources',
   'PATCH /api/rule-sources/{ruleSourceId}',
+  'DELETE /api/rule-sources/{ruleSourceId}',
   'POST /api/rule-sources/{ruleSourceId}/sync',
   'GET /api/sync-logs',
   'GET /api/audit-logs',
@@ -246,12 +344,30 @@ for (const [pathName, methods] of Object.entries(paths)) {
   }
 }
 
+for (const operation of requiredOperations) {
+  const [method, pathName] = operation.split(' ');
+  const operationSpec = paths[pathName]?.[method.toLowerCase()];
+  assert.ok(operationSpec?.responses?.includes('500'), `${operation} should declare 500 InternalServerError`);
+}
+
 assert.deepEqual(
   contract.previewMetadataRequired,
   ['userId', 'nodeCount', 'ruleSetCount', 'templateName'],
   'PreviewMetadata required fields'
 );
 assert.ok(contract.previewMetadataRequired, 'PreviewMetadata schema should exist');
+assert.deepEqual(
+  contract.logoutDataRequired,
+  ['loggedOut', 'serverRevocation', 'mode'],
+  'LogoutData required fields'
+);
+assert.deepEqual(
+  contract.logoutDataProperties.sort(),
+  ['loggedOut', 'mode', 'revokedAt', 'serverRevocation'],
+  'LogoutData properties'
+);
+assert.ok(contract.responseNames.includes('InternalServerError'), 'InternalServerError response component should exist');
+assert.ok(contract.appErrorCodes.includes('INTERNAL_ERROR'), 'AppError enum should include INTERNAL_ERROR');
 
 for (const operation of WEB_API_OPERATION_SIGNATURES) {
   assert.ok(

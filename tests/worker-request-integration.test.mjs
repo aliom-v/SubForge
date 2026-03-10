@@ -537,6 +537,7 @@ test('preview request compiles on miss, writes cache, and returns hit on the sec
 
 test('public subscription request compiles on miss, writes cache, and returns hit on the second request', async () => {
   const { env, kv } = createEnv();
+  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:mihomo:tok_demo');
 
   const first = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/mihomo'), env);
   const firstBody = await first.text();
@@ -546,8 +547,7 @@ test('public subscription request compiles on miss, writes cache, and returns hi
   assert.equal(first.headers.get('x-subforge-cache-scope'), 'subscription');
   assert.match(firstBody, /HK Edge 01/);
   assert.match(firstBody, /DOMAIN-SUFFIX,example\.com,DIRECT/);
-  assert.equal(kv.putCalls.length, 1);
-  assert.equal(kv.putCalls[0].key, 'sub:mihomo:tok_demo');
+  assert.equal(subscriptionCacheWrites().length, 1);
 
   const second = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/mihomo'), env);
   const secondBody = await second.text();
@@ -555,7 +555,7 @@ test('public subscription request compiles on miss, writes cache, and returns hi
   assert.equal(second.status, 200);
   assert.equal(second.headers.get('x-subforge-cache'), 'hit');
   assert.equal(secondBody, firstBody);
-  assert.equal(kv.putCalls.length, 1);
+  assert.equal(subscriptionCacheWrites().length, 1);
 });
 
 test('health endpoint returns JSON and GET or HEAD non-api requests fall back to assets', async () => {
@@ -580,6 +580,22 @@ test('health endpoint returns JSON and GET or HEAD non-api requests fall back to
     assets.requests.map((entry) => entry.method),
     ['GET', 'HEAD']
   );
+});
+
+test('unknown runtime errors return a structured 500 internal error response', async () => {
+  const { env } = createEnv();
+  env.ASSETS = {
+    async fetch() {
+      throw new Error('asset pipeline exploded');
+    }
+  };
+
+  const { response, payload } = await requestJson('http://127.0.0.1:8787/dashboard', { method: 'GET' }, env);
+
+  assert.equal(response.status, 500);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'INTERNAL_ERROR');
+  assert.equal(payload.error.message, 'internal server error');
 });
 
 test('scheduled delegates sync work to waitUntil and processes only enabled rule sources', async () => {

@@ -25,7 +25,7 @@
     "init:remote": "node scripts/init-instance.mjs --remote --deploy",
     "test:smoke": "node scripts/smoke-check.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",
-    "ci:verify": "npm run test:contract && npm run test:smoke && npm run test:unit && npm run typecheck && npm run build && npm run build:worker",
+    "ci:verify": "npm run test:contract && npm run test:smoke && npm test && npm run test:unit && npm run typecheck && npm run build && npm run build:worker",
     "build:web": "npm run build --workspace @subforge/web",
     "build:worker": "npm run build --workspace @subforge/worker",
     "build:worker:staging": "npm run build:staging --workspace @subforge/worker",

@@ -28,7 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       github_environment: ${{ steps.plan.outputs.github_environment }}
+      migration_command: ${{ steps.plan.outputs.migration_command }}
       deploy_command: ${{ steps.plan.outputs.deploy_command }}
+      wrangler_command: ${{ steps.plan.outputs.wrangler_command }}
       checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
     steps:
       - name: Resolve deployment target
@@ -39,10 +41,14 @@ jobs:
             checkout_ref="${GITHUB_SHA}"
             if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
               github_environment="production"
+              migration_command="npm run db:migrations:apply"
               deploy_command="npm run deploy"
+              wrangler_command="deploy --env= --config ../../wrangler.toml"
             else
               github_environment="staging"
+              migration_command="npm run db:migrations:apply:staging"
               deploy_command="npm run deploy:staging"
+              wrangler_command="deploy --env staging --config ../../wrangler.toml"
             fi
           else
             github_environment="${{ inputs.target_environment }}"
@@ -55,14 +61,20 @@ jobs:
               exit 1
             fi
             if [ "$github_environment" = "production" ]; then
+              migration_command="npm run db:migrations:apply"
               deploy_command="npm run deploy"
+              wrangler_command="deploy --env= --config ../../wrangler.toml"
             else
+              migration_command="npm run db:migrations:apply:staging"
               deploy_command="npm run deploy:staging"
+              wrangler_command="deploy --env staging --config ../../wrangler.toml"
             fi
           fi
 
           echo "github_environment=$github_environment" >> "$GITHUB_OUTPUT"
+          echo "migration_command=$migration_command" >> "$GITHUB_OUTPUT"
           echo "deploy_command=$deploy_command" >> "$GITHUB_OUTPUT"
+          echo "wrangler_command=$wrangler_command" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
 
       - name: Write deployment summary
@@ -100,13 +112,20 @@ jobs:
       - name: Run verification pipeline
         run: npm run ci:verify
 
-      - name: Apply migrations and deploy worker
+      - name: Apply remote migrations
+        run: ${{ needs.plan.outputs.migration_command }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/worker
           secrets: |
             ADMIN_JWT_SECRET
-          command: ${{ needs.plan.outputs.deploy_command }}
+          command: ${{ needs.plan.outputs.wrangler_command }}
         env:
           ADMIN_JWT_SECRET: ${{ secrets.ADMIN_JWT_SECRET }}

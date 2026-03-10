@@ -16,6 +16,8 @@ jobs:
   notify:
     if: ${{ github.event.workflow_run.conclusion == 'failure' }}
     runs-on: ubuntu-latest
+    env:
+      FAILURE_WEBHOOK_URL: ${{ secrets.FAILURE_WEBHOOK_URL }}
     steps:
       - name: Write failure summary
         env:
@@ -39,9 +41,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Send optional webhook alert
-        if: ${{ secrets.FAILURE_WEBHOOK_URL != '' }}
+        if: ${{ env.FAILURE_WEBHOOK_URL != '' }}
         env:
-          FAILURE_WEBHOOK_URL: ${{ secrets.FAILURE_WEBHOOK_URL }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
           BRANCH_NAME: ${{ github.event.workflow_run.head_branch }}

@@ -1,4 +1,4 @@
-import type { JsonValue, RuleSourceFormat, RuleSourceRecord } from '@subforge/shared';
+import { createAppError, type AppErrorShape, type JsonValue, type RuleSourceFormat, type RuleSourceRecord } from '@subforge/shared';
 import type { Env } from './env';
 import { invalidateAllUserCaches } from './cache';
 import {
@@ -66,6 +66,10 @@ export class SyncFetchError extends Error {
     this.fetchedBytes = input.fetchedBytes;
     this.durationMs = input.durationMs;
   }
+}
+
+function compactRecord(record: object): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(record as Record<string, unknown>).filter(([, value]) => value !== undefined));
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -558,9 +562,35 @@ function normalizeRuleSourceContent(content: string, format: RuleSourceFormat): 
 }
 
 function toDetailsRecord(details: RuleSourceSyncDetails): Record<string, JsonValue> {
-  return Object.fromEntries(
-    Object.entries(details).filter(([, value]) => value !== undefined)
-  ) as Record<string, JsonValue>;
+  return compactRecord(details) as Record<string, JsonValue>;
+}
+
+export function toFetchTextValidationError(error: unknown, sourceUrl: string): AppErrorShape | null {
+  if (error instanceof SyncFailure) {
+    return createAppError(
+      'VALIDATION_FAILED',
+      error.message,
+      compactRecord({
+        sourceUrl,
+        ...error.detailPatch
+      })
+    );
+  }
+
+  if (error instanceof SyncFetchError) {
+    return createAppError(
+      'VALIDATION_FAILED',
+      error.message,
+      compactRecord({
+        sourceUrl,
+        durationMs: error.durationMs,
+        ...(error.status !== undefined ? { upstreamStatus: error.status } : {}),
+        ...(error.fetchedBytes !== undefined ? { fetchedBytes: error.fetchedBytes } : {})
+      })
+    );
+  }
+
+  return null;
 }
 
 export async function syncRuleSourceNow(env: Env, ruleSource: RuleSourceRecord): Promise<RuleSourceSyncResult> {

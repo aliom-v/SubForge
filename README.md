@@ -165,7 +165,7 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 
 ## 自动化
 
-- 已提供 `GitHub Actions`：`.github/workflows/ci.yml` 会在 `push` / `pull_request` / 手动触发时执行 `npm run ci:verify`，依次覆盖 `test:contract -> smoke -> unit -> typecheck -> build -> build:worker`
+- 已提供 `GitHub Actions`：`.github/workflows/ci.yml` 会在 `push` / `pull_request` / 手动触发时执行 `npm run ci:verify`，依次覆盖 `test:contract -> smoke -> npm test -> test:unit -> typecheck -> build -> build:worker`
 - `.github/workflows/deploy.yml` 现在采用简单分支策略：`release/*` 分支 push 自动走 `staging` 环境，`main` 分支 push 自动走 `production` 环境；手动触发时也可显式选择 `staging` / `production`
 - staging 发布会执行 `npm run deploy:staging`，production 发布继续执行 `npm run deploy`；两者都会先复用同一条 `npm run ci:verify`
 - CI workflow 会取消同一分支上被后续提交覆盖的旧检查；deploy workflow 会按环境分开串行，避免 staging / production 互相抢占
@@ -192,6 +192,7 @@ XDG_CONFIG_HOME=/tmp WRANGLER_OUTPUT_FILE_DIRECTORY=/tmp npm run ci:verify
 ```bash
 npm run test:contract
 npm run test:smoke
+npm test
 npm run test:unit
 npm run typecheck
 npm run build

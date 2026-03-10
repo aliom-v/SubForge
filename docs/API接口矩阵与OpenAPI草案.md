@@ -47,7 +47,7 @@
 | 方法 | 路径 | 鉴权 | 用途 | 说明 |
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/admin/me` | Bearer | 查询当前管理员 | 校验会话是否有效 |
-| `POST` | `/api/admin/logout` | Bearer | 退出登录 | 当前为轻量实现，返回 `{ loggedOut: true }` |
+| `POST` | `/api/admin/logout` | Bearer | 退出登录 | 服务端撤销当前会话；成功返回 `loggedOut`、`serverRevocation`、`mode` 与可选 `revokedAt` |
 
 ### 3.3 用户接口
 
@@ -119,7 +119,7 @@
 
 - `/health`、`/api/setup/*`、`/api/admin/*`
 - `/api/users*`、`/api/nodes*`、`/api/templates*`、`/api/rule-sources*`
-- `/api/sync-logs`、`/api/audit-logs`、`/api/cache/rebuild`、`/api/preview/{userId}/{target}`
+- `/api/node-import/preview`、`/api/sync-logs`、`/api/audit-logs`、`/api/cache/rebuild`、`/api/preview/{userId}/{target}`
 - `/s/{token}/{target}` 公开订阅接口
 - 关键请求 / 成功 / 错误 examples，包括初始化、登录、用户 / 节点 / 模板 / 规则源写接口、预览与公开订阅内容
 - 共享枚举、统一错误包裹、常用缓存 / 限流响应头，以及 `PreviewMetadata` 等已知稳定字段约束

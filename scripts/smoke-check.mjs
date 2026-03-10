@@ -98,7 +98,7 @@ assert.equal(packageJson.scripts['init:remote'], 'node scripts/init-instance.mjs
 assert.equal(packageJson.scripts['test:smoke'], 'node scripts/smoke-check.mjs', 'smoke script');
 assert.equal(packageJson.scripts['test:contract'], 'node scripts/openapi-contract-check.mjs', 'contract script');
 assert.equal(packageJson.scripts['test:unit'], 'node scripts/run-unit-tests.mjs', 'unit test script');
-assert.equal(packageJson.scripts['ci:verify'], 'npm run test:contract && npm run test:smoke && npm run test:unit && npm run typecheck && npm run build && npm run build:worker', 'ci verify script');
+assert.equal(packageJson.scripts['ci:verify'], 'npm run test:contract && npm run test:smoke && npm test && npm run test:unit && npm run typecheck && npm run build && npm run build:worker', 'ci verify script');
 assert.equal(packageJson.scripts['build:worker:staging'], 'npm run build:staging --workspace @subforge/worker', 'root staging worker build script');
 assert.equal(packageJson.scripts['deploy:staging'], 'npm run db:migrations:apply:staging && npm run deploy:worker:staging', 'root staging deploy script');
 assert.equal(packageJson.scripts['backup:d1'], 'node scripts/d1-backup.mjs --environment production', 'root production backup script');
@@ -216,6 +216,8 @@ assertIncludes(deployGuide, '阶段、错误码', 'deploy guide sync error detai
 assertIncludes(deployGuide, 'operatorHint', 'deploy guide sync operator hint docs');
 assertIncludes(deployGuide, 'ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC', 'deploy guide login rate limit vars');
 assertIncludes(deployGuide, 'SUBSCRIPTION_RATE_LIMIT_MAX_REQUESTS', 'deploy guide subscription rate limit vars');
+assertIncludes(deployGuide, 'npm test', 'deploy guide request-level test docs');
+assertIncludes(deployGuide, '必须从 `main` 分支上下文触发', 'deploy guide production dispatch guard docs');
 
 const securityGuide = readFileSync('docs/限流与安全策略.md', 'utf8');
 assertIncludes(securityGuide, '管理员登录失败限流', 'security guide admin login section');
@@ -226,7 +228,7 @@ const apiGuide = readFileSync('docs/API错误码与响应头说明.md', 'utf8');
 assertIncludes(apiGuide, 'Authorization: Bearer', 'api guide bearer auth docs');
 assertIncludes(apiGuide, 'x-subforge-cache-key', 'api guide cache header docs');
 assertIncludes(apiGuide, 'docs/API错误响应示例库.md', 'api guide example library entry');
-assertIncludes(apiGuide, '当前 Worker 代码没有稳定的结构化 JSON 5xx 契约', 'api guide 5xx note');
+assertIncludes(apiGuide, '当前 Worker 对未识别异常已提供稳定的结构化 `500` JSON：`INTERNAL_ERROR`', 'api guide 5xx note');
 assertIncludes(apiGuide, 'TOO_MANY_REQUESTS', 'api guide error code docs');
 
 const apiErrorExamplesGuide = readFileSync('docs/API错误响应示例库.md', 'utf8');
@@ -234,7 +236,7 @@ assertIncludes(apiErrorExamplesGuide, '400 Bad Request', 'api error examples bad
 assertIncludes(apiErrorExamplesGuide, 'missing bearer token', 'api error examples unauthorized docs');
 assertIncludes(apiErrorExamplesGuide, 'subscription token or template not found', 'api error examples subscription not found docs');
 assertIncludes(apiErrorExamplesGuide, 'too many login attempts, please retry later', 'api error examples login rate limit docs');
-assertIncludes(apiErrorExamplesGuide, '当前仓库还没有正式承诺一个应用层 JSON 5xx 契约', 'api error examples 5xx note');
+assertIncludes(apiErrorExamplesGuide, '当前仓库现在已经承诺一个最小应用层 JSON 5xx 契约', 'api error examples 5xx note');
 
 const troubleshootingGuide = readFileSync('docs/排障与常见问题.md', 'utf8');
 assertIncludes(troubleshootingGuide, 'Unexpected token', 'troubleshooting guide html-response docs');
@@ -338,6 +340,7 @@ assertIncludes(changelog, 'docs/API错误响应示例库.md', 'changelog api err
 assertIncludes(changelog, 'docs/架构图与ER图.md', 'changelog architecture docs');
 assertIncludes(changelog, 'D1_BACKUP_ARCHIVE_S3_URI', 'changelog backup object storage docs');
 assertIncludes(changelog, 'bucket lifecycle', 'changelog backup lifecycle docs');
+assertIncludes(changelog, 'contract -> smoke -> npm test -> test:unit -> typecheck -> build -> build:worker', 'changelog ci verify docs');
 
 const docsIndex = readFileSync('docs/INDEX.md', 'utf8');
 assertIncludes(docsIndex, '文档导航', 'docs index title');
@@ -407,7 +410,9 @@ assertIncludes(backupCrypto, 'createCipheriv', 'backup crypto encrypt helper');
 assertIncludes(backupCrypto, 'createDecipheriv', 'backup crypto decrypt helper');
 
 const webApi = readFileSync('apps/web/src/api.ts', 'utf8');
-assertIncludes(webApi, "const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';", 'web api same-origin default');
+assertIncludes(webApi, 'const API_BASE_URL =', 'web api base url constant');
+assertIncludes(webApi, 'VITE_API_BASE_URL', 'web api env override');
+assertIncludes(webApi, "??\n  '';", 'web api same-origin default');
 const webApiRoutes = readFileSync('apps/web/src/api-routes.js', 'utf8');
 assertIncludes(webApiRoutes, '/api/nodes/import/remote', 'web api remote node route');
 

@@ -235,8 +235,8 @@ class MockDatabase {
       return { success: true };
     }
 
-    if (sql.startsWith('UPDATE nodes SET name = ?, protocol = ?, server = ?, port = ?, credentials_json = ?, params_json = ?, source_type = ?, source_id = ?, enabled = ?, updated_at = ? WHERE id = ?')) {
-      const [name, protocol, server, port, credentialsJson, paramsJson, sourceType, sourceId, enabled, updatedAt, id] = bindings;
+    if (sql.startsWith('UPDATE nodes SET name = ?, protocol = ?, server = ?, port = ?, credentials_json = ?, params_json = ?, source_type = ?, source_id = ?, enabled = ?, last_sync_at = ?, updated_at = ? WHERE id = ?')) {
+      const [name, protocol, server, port, credentialsJson, paramsJson, sourceType, sourceId, enabled, lastSyncAt, updatedAt, id] = bindings;
       const node = this.nodes.get(id);
 
       if (node) {
@@ -249,6 +249,7 @@ class MockDatabase {
         node.source_type = sourceType;
         node.source_id = sourceId;
         node.enabled = enabled;
+        node.last_sync_at = lastSyncAt;
         node.updated_at = updatedAt;
       }
 
@@ -1422,13 +1423,17 @@ test('reset-token invalidates old and new caches, writes audit log, and shifts s
   assert.equal(auditAction(db.auditLogs[0]), 'user.reset_token');
   assert.deepEqual(parseAuditPayload(db.auditLogs[0]), {
     tokenReset: true,
-    previousTokenRedacted: true,
-    currentTokenRedacted: true,
+    name: 'Demo User',
+    previousTokenSuffix: '[REDACTED]',
+    currentTokenSuffix: '[REDACTED]',
     _request: {
       ip: null,
       country: null,
       colo: null,
-      userAgent: 'worker-write-test'
+      userAgent: 'worker-write-test',
+      method: 'POST',
+      path: '/api/users/usr_demo/reset-token',
+      rayId: null
     }
   });
 

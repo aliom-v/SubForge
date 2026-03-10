@@ -6,7 +6,7 @@
 
 - 常见 `4xx` 当前到底会返回什么 JSON 包裹
 - `429` 除了 body 之外，通常还会带哪些头
-- 当前仓库对 `5xx` 的真实现状是什么，哪些是应用层契约，哪些只是平台层现象
+- 当前仓库对 `5xx` 的真实现状是什么，哪些已经是应用层契约，哪些只是平台层现象
 
 与其他文档的分工：
 
@@ -293,19 +293,34 @@ retry-after: 60
 }
 ```
 
-## 8. `5xx` 现状与预留说明
+## 8. `5xx` 现状与说明
 
 ### 8.1 当前代码里的真实现状
 
 根据当前 `apps/worker/src/index.ts`：
 
 - Worker 主入口会捕获未识别异常
-- 捕获后当前会调用 `createAppError('VALIDATION_FAILED', message)`
-- 最终以 `400 Bad Request` 返回，而不是稳定的结构化 `500` JSON
+- 捕获后会统一返回 `createAppError('INTERNAL_ERROR')`
+- 最终以 `500 Internal Server Error` 返回稳定的结构化 JSON
 
-也就是说：当前仓库还没有正式承诺一个应用层 JSON 5xx 契约。
+也就是说：当前仓库现在已经承诺一个最小应用层 JSON 5xx 契约。
 
-### 8.2 你仍然可能看到的 `5xx`
+### 8.2 应用层 `500` 示例
+
+```http
+HTTP/1.1 500 Internal Server Error
+content-type: application/json; charset=utf-8
+
+{
+  "ok": false,
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "internal server error"
+  }
+}
+```
+
+### 8.3 你仍然可能看到的其他 `5xx`
 
 如果线上出现 `502` / `503` / `504`，更常见的来源通常是：
 
@@ -319,21 +334,12 @@ retry-after: 60
 - 不保证 `content-type` 为 `application/json`
 - 更适合结合 Cloudflare 日志、Ray ID、平台监控一起排查
 
-### 8.3 如果未来引入结构化 `5xx`
+因此：
 
-下面是建议预留，不是当前实现：
+- `500 + INTERNAL_ERROR` 更接近 SubForge Worker 自身未归类异常
+- `502` / `503` / `504` 更接近平台层或上游依赖异常
 
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "INTERNAL_ERROR",
-    "message": "internal server error"
-  }
-}
-```
-
-如果以后真的引入这类契约，建议同步更新：
+这类契约现在已经落到正式契约层，后续如果继续扩展 5xx 语义，建议同步更新：
 
 - `packages/shared/src/errors.ts`
 - `openapi.yaml`

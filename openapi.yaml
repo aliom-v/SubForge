@@ -65,6 +65,8 @@ paths:
                     env: development
                     cacheKeyExample: sub:mihomo:demo-token
                     time: '2026-03-09T12:30:00.000Z'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/setup/status:
     get:
@@ -94,6 +96,8 @@ paths:
                     data:
                       initialized: true
                       adminCount: 1
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/setup/bootstrap:
     post:
@@ -140,6 +144,8 @@ paths:
           $ref: '#/components/responses/BadRequestError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/admin/login:
     post:
@@ -195,6 +201,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '429':
           $ref: '#/components/responses/TooManyRequestsError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/admin/me:
     get:
@@ -212,12 +220,14 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/admin/logout:
     post:
       tags: [Admin]
       summary: 退出登录
-      description: '当前为轻量实现，返回 `{ loggedOut: true }`，不做服务端 token 黑名单管理。'
+      description: '当前语义为服务端撤销：接口会写入会话撤销时间，旧 token 后续访问受保护接口时会返回 `401`。'
       operationId: adminLogout
       responses:
         '200':
@@ -226,10 +236,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LogoutResponse'
+              examples:
+                logoutSuccess:
+                  summary: 当前管理员会话已被服务端撤销
+                  value:
+                    ok: true
+                    data:
+                      loggedOut: true
+                      serverRevocation: true
+                      mode: server_revoked
+                      revokedAt: '2026-03-09T12:40:00.000Z'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/users:
     get:
@@ -269,6 +291,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
       tags: [Users]
       summary: 创建用户
@@ -313,6 +337,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/users/{userId}:
     patch:
@@ -342,6 +368,29 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags: [Users]
+      summary: 删除用户
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteUserResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/users/{userId}/reset-token:
     post:
@@ -363,6 +412,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/users/{userId}/nodes:
     get:
@@ -382,6 +433,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
       tags: [Users]
       summary: 替换用户绑定节点
@@ -407,6 +460,64 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/node-import/preview:
+    post:
+      tags: [Nodes]
+      summary: 远程预览节点导入
+      description: 拉取远程订阅文本并返回解析结果，不会创建节点或更新远程来源状态。
+      operationId: previewNodeImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoteNodeImportRequest'
+            examples:
+              previewNodeImportRequest:
+                summary: 预览远程订阅文本
+                value:
+                  sourceUrl: https://example.com/sub.txt
+      responses:
+        '200':
+          description: 远程预览结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeImportPreviewResponse'
+              examples:
+                previewNodeImportSuccess:
+                  summary: 成功预览远程订阅文本
+                  value:
+                    ok: true
+                    data:
+                      sourceUrl: https://example.com/sub.txt
+                      upstreamStatus: 200
+                      durationMs: 143
+                      fetchedBytes: 512
+                      lineCount: 2
+                      contentEncoding: plain_text
+                      nodes:
+                        - name: hk-hy2
+                          protocol: hysteria2
+                          server: node.example.com
+                          port: 443
+                          credentials:
+                            password: replace-me
+                          params:
+                            sni: cdn.example.com
+                          source: hysteria2://replace-me@node.example.com:443?sni=cdn.example.com#hk-hy2
+                      errors: []
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/nodes:
     get:
@@ -424,6 +535,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
       tags: [Nodes]
       summary: 创建节点
@@ -484,6 +597,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/nodes/import:
     post:
@@ -544,6 +659,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/nodes/import/remote:
     post:
@@ -613,6 +730,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/nodes/{nodeId}:
     patch:
@@ -642,6 +761,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     delete:
       tags: [Nodes]
       summary: 删除节点
@@ -661,6 +782,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/templates:
     get:
@@ -678,6 +801,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
       tags: [Templates]
       summary: 创建模板
@@ -738,6 +863,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/templates/{templateId}:
     patch:
@@ -767,6 +894,29 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags: [Templates]
+      summary: 删除模板
+      operationId: deleteTemplate
+      parameters:
+        - $ref: '#/components/parameters/TemplateIdPath'
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteTemplateResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/templates/{templateId}/set-default:
     post:
@@ -788,6 +938,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/rule-sources:
     get:
@@ -805,6 +957,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
       tags: [RuleSources]
       summary: 创建规则源
@@ -852,6 +1006,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/rule-sources/{ruleSourceId}:
     patch:
@@ -879,8 +1035,31 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [RuleSources]
+      summary: 删除规则源
+      operationId: deleteRuleSource
+      parameters:
+        - $ref: '#/components/parameters/RuleSourceIdPath'
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteRuleSourceResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/rule-sources/{ruleSourceId}/sync:
     post:
@@ -952,6 +1131,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/sync-logs:
     get:
@@ -969,6 +1150,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/audit-logs:
     get:
@@ -986,6 +1169,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/cache/rebuild:
     post:
@@ -1004,6 +1189,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/preview/{userId}/{target}:
     get:
@@ -1062,6 +1249,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /s/{token}/{target}:
     get:
@@ -1138,6 +1327,8 @@ paths:
           $ref: '#/components/responses/NotFoundError'
         '429':
           $ref: '#/components/responses/TooManyRequestsError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 components:
   securitySchemes:
     bearerAuth:
@@ -1377,6 +1568,20 @@ components:
                     retryAfterSec: 60
                     resetAt: '2026-03-09T12:35:00.000Z'
                     current: 61
+    InternalServerError:
+      description: Worker 捕获到未归类的运行时异常时返回的结构化 500 错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          examples:
+            internalRuntimeError:
+              summary: Worker 内部未归类异常
+              value:
+                ok: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: internal server error
   schemas:
     ApiSuccessEnvelope:
       type: object
@@ -1406,6 +1611,7 @@ components:
             - UNAUTHORIZED
             - FORBIDDEN
             - TOO_MANY_REQUESTS
+            - INTERNAL_ERROR
             - VALIDATION_FAILED
             - SUBSCRIPTION_USER_NOT_FOUND
             - USER_DISABLED
@@ -1530,11 +1736,20 @@ components:
               $ref: '#/components/schemas/AdminRecord'
     LogoutData:
       type: object
-      required: [loggedOut]
+      required: [loggedOut, serverRevocation, mode]
       properties:
         loggedOut:
           type: boolean
           enum: [true]
+        serverRevocation:
+          type: boolean
+          enum: [true]
+        mode:
+          type: string
+          enum: [server_revoked]
+        revokedAt:
+          type: string
+          format: date-time
     LogoutResponse:
       allOf:
         - $ref: '#/components/schemas/ApiSuccessEnvelope'
@@ -1624,6 +1839,22 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/UserRecord'
+    DeleteUserData:
+      type: object
+      required: [deleted, userId]
+      properties:
+        deleted:
+          type: boolean
+          enum: [true]
+        userId:
+          type: string
+    DeleteUserResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DeleteUserData'
     UserListResponse:
       allOf:
         - $ref: '#/components/schemas/ApiSuccessEnvelope'
@@ -1872,6 +2103,64 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/NodeImportResult'
+    ImportedNodePreviewItem:
+      type: object
+      required: [name, protocol, server, port, source]
+      properties:
+        name:
+          type: string
+        protocol:
+          type: string
+        server:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        credentials:
+          $ref: '#/components/schemas/JsonObject'
+        params:
+          $ref: '#/components/schemas/JsonObject'
+        source:
+          type: string
+    NodeImportPreviewData:
+      type: object
+      required: [sourceUrl, upstreamStatus, durationMs, fetchedBytes, lineCount, contentEncoding, nodes, errors]
+      properties:
+        sourceUrl:
+          type: string
+          format: uri
+        upstreamStatus:
+          type: integer
+          minimum: 100
+          maximum: 599
+        durationMs:
+          type: integer
+          minimum: 0
+        fetchedBytes:
+          type: integer
+          minimum: 0
+        lineCount:
+          type: integer
+          minimum: 0
+        contentEncoding:
+          type: string
+          enum: [plain_text, base64_text]
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportedNodePreviewItem'
+        errors:
+          type: array
+          items:
+            type: string
+    NodeImportPreviewResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/NodeImportPreviewData'
     DeleteNodeData:
       type: object
       required: [deleted, nodeId]
@@ -1960,6 +2249,22 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/TemplateRecord'
+    DeleteTemplateData:
+      type: object
+      required: [deleted, templateId]
+      properties:
+        deleted:
+          type: boolean
+          enum: [true]
+        templateId:
+          type: string
+    DeleteTemplateResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DeleteTemplateData'
     RuleSourceRecord:
       type: object
       required: [id, name, sourceUrl, format, enabled, failureCount, createdAt]
@@ -2032,6 +2337,22 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/RuleSourceRecord'
+    DeleteRuleSourceData:
+      type: object
+      required: [deleted, ruleSourceId]
+      properties:
+        deleted:
+          type: boolean
+          enum: [true]
+        ruleSourceId:
+          type: string
+    DeleteRuleSourceResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DeleteRuleSourceData'
     RuleSourceSyncDetails:
       type: object
       required: [sourceUrl, format, durationMs]

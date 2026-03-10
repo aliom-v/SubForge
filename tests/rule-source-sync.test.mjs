@@ -180,6 +180,12 @@ function parseSyncLogDetails(bindings) {
   return JSON.parse(bindings[5]);
 }
 
+function assertObjectContains(actual, expected) {
+  for (const [key, value] of Object.entries(expected)) {
+    assert.deepEqual(actual[key], value);
+  }
+}
+
 async function withMockFetch(handler, fn) {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = handler;
@@ -274,7 +280,8 @@ test('syncRuleSourceNow records upstream status on non-2xx failures without inva
   assert.equal(env.DB.ruleSources.get(source.id)?.failure_count, 1);
   assert.deepEqual(env.SUB_CACHE.deletedKeys, []);
   assert.equal(env.DB.syncLogs.length, 1);
-  assert.deepEqual(parseSyncLogDetails(env.DB.syncLogs[0]), {
+  const details = parseSyncLogDetails(env.DB.syncLogs[0]);
+  assertObjectContains(details, {
     sourceUrl: 'https://example.com/rules.txt',
     format: 'text',
     durationMs: result.details?.durationMs,
@@ -282,6 +289,8 @@ test('syncRuleSourceNow records upstream status on non-2xx failures without inva
     fetchedBytes: new TextEncoder().encode('bad gateway').byteLength,
     reason: 'upstream returned 502'
   });
+  assert.equal(details.retryable, true);
+  assert.equal(details.severity, 'error');
 });
 
 test('syncRuleSourceNow reports empty upstream content with structured failure details', async () => {
@@ -334,7 +343,8 @@ test('syncRuleSourceNow preserves upstream metadata when parsing fails', async (
   assert.equal(env.DB.ruleSources.get(source.id)?.failure_count, 1);
   assert.deepEqual(env.SUB_CACHE.deletedKeys, []);
   assert.equal(env.DB.syncLogs.length, 1);
-  assert.deepEqual(parseSyncLogDetails(env.DB.syncLogs[0]), {
+  const details = parseSyncLogDetails(env.DB.syncLogs[0]);
+  assertObjectContains(details, {
     sourceUrl: 'https://example.com/rules.json',
     format: 'json',
     durationMs: result.details?.durationMs,
@@ -342,6 +352,10 @@ test('syncRuleSourceNow preserves upstream metadata when parsing fails', async (
     fetchedBytes: new TextEncoder().encode('{"foo":"bar"}').byteLength,
     reason: 'json rule source is not in a supported shape'
   });
+  assert.equal(details.errorCode, 'UNSUPPORTED_JSON_SHAPE');
+  assert.equal(details.stage, 'parse');
+  assert.equal(details.sourceShape, 'object:foo');
+  assert.ok(Array.isArray(details.supportedShapes) && details.supportedShapes.length > 0);
 });
 
 test('runEnabledRuleSourceSync only processes enabled rule sources', async () => {
