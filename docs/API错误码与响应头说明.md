@@ -31,6 +31,8 @@
 2. 静态资源与前端页面
    - 由 Worker 回退到 `ASSETS` 提供
    - 不走统一 JSON 包裹
+   - 后台 HTML 壳（例如 `/`、`/dashboard`）会额外返回 `cache-control: no-store, max-age=0, must-revalidate`、`pragma: no-cache`、`expires: 0` 与 `x-subforge-asset-cache: html-no-store`
+   - 这样做是为了避免发布后浏览器继续复用旧后台入口 HTML；带哈希的 JS / CSS / 图片资源仍可保留各自的静态资源缓存策略
 
 ### 2.1 CORS 约定
 

@@ -222,7 +222,7 @@
 当前进展：
 
 - 第十一批中的 node.create / node.update 对 `sourceType` / `sourceId` / `credentials` / `params` 语义收紧已落地
-- 当前仓库继续保持“只支持手动节点录入”，未实现的 remote node source 不再通过写接口漏入数据库
+- 当前仓库不会再通过普通节点写接口伪造 `remote` 节点；`remote` 节点只允许经远程节点源手动同步链路写入
 - 已补 `PATCH /api/nodes/:id` 通过 `null` 显式清空 metadata 的请求级回归
 - 后续重点继续保留在节点源同步能力决策，以及更多发布前回归场景
 

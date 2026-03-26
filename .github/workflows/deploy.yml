@@ -43,7 +43,7 @@ jobs:
               github_environment="production"
               migration_command="npm run db:migrations:apply"
               deploy_command="npm run deploy"
-              wrangler_command="deploy --config ../../wrangler.toml"
+              wrangler_command="deploy --env=\"\" --config ../../wrangler.toml"
             else
               github_environment="staging"
               migration_command="npm run db:migrations:apply:staging"
@@ -63,7 +63,7 @@ jobs:
             if [ "$github_environment" = "production" ]; then
               migration_command="npm run db:migrations:apply"
               deploy_command="npm run deploy"
-              wrangler_command="deploy --config ../../wrangler.toml"
+              wrangler_command="deploy --env=\"\" --config ../../wrangler.toml"
             else
               migration_command="npm run db:migrations:apply:staging"
               deploy_command="npm run deploy:staging"

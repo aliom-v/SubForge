@@ -27,6 +27,10 @@ async function captureModuleOutput(relativePath, argv = []) {
   try {
     const url = pathToFileURL(`${process.cwd()}/${relativePath}`);
     await import(`${url.href}?ts=${Date.now()}`);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'process.exit:0') {
+      throw error;
+    }
   } finally {
     process.argv = originalArgv;
     console.log = originalLog;
@@ -54,6 +58,10 @@ const initHelp = await captureModuleOutput('scripts/init-instance.mjs', ['--help
 assertIncludes(initHelp, '--with-demo', 'init script help demo flag');
 assertIncludes(initHelp, '--admin-user <username>', 'init script help admin flag');
 assertIncludes(initHelp, 'npm run init:remote', 'init script help remote example');
+
+const runtimePolicy = await captureModuleOutput('scripts/check-runtime.mjs', ['--print-policy']);
+assertIncludes(runtimePolicy, 'supported Node.js: >=20 <25', 'runtime policy node range');
+assertIncludes(runtimePolicy, 'pinned Node.js in repo: 20', 'runtime policy pinned node');
 
 const d1BackupHelp = await captureModuleOutput('scripts/d1-backup.mjs', ['--help']);
 assertIncludes(d1BackupHelp, 'npm run backup:d1', 'd1 backup help root command');
@@ -91,18 +99,24 @@ assert.ok(existsSync('package-lock.json'), 'package-lock.json should exist');
 const gitignore = readFileSync('.gitignore', 'utf8');
 assertIncludes(gitignore, 'backups/d1/', 'gitignore d1 backup artifacts');
 
+assert.equal(readFileSync('.npmrc', 'utf8').trim(), 'engine-strict=true', 'repo should enforce engine-strict installs');
 assert.equal(readFileSync('.nvmrc', 'utf8').trim(), '20', 'repo should pin Node.js 20 via .nvmrc');
 assert.equal(readFileSync('.node-version', 'utf8').trim(), '20', 'repo should pin Node.js 20 via .node-version');
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
+assert.equal(packageJson.engines?.node, '>=20.0.0 <25.0.0', 'root node engine range');
 assert.equal(packageJson.scripts.build, 'npm run build:web', 'root build script');
 assert.equal(packageJson.scripts.deploy, 'npm run db:migrations:apply && npm run deploy:worker', 'root deploy script');
 assert.equal(packageJson.scripts['init:local'], 'node scripts/init-instance.mjs --local', 'root local init script');
 assert.equal(packageJson.scripts['init:remote'], 'node scripts/init-instance.mjs --remote --deploy', 'root remote init script');
+assert.equal(packageJson.scripts.preinstall, 'node scripts/check-runtime.mjs', 'root preinstall runtime guard');
+assert.equal(packageJson.scripts['doctor:runtime'], 'node scripts/check-runtime.mjs', 'root runtime doctor script');
 assert.equal(packageJson.scripts['test:smoke'], 'node scripts/smoke-check.mjs', 'smoke script');
 assert.equal(packageJson.scripts['test:contract'], 'node scripts/openapi-contract-check.mjs', 'contract script');
 assert.equal(packageJson.scripts['test:unit'], 'node scripts/run-unit-tests.mjs', 'unit test script');
-assert.match(packageJson.devDependencies?.esbuild ?? '', /^\^0\.21\./, 'root should declare esbuild for test helpers');
+assert.match(packageJson.devDependencies?.esbuild ?? '', /^\^0\.27\./, 'root should declare esbuild for test helpers');
+assert.match(packageJson.devDependencies?.['node-addon-api'] ?? '', /^\^8\./, 'root should declare node-addon-api for sharp source builds');
+assert.match(packageJson.devDependencies?.['node-gyp'] ?? '', /^\^11\./, 'root should declare node-gyp for sharp source builds');
 assert.equal(packageJson.scripts['ci:verify'], 'npm run test:contract && npm run test:smoke && npm test && npm run test:unit && npm run typecheck && npm run build && npm run build:worker', 'ci verify script');
 assert.equal(packageJson.scripts['build:worker:staging'], 'npm run build:staging --workspace @subforge/worker', 'root staging worker build script');
 assert.equal(packageJson.scripts['deploy:staging'], 'npm run db:migrations:apply:staging && npm run deploy:worker:staging', 'root staging deploy script');
@@ -117,17 +131,24 @@ assert.equal(packageJson.scripts['d1:restore:drill'], 'node scripts/d1-restore-d
 assert.ok(packageJson.cloudflare?.bindings?.ADMIN_JWT_SECRET, 'package.json should describe Cloudflare bindings');
 
 const webPackageJson = JSON.parse(readFileSync('apps/web/package.json', 'utf8'));
+assert.equal(webPackageJson.scripts.dev, 'node ./node_modules/vite/bin/vite.js', 'web dev script');
+assert.equal(webPackageJson.scripts.build, 'node ./node_modules/vite/bin/vite.js build', 'web build script');
+assert.equal(webPackageJson.scripts.preview, 'node ./node_modules/vite/bin/vite.js preview', 'web preview script');
 assert.equal(webPackageJson.dependencies['@subforge/core'], '0.1.0', 'web should use npm-compatible workspace version for core');
 assert.equal(webPackageJson.dependencies['@subforge/shared'], '0.1.0', 'web should use npm-compatible workspace version for shared');
 
 const workerPackageJson = JSON.parse(readFileSync('apps/worker/package.json', 'utf8'));
 assert.equal(workerPackageJson.dependencies['@subforge/core'], '0.1.0', 'worker should use npm-compatible workspace version for core');
 assert.equal(workerPackageJson.dependencies['@subforge/shared'], '0.1.0', 'worker should use npm-compatible workspace version for shared');
-assert.equal(workerPackageJson.scripts.build, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --config ../../wrangler.toml', 'worker dry-run build script');
+assert.equal(workerPackageJson.scripts.prebuild, 'npm run build --workspace @subforge/web', 'worker prebuild should refresh web assets');
+assert.equal(workerPackageJson.scripts.build, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --env="" --config ../../wrangler.toml', 'worker dry-run build script');
+assert.equal(workerPackageJson.scripts['prebuild:staging'], 'npm run build --workspace @subforge/web', 'worker staging prebuild should refresh web assets');
 assert.equal(workerPackageJson.scripts['build:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js deploy --dry-run --env staging --config ../../wrangler.toml', 'worker staging dry-run build script');
-assert.equal(workerPackageJson.scripts.deploy, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --config ../../wrangler.toml', 'worker deploy script');
+assert.equal(workerPackageJson.scripts.predeploy, 'npm run build --workspace @subforge/web', 'worker predeploy should refresh web assets');
+assert.equal(workerPackageJson.scripts.deploy, 'node ../../node_modules/wrangler/bin/wrangler.js deploy --env="" --config ../../wrangler.toml', 'worker deploy script');
+assert.equal(workerPackageJson.scripts['predeploy:staging'], 'npm run build --workspace @subforge/web', 'worker staging predeploy should refresh web assets');
 assert.equal(workerPackageJson.scripts['deploy:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js deploy --env staging --config ../../wrangler.toml', 'worker staging deploy script');
-assert.equal(workerPackageJson.scripts['db:migrations:apply'], 'node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --config ../../wrangler.toml', 'worker migration script');
+assert.equal(workerPackageJson.scripts['db:migrations:apply'], 'node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --env="" --config ../../wrangler.toml', 'worker migration script');
 assert.equal(workerPackageJson.scripts['db:migrations:apply:staging'], 'node ../../node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --env staging --config ../../wrangler.toml', 'worker staging migration script');
 assert.match(workerPackageJson.devDependencies.wrangler, /^\^4\./, 'worker should use wrangler v4');
 
@@ -142,7 +163,7 @@ assertIncludes(readme, '规则源支持 `text` / `yaml` / `json`', 'README sync 
 assertIncludes(readme, '错误码', 'README sync error grading docs');
 assertIncludes(readme, 'Deploy to Cloudflare', 'README deploy button');
 assertIncludes(readme, '首次安装向导', 'README setup wizard docs');
-assertIncludes(readme, 'wrangler@4.45.0', 'README wrangler version docs');
+assertIncludes(readme, 'wrangler@4.77.0', 'README wrangler version docs');
 assertIncludes(readme, 'npm run deploy', 'README deploy command docs');
 assertIncludes(readme, 'npm run init:local', 'README local init docs');
 assertIncludes(readme, 'npm run init:remote', 'README remote init docs');
@@ -163,6 +184,9 @@ assertIncludes(readme, 'bucket lifecycle', 'README backup lifecycle docs');
 assertIncludes(readme, 'npm run backup:d1:decrypt', 'README backup decrypt docs');
 assertIncludes(readme, '节点页支持 JSON 批量导入', 'README node import docs');
 assertIncludes(readme, '远程节点源', 'README remote node sync docs');
+assertIncludes(readme, '>=20 <25', 'README runtime range docs');
+assertIncludes(readme, 'Node.js 25+', 'README unsupported runtime docs');
+assertIncludes(readme, 'libvips', 'README sharp libvips docs');
 assertIncludes(readme, 'docs/限流与安全策略.md', 'README security guide entry');
 assertIncludes(readme, 'docs/API错误码与响应头说明.md', 'README api guide entry');
 assertIncludes(readme, 'docs/API错误响应示例库.md', 'README api error examples guide entry');
@@ -176,7 +200,7 @@ assertIncludes(readme, 'CHANGELOG.md', 'README changelog entry');
 assertIncludes(readme, 'docs/INDEX.md', 'README docs index entry');
 
 const deployGuide = readFileSync('docs/部署指南.md', 'utf8');
-assertIncludes(deployGuide, 'wrangler@4.45.0+', 'deploy guide wrangler version docs');
+assertIncludes(deployGuide, 'wrangler@4.77.0', 'deploy guide wrangler version docs');
 assertIncludes(deployGuide, 'npm run build', 'deploy guide build docs');
 assertIncludes(deployGuide, 'npm run deploy', 'deploy guide deploy docs');
 assertIncludes(deployGuide, 'npm run init:local', 'deploy guide local init docs');
@@ -217,12 +241,15 @@ assertIncludes(deployGuide, '绑定 / Secret / 调度对照', 'deploy guide bind
 assertIncludes(deployGuide, '部署后首轮排障观察点', 'deploy guide first-troubleshooting docs');
 assertIncludes(deployGuide, '节点 JSON 批量导入', 'deploy guide node import docs');
 assertIncludes(deployGuide, '远程节点源', 'deploy guide remote node sync docs');
+assertIncludes(deployGuide, 'Node.js `20`', 'deploy guide pinned node docs');
+assertIncludes(deployGuide, 'Node.js 25+', 'deploy guide unsupported runtime docs');
 assertIncludes(deployGuide, '阶段、错误码', 'deploy guide sync error details docs');
 assertIncludes(deployGuide, 'operatorHint', 'deploy guide sync operator hint docs');
 assertIncludes(deployGuide, 'ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC', 'deploy guide login rate limit vars');
 assertIncludes(deployGuide, 'SUBSCRIPTION_RATE_LIMIT_MAX_REQUESTS', 'deploy guide subscription rate limit vars');
 assertIncludes(deployGuide, 'npm test', 'deploy guide request-level test docs');
 assertIncludes(deployGuide, '必须从 `main` 分支上下文触发', 'deploy guide production dispatch guard docs');
+assertIncludes(deployGuide, 'cache-control` 已是 `no-store, max-age=0, must-revalidate`', 'deploy guide html no-store troubleshooting docs');
 
 const securityGuide = readFileSync('docs/限流与安全策略.md', 'utf8');
 assertIncludes(securityGuide, '管理员登录失败限流', 'security guide admin login section');
@@ -235,6 +262,8 @@ assertIncludes(apiGuide, 'x-subforge-cache-key', 'api guide cache header docs');
 assertIncludes(apiGuide, 'docs/API错误响应示例库.md', 'api guide example library entry');
 assertIncludes(apiGuide, '当前 Worker 对未识别异常已提供稳定的结构化 `500` JSON：`INTERNAL_ERROR`', 'api guide 5xx note');
 assertIncludes(apiGuide, 'TOO_MANY_REQUESTS', 'api guide error code docs');
+assertIncludes(apiGuide, 'x-subforge-asset-cache: html-no-store', 'api guide html asset cache marker docs');
+assertIncludes(apiGuide, 'cache-control: no-store, max-age=0, must-revalidate', 'api guide html no-store header docs');
 
 const apiErrorExamplesGuide = readFileSync('docs/API错误响应示例库.md', 'utf8');
 assertIncludes(apiErrorExamplesGuide, '400 Bad Request', 'api error examples bad request docs');
@@ -248,6 +277,9 @@ assertIncludes(troubleshootingGuide, 'Unexpected token', 'troubleshooting guide 
 assertIncludes(troubleshootingGuide, '429', 'troubleshooting guide rate limit docs');
 assertIncludes(troubleshootingGuide, 'npm ci', 'troubleshooting guide npm ci docs');
 assertIncludes(troubleshootingGuide, 'x-subforge-cache-key', 'troubleshooting guide cache header docs');
+assertIncludes(troubleshootingGuide, 'libvips', 'troubleshooting guide sharp libvips docs');
+assertIncludes(troubleshootingGuide, '页面还是旧后台', 'troubleshooting guide stale admin ui docs');
+assertIncludes(troubleshootingGuide, 'x-subforge-asset-cache', 'troubleshooting guide asset cache marker docs');
 
 const apiMatrixGuide = readFileSync('docs/API接口矩阵与OpenAPI草案.md', 'utf8');
 assertIncludes(apiMatrixGuide, '/api/users', 'api matrix users route docs');
@@ -437,7 +469,9 @@ assertIncludes(workerIndex, 'node.import', 'worker node import audit action');
 assertIncludes(workerIndex, 'node.import_remote', 'worker remote node import audit action');
 assertIncludes(workerIndex, 'buildUserAuditPayload', 'worker audit payload helpers');
 assertIncludes(workerIndex, 'rayId', 'worker audit request ray id');
-assertIncludes(workerIndex, 'env.ASSETS.fetch(request);', 'worker assets fallback');
+assertIncludes(workerIndex, 'handleAssetRequest(request, env);', 'worker assets fallback wrapper');
+assertIncludes(workerIndex, "cache-control', 'no-store, max-age=0, must-revalidate'", 'worker html asset cache control');
+assertIncludes(workerIndex, "x-subforge-asset-cache', 'html-no-store'", 'worker html asset cache marker');
 
 const rateLimit = readFileSync('apps/worker/src/rate-limit.ts', 'utf8');
 assertIncludes(rateLimit, 'peekAdminLoginRateLimit', 'worker admin login rate limit helper');
@@ -468,5 +502,21 @@ assertIncludes(workerSync, 'buildRuleSourceSyncDiagnostics', 'worker sync diagno
 const webSync = readFileSync('apps/web/src/App.tsx', 'utf8');
 assertIncludes(webSync, 'formatSyncErrorCodeLabel', 'web sync error code formatter');
 assertIncludes(webSync, 'supportedShapes', 'web sync supported shapes rendering');
+assertIncludes(webSync, 'className="page auth-page"', 'web auth view should render the auth-page layout');
+
+const webStyles = readFileSync('apps/web/src/styles.css', 'utf8');
+assertIncludes(
+  webStyles,
+  'grid-template-columns: minmax(0, 1.2fr) minmax(320px, 420px);',
+  'web auth-page desktop split layout'
+);
+assertIncludes(webStyles, 'align-items: start;', 'web auth-page should align to top instead of centering');
+assertIncludes(webStyles, 'padding-top: clamp(48px, 10vh, 112px);', 'web auth-page top spacing');
+assertIncludes(webStyles, '.auth-page .auth-card {', 'web auth card auth-page override');
+assertIncludes(webStyles, 'justify-self: end;', 'web auth card should dock to the side on desktop');
+assertIncludes(webStyles, '.auth-page .hero {', 'web auth hero auth-page override');
+assertIncludes(webStyles, 'grid-template-columns: 1fr;', 'web auth-page mobile single-column layout');
+assertIncludes(webStyles, 'justify-self: stretch;', 'web auth card should stretch on mobile');
+assert.ok(!webStyles.includes('align-content: center;'), 'web auth-page should not vertically center the login layout');
 
 console.log('Smoke checks passed.');

@@ -22,6 +22,11 @@ All notable changes to this project are documented in this file.
 - 新增 `docs/API错误响应示例库.md`，补常见 `400` / `401` / `403` / `404` / `429` 示例，并说明当前 5xx 现状；同步 `openapi.yaml` 响应 examples
 - 细化 `openapi.yaml` 的关键 request / success examples，补公开订阅内容示例，并将 `PreviewMetadata` 从泛型对象收紧为显式 schema
 - 新增 `scripts/openapi-contract-check.mjs` 与 `npm run test:contract`，对 `openapi.yaml`、公开鉴权边界与 `apps/web/src/api.ts` 调用路径做零依赖契约校验
+- 同步 `README.md`、`docs/部署指南.md`、`docs/排障与常见问题.md` 的运行时说明，明确当前支持 `Node.js >=20 <25` 并写清 `Node.js 25+` 的安装拦截语义
+- 为 `sharp` 在全局 `libvips` 环境下的源码编译补齐根级 `node-addon-api` / `node-gyp` 依赖，并同步 README / 排障文档的安装语义
+- 升级 `wrangler` / `vite` / `@vitejs/plugin-react` / `esbuild` 到当前安全版本，收敛 `npm audit` 中的 `miniflare`、`undici`、`esbuild` 与 `vite` 漏洞
+- 为 production 的 Worker dry-run / deploy / migration 命令显式传入 `--env=\"\"`，避免多环境 `wrangler.toml` 下的目标环境歧义警告
+- 同步 Web 节点页、节点使用说明、API 参考、错误语义与已知问题文档，收敛“远程节点源手动同步已支持、持续自动同步未支持”的当前口径
 
 ### DevOps
 
@@ -30,6 +35,7 @@ All notable changes to this project are documented in this file.
 - 修正内部 workspace 依赖声明并提交 `package-lock.json`，把 workflow 安装步骤切换为 `npm ci`
 - `.github/workflows/d1-backup.yml` 新增可选对象存储同步，支持 `D1_BACKUP_ARCHIVE_S3_URI`、S3 兼容 endpoint、`D1_BACKUP_ARCHIVE_SSE` / `D1_BACKUP_ARCHIVE_KMS_KEY_ID` 校验与 lifecycle summary
 - 新增 `staging` Worker / D1 / KV 环境脚本，deploy workflow 按 `release/*` / `main` 分支映射到 `staging` / `production`，并补 failure alert workflow
+- 新增 `scripts/check-runtime.mjs`、`.npmrc` `engine-strict=true` 与根 `preinstall` 运行时检查，把不受支持的 `Node.js 25+` 从 `sharp` 原生构建失败收敛为前置 `EBADENGINE`
 
 ## [0.1.0] - 2026-03-09
 

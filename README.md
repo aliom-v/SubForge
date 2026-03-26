@@ -81,6 +81,13 @@ scripts/       初始化脚本
 4. 启动 Web：`npm run dev:web`
 5. 打开后台，完成首次安装向导或使用已导入的管理员登录
 
+运行时建议：
+
+- 仓库通过 `.nvmrc` 与 `.node-version` 固定 `Node.js 20`
+- 当前支持范围为 `>=20 <25`
+- 如本机使用 `Node.js 25+`，`npm ci` 会在前置检查阶段直接失败，避免继续掉进 `sharp` 等原生依赖的隐晦构建错误
+- 如本机已安装全局 `libvips >= 8.17.3`（例如部分 Arch Linux 环境），`sharp` 会自动切到源码构建；仓库已显式声明 `node-addon-api` 与 `node-gyp`，避免 `npm ci` 卡死在缺少 JS 构建依赖
+
 默认本地地址：
 
 - Worker：`http://127.0.0.1:8787`
@@ -157,8 +164,8 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 ## 部署摘要
 
 - 当前仓库默认走 **单 Worker + 静态资源** 部署，所有请求会先进 Worker，再由 Worker 把非 API 请求回退到 `apps/web/dist`
-- `wrangler.toml` 继续保持“无资源 ID”模式，并启用 `run_worker_first = true`；这依赖 **`wrangler@4.45.0` 及以上** 自动 provision D1 / KV 绑定
-- 根 `package.json` 中 `npm run build` 只构建前端，`npm run deploy` 负责远端 migration + Worker 发布，更适合 Cloudflare UI / Git 导入
+- `wrangler.toml` 继续保持“无资源 ID”模式，并启用 `run_worker_first = true`；仓库当前随依赖安装 `wrangler@4.77.0`，而 `4.45.0+` 都支持自动 provision D1 / KV 绑定
+- 根 `package.json` 中 `npm run build` 只构建前端；`npm run deploy` / `npm run deploy:staging` 与直接执行 `deploy:worker*` 前都会先刷新 `apps/web/dist`，避免把旧后台静态资源一并发到 Cloudflare
 - 如需把远端构建、部署和首轮数据初始化收敛成单条命令，可执行 `npm run init:remote -- --admin-user admin --admin-password your-password`
 - 首次部署后可直接通过后台首次安装向导创建管理员，无需先跑 `seed:admin`
 - 如果需要完整的 Cloudflare UI / Git 导入、绑定清单、GitHub Actions、D1 备份 / 恢复 SOP、部署后验收与首轮排障步骤，请看 `docs/部署指南.md`
@@ -169,7 +176,7 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 - `.github/workflows/deploy.yml` 现在采用简单分支策略：`release/*` 分支 push 自动走 `staging` 环境，`main` 分支 push 自动走 `production` 环境；手动触发时也可显式选择 `staging` / `production`
 - staging 发布会执行 `npm run deploy:staging`，production 发布继续执行 `npm run deploy`；两者都会先复用同一条 `npm run ci:verify`
 - CI workflow 会取消同一分支上被后续提交覆盖的旧检查；deploy workflow 会按环境分开串行，避免 staging / production 互相抢占
-- 仓库根目录已提交 `.nvmrc` 与 `.node-version` 并固定为 `20`，用于让 Cloudflare Workers Builds 与 GitHub Actions 的 Node 版本保持一致
+- 仓库根目录已提交 `.nvmrc` 与 `.node-version` 并固定为 `20`，`package.json` 与 `.npmrc` 也会在安装前拒绝 `Node.js 25+`，避免依赖链在 `sharp` 等原生包上隐晦失败
 - 仓库已提交 `package-lock.json`，workflow 当前默认使用 `npm ci`；如需更新依赖版本，再在本地执行 `npm install`
 - 新增 `.github/workflows/d1-backup.yml`：每天定时为 production 导出一份 D1 备份，默认保留 `30` 天；如配置 `D1_BACKUP_ARCHIVE_PASSPHRASE`，会自动加密后再上传 artifact
 - 如需把备份继续同步到 S3 兼容对象存储，可配置 `D1_BACKUP_ARCHIVE_S3_URI`、`D1_BACKUP_ARCHIVE_ENDPOINT_URL`、`D1_BACKUP_ARCHIVE_SSE`、`D1_BACKUP_ARCHIVE_KMS_KEY_ID` 等变量 / Secret；workflow 会额外执行 `aws s3 cp`，并在 summary 中提示 bucket lifecycle 需在存储侧配置

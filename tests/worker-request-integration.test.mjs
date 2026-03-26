@@ -228,9 +228,14 @@ class MockAssets {
       url: request.url
     });
 
-    return new Response(`asset:${request.method}:${new URL(request.url).pathname}`, {
+    const pathname = new URL(request.url).pathname;
+    const isHtml = !pathname.startsWith('/assets/');
+
+    return new Response(`asset:${request.method}:${pathname}`, {
       status: 200,
       headers: {
+        'content-type': isHtml ? 'text/html; charset=utf-8' : 'text/css; charset=utf-8',
+        'cache-control': isHtml ? 'public, max-age=300' : 'public, max-age=31536000, immutable',
         'x-assets-method': request.method
       }
     });
@@ -571,14 +576,26 @@ test('health endpoint returns JSON and GET or HEAD non-api requests fall back to
   const getAsset = await worker.fetch(new Request('http://127.0.0.1:8787/dashboard'), env);
   assert.equal(getAsset.status, 200);
   assert.equal(await getAsset.text(), 'asset:GET:/dashboard');
+  assert.equal(getAsset.headers.get('cache-control'), 'no-store, max-age=0, must-revalidate');
+  assert.equal(getAsset.headers.get('pragma'), 'no-cache');
+  assert.equal(getAsset.headers.get('expires'), '0');
+  assert.equal(getAsset.headers.get('x-subforge-asset-cache'), 'html-no-store');
 
   const headAsset = await worker.fetch(new Request('http://127.0.0.1:8787/dashboard', { method: 'HEAD' }), env);
   assert.equal(headAsset.status, 200);
   assert.equal(headAsset.headers.get('x-assets-method'), 'HEAD');
-  assert.equal(assets.requests.length, 2);
+  assert.equal(headAsset.headers.get('cache-control'), 'no-store, max-age=0, must-revalidate');
+
+  const cssAsset = await worker.fetch(new Request('http://127.0.0.1:8787/assets/index.css'), env);
+  assert.equal(cssAsset.status, 200);
+  assert.equal(await cssAsset.text(), 'asset:GET:/assets/index.css');
+  assert.equal(cssAsset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  assert.equal(cssAsset.headers.get('x-subforge-asset-cache'), null);
+
+  assert.equal(assets.requests.length, 3);
   assert.deepEqual(
     assets.requests.map((entry) => entry.method),
-    ['GET', 'HEAD']
+    ['GET', 'HEAD', 'GET']
   );
 });
 

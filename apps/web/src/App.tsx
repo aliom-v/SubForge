@@ -1234,7 +1234,7 @@ export function App(): JSX.Element {
               </div>
             </div>
             <p className="helper">
-              当前支持“分享链接导入 + 订阅 URL 远程预览导入 + 手动录入”三条路径；远程节点源同步仍未实现。
+              当前支持“手动录入 + 分享链接导入 + 订阅 URL 远程预览导入 + 远程节点源手动同步”四条路径；但仍不支持把订阅 URL 自动持久化为可定时同步的节点源任务。
             </p>
           </article>
 
@@ -1475,7 +1475,7 @@ export function App(): JSX.Element {
           </article>
 
           <article className="panel">
-            <h2>远程节点源同步</h2>
+            <h2>远程节点源手动同步</h2>
             <form className="form-grid" onSubmit={handleImportRemoteNodes}>
               <Field label="远程 URL" full>
                 <input
@@ -1484,7 +1484,7 @@ export function App(): JSX.Element {
                   placeholder="https://example.com/nodes.json"
                 />
               </Field>
-              <p className="helper">当前远程节点源要求返回 JSON 数组，或 <code>{'{"nodes": [...]}'}</code> 结构；同步时会按协议/地址/端口/凭证做去重。</p>
+              <p className="helper">当前远程节点源要求返回 JSON 数组，或 <code>{'{"nodes": [...]}'}</code> 结构；同步时会按协议/地址/端口/凭证做去重。这是手动入口，不会自动定时拉取。</p>
               <button type="submit" disabled={loading}>同步远程节点源</button>
             </form>
             {remoteNodeImportResult ? (

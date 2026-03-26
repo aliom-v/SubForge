@@ -501,6 +501,42 @@ function failRateLimited(message: string, decision: RateLimitDecision): Response
   });
 }
 
+function mergeVaryHeader(currentValue: string | null, nextValue: string): string {
+  const tokens = new Set(
+    (currentValue ?? '')
+      .split(',')
+      .map((token) => token.trim())
+      .filter(Boolean)
+      .map((token) => token.toLowerCase())
+  );
+
+  tokens.add(nextValue.toLowerCase());
+
+  return [...tokens].join(', ');
+}
+
+async function handleAssetRequest(request: Request, env: Env): Promise<Response> {
+  const response = await env.ASSETS.fetch(request);
+  const contentType = response.headers.get('content-type') ?? '';
+
+  if (!contentType.toLowerCase().startsWith('text/html')) {
+    return response;
+  }
+
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', 'no-store, max-age=0, must-revalidate');
+  headers.set('pragma', 'no-cache');
+  headers.set('expires', '0');
+  headers.set('vary', mergeVaryHeader(headers.get('vary'), 'accept-encoding'));
+  headers.set('x-subforge-asset-cache', 'html-no-store');
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
 function maskTokenForAudit(token: string): string {
   if (!token) {
     return '';
@@ -2095,7 +2131,7 @@ export default {
       }
 
       if (request.method === 'GET' || request.method === 'HEAD') {
-        return await env.ASSETS.fetch(request);
+        return await handleAssetRequest(request, env);
       }
 
       return notFound(url.pathname);

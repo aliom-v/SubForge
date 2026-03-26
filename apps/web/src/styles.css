@@ -77,9 +77,20 @@ textarea {
 
 .auth-page {
   display: grid;
-  gap: 24px;
-  align-content: center;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 420px);
+  gap: 32px;
+  align-items: start;
   min-height: 100vh;
+  padding-top: clamp(48px, 10vh, 112px);
+}
+
+.auth-page .hero {
+  margin-bottom: 0;
+}
+
+.auth-page .auth-card {
+  width: min(100%, 420px);
+  justify-self: end;
 }
 
 .hero {
@@ -367,6 +378,18 @@ pre {
 }
 
 @media (max-width: 900px) {
+  .auth-page {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    min-height: auto;
+    padding-top: 40px;
+  }
+
+  .auth-page .auth-card {
+    width: 100%;
+    justify-self: stretch;
+  }
+
   .hero-row {
     flex-direction: column;
   }
