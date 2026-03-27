@@ -1,10 +1,10 @@
-# Dashboard / Git 部署默认依赖 Wrangler 4.45+ 自动 provision 绑定资源，无需在仓库里写死资源 ID。
+# 远端 D1 / KV 操作依赖显式资源 ID，避免 CI 与首次部署时无法定位目标资源。
 name = "subforge"
 main = "apps/worker/src/index.ts"
 compatibility_date = "2026-03-07"
 
 [vars]
-APP_ENV = "development"
+APP_ENV = "production"
 ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC = "600"
 ADMIN_LOGIN_RATE_LIMIT_MAX_ATTEMPTS = "5"
 SUBSCRIPTION_CACHE_TTL = "1800"
@@ -22,10 +22,12 @@ run_worker_first = true
 [[d1_databases]]
 binding = "DB"
 database_name = "subforge"
+database_id = "2327ff6f-fa85-462f-9cf6-fc476e5b3840"
 migrations_dir = "migrations"
 
 [[kv_namespaces]]
 binding = "SUB_CACHE"
+id = "bd7f2742aabe43e1972d1a6c14d288a6"
 
 [triggers]
 crons = ["0 * * * *"]
@@ -53,7 +55,9 @@ run_worker_first = true
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "subforge-staging"
+database_id = "f113eef2-6bee-4787-ab99-a67861ce41b7"
 migrations_dir = "migrations"
 
 [[env.staging.kv_namespaces]]
 binding = "SUB_CACHE"
+id = "7ce4152e39de4de59a917bc0e4443aea"

@@ -164,7 +164,7 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 ## 部署摘要
 
 - 当前仓库默认走 **单 Worker + 静态资源** 部署，所有请求会先进 Worker，再由 Worker 把非 API 请求回退到 `apps/web/dist`
-- `wrangler.toml` 继续保持“无资源 ID”模式，并启用 `run_worker_first = true`；仓库当前随依赖安装 `wrangler@4.77.0`，而 `4.45.0+` 都支持自动 provision D1 / KV 绑定
+- `wrangler.toml` 显式维护 production / staging 的 D1 与 KV 资源 ID，并启用 `run_worker_first = true`；仓库当前随依赖安装 `wrangler@4.77.0`，这样 GitHub Actions 与本地 CLI 在执行远端 migration / deploy 时能稳定定位目标资源
 - 根 `package.json` 中 `npm run build` 只构建前端；`npm run deploy` / `npm run deploy:staging` 与直接执行 `deploy:worker*` 前都会先刷新 `apps/web/dist`，避免把旧后台静态资源一并发到 Cloudflare
 - 如需把远端构建、部署和首轮数据初始化收敛成单条命令，可执行 `npm run init:remote -- --admin-user admin --admin-password your-password`
 - 首次部署后可直接通过后台首次安装向导创建管理员，无需先跑 `seed:admin`
