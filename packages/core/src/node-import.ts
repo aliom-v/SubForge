@@ -22,6 +22,8 @@ export interface ParsedNodeImportResult {
 
 export type NodeImportContentEncoding = 'plain_text' | 'base64_text';
 
+const supportedShareLinkSchemes = ['vless://', 'trojan://', 'vmess://', 'ss://', 'hysteria2://', 'hy2://'] as const;
+
 function decodeComponent(value: string): string {
   if (!value) {
     return '';
@@ -61,14 +63,74 @@ function getNonEmptyLines(value: string): string[] {
 }
 
 function isSupportedShareLink(line: string): boolean {
-  return (
-    line.startsWith('vless://') ||
-    line.startsWith('trojan://') ||
-    line.startsWith('vmess://') ||
-    line.startsWith('ss://') ||
-    line.startsWith('hysteria2://') ||
-    line.startsWith('hy2://')
-  );
+  return supportedShareLinkSchemes.some((scheme) => line.startsWith(scheme));
+}
+
+function trimWrappedQuotes(value: string): string {
+  let current = value.trim();
+
+  while (
+    current.length >= 2 &&
+    ((current.startsWith('"') && current.endsWith('"')) ||
+      (current.startsWith("'") && current.endsWith("'")) ||
+      (current.startsWith('`') && current.endsWith('`')))
+  ) {
+    current = current.slice(1, -1).trim();
+  }
+
+  return current;
+}
+
+function stripTrailingShareLinkPunctuation(value: string): string {
+  let current = value.trim();
+
+  while (/[)"'\],;}]+$/.test(current)) {
+    current = current.slice(0, -1).trimEnd();
+  }
+
+  return trimWrappedQuotes(current);
+}
+
+function extractSupportedShareLink(line: string): string | null {
+  const trimmed = trimWrappedQuotes(line.trim());
+
+  if (isSupportedShareLink(trimmed)) {
+    return stripTrailingShareLinkPunctuation(trimmed);
+  }
+
+  const match = trimmed.match(/(?:vless|trojan|vmess|ss|hysteria2|hy2):\/\/\S+/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const extracted = stripTrailingShareLinkPunctuation(match[0]);
+  return isSupportedShareLink(extracted) ? extracted : null;
+}
+
+function extractShareLinkLikeCandidate(line: string): string | null {
+  const trimmed = trimWrappedQuotes(line.trim());
+  const match = trimmed.match(/[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+/);
+
+  if (!match) {
+    return null;
+  }
+
+  return stripTrailingShareLinkPunctuation(match[0]);
+}
+
+function collectSupportedShareLinks(lines: string[]): string[] {
+  const collected: string[] = [];
+
+  for (const line of lines) {
+    const extracted = extractSupportedShareLink(line);
+
+    if (extracted) {
+      collected.push(extracted);
+    }
+  }
+
+  return collected;
 }
 
 function looksLikeBase64SubscriptionText(value: string): boolean {
@@ -81,31 +143,162 @@ function looksLikeBase64SubscriptionText(value: string): boolean {
   return /^[A-Za-z0-9+/_=-]+$/.test(normalized);
 }
 
-function normalizeNodeImportLines(value: string): { lines: string[]; contentEncoding: NodeImportContentEncoding } {
-  const lines = getNonEmptyLines(value);
+function looksLikeHtmlDocument(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
 
-  if (lines.length === 0 || lines.some(isSupportedShareLink)) {
-    return { lines, contentEncoding: 'plain_text' };
+  return (
+    trimmed.startsWith('<!doctype html') ||
+    trimmed.startsWith('<html') ||
+    trimmed.includes('<head') ||
+    trimmed.includes('<body')
+  );
+}
+
+function looksLikeClashLikeConfig(lines: string[]): boolean {
+  const normalized = lines.map((line) => line.trim().toLowerCase());
+  const hasTopLevelKey = normalized.some((line) =>
+    /^(proxies|proxy-groups|proxy-providers|mixed-port|redir-port|tproxy-port|socks-port|allow-lan|mode|dns|rules):/.test(
+      line
+    )
+  );
+  const hasNamedListItem = normalized.some((line) => line.startsWith('- name:'));
+
+  return hasTopLevelKey && hasNamedListItem;
+}
+
+function looksLikeSingboxLikeConfig(value: string, lines: string[]): boolean {
+  const trimmed = value.trim();
+  const normalizedLines = lines.map((line) => line.trim().toLowerCase());
+
+  if (
+    normalizedLines.some((line) => /^(outbounds|inbounds|route|dns|experimental):/.test(line)) &&
+    normalizedLines.some((line) => line.startsWith('- type:'))
+  ) {
+    return true;
+  }
+
+  if (!trimmed.startsWith('{')) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return false;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    return ['outbounds', 'inbounds', 'route', 'dns'].some((key) => key in record);
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeJsonNodeCollection(value: string): boolean {
+  const trimmed = value.trim();
+
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+
+    if (Array.isArray(parsed)) {
+      return parsed.some(
+        (item) =>
+          typeof item === 'object' &&
+          item !== null &&
+          !Array.isArray(item) &&
+          ('name' in item || 'protocol' in item || 'server' in item || 'port' in item)
+      );
+    }
+
+    if (typeof parsed !== 'object' || parsed === null) {
+      return false;
+    }
+
+    const record = parsed as Record<string, unknown>;
+
+    return (
+      ('nodes' in record && Array.isArray(record.nodes)) ||
+      ('proxies' in record && Array.isArray(record.proxies)) ||
+      ('servers' in record && Array.isArray(record.servers))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildUnsupportedImportHint(content: string, lines: string[]): string | null {
+  if (looksLikeHtmlDocument(content)) {
+    return '当前内容看起来是 HTML 页面，不是订阅分享链接；请先检查订阅 URL 是否正确，或是否被登录页 / 鉴权页 / 重定向拦截。';
+  }
+
+  if (looksLikeClashLikeConfig(lines)) {
+    return '当前内容看起来是 Clash / Mihomo 配置，不是逐行分享链接订阅；这个入口暂不支持直接解析整份 YAML 配置。';
+  }
+
+  if (looksLikeSingboxLikeConfig(content, lines)) {
+    return '当前内容看起来是 sing-box 配置，不是逐行分享链接订阅；这个入口暂不支持直接解析整份配置。';
+  }
+
+  if (looksLikeJsonNodeCollection(content)) {
+    return '当前内容看起来是 JSON 节点清单；请改用“远程节点源手动同步”，不要走“订阅 URL 预览导入”这个入口。';
+  }
+
+  return null;
+}
+
+function normalizeNodeImportLines(value: string): {
+  lines: string[];
+  rawLines: string[];
+  contentEncoding: NodeImportContentEncoding;
+  contentForHint: string;
+  hasSupportedLinks: boolean;
+} {
+  const lines = getNonEmptyLines(value);
+  const extracted = collectSupportedShareLinks(lines);
+
+  if (lines.length === 0) {
+    return { lines, rawLines: lines, contentEncoding: 'plain_text', contentForHint: value, hasSupportedLinks: false };
+  }
+
+  if (extracted.length > 0) {
+    return { lines: extracted, rawLines: lines, contentEncoding: 'plain_text', contentForHint: value, hasSupportedLinks: true };
   }
 
   if (!looksLikeBase64SubscriptionText(value.trim())) {
-    return { lines, contentEncoding: 'plain_text' };
+    return { lines, rawLines: lines, contentEncoding: 'plain_text', contentForHint: value, hasSupportedLinks: false };
   }
 
   try {
     const decoded = decodeBase64Utf8(value.trim());
     const decodedLines = getNonEmptyLines(decoded);
+    const extractedDecoded = collectSupportedShareLinks(decodedLines);
 
-    if (decodedLines.some(isSupportedShareLink)) {
+    if (extractedDecoded.length > 0) {
       return {
-        lines: decodedLines,
-        contentEncoding: 'base64_text'
+        lines: extractedDecoded,
+        rawLines: decodedLines,
+        contentEncoding: 'base64_text',
+        contentForHint: decoded,
+        hasSupportedLinks: true
       };
     }
+
+    return {
+      lines: decodedLines,
+      rawLines: decodedLines,
+      contentEncoding: 'base64_text',
+      contentForHint: decoded,
+      hasSupportedLinks: false
+    };
   } catch {
   }
 
-  return { lines, contentEncoding: 'plain_text' };
+  return { lines, rawLines: lines, contentEncoding: 'plain_text', contentForHint: value, hasSupportedLinks: false };
 }
 
 function parsePort(value: string, protocol: string): number {
@@ -475,9 +668,30 @@ export function parseNodeShareLink(raw: string): ImportedNodePayload {
 
 export function parseNodeImportText(value: string): ParsedNodeImportResult {
   const normalized = normalizeNodeImportLines(value);
+  const unsupportedImportHint = buildUnsupportedImportHint(normalized.contentForHint, normalized.lines);
+
+  if (normalized.lines.length > 0 && !normalized.hasSupportedLinks && unsupportedImportHint) {
+    return {
+      nodes: [],
+      errors: [unsupportedImportHint],
+      lineCount: normalized.lines.length,
+      contentEncoding: normalized.contentEncoding
+    };
+  }
 
   const nodes: ImportedNodePayload[] = [];
   const errors: string[] = [];
+  const unsupportedShareLinkLikeLineIndexes = normalized.hasSupportedLinks
+    ? normalized.rawLines.flatMap((line, index) => {
+        const candidate = extractShareLinkLikeCandidate(line);
+
+        if (!candidate || isSupportedShareLink(candidate)) {
+          return [];
+        }
+
+        return [index];
+      })
+    : [];
 
   for (const [index, line] of normalized.lines.entries()) {
     try {
@@ -488,10 +702,19 @@ export function parseNodeImportText(value: string): ParsedNodeImportResult {
     }
   }
 
+  for (const index of unsupportedShareLinkLikeLineIndexes) {
+    errors.push(`第 ${index + 1} 行：当前仅支持 vless://、trojan://、vmess://、ss://、hysteria2:// / hy2:// 分享链接`);
+  }
+
+  const lineCount =
+    normalized.hasSupportedLinks
+      ? normalized.rawLines.filter((line) => extractShareLinkLikeCandidate(line) !== null).length
+      : normalized.lines.length;
+
   return {
     nodes,
     errors,
-    lineCount: normalized.lines.length,
+    lineCount,
     contentEncoding: normalized.contentEncoding
   };
 }

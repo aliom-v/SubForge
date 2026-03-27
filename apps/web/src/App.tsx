@@ -158,6 +158,34 @@ function formatNodeImportContentEncoding(value: NodeImportContentEncoding): stri
   return value === 'base64_text' ? 'Base64 订阅文本' : '明文分享链接';
 }
 
+function summarizeImportErrors(errors: string[]): string[] {
+  const counts = new Map<string, number>();
+  const firstMessages = new Map<string, string>();
+  const order: string[] = [];
+
+  for (const error of errors) {
+    const matched = error.match(/^第 \d+ 行：(.*)$/);
+    const normalizedMessage = matched?.[1] ?? error;
+
+    if (!counts.has(normalizedMessage)) {
+      order.push(normalizedMessage);
+      firstMessages.set(normalizedMessage, error);
+    }
+
+    counts.set(normalizedMessage, (counts.get(normalizedMessage) ?? 0) + 1);
+  }
+
+  return order.map((message) => {
+    const count = counts.get(message) ?? 0;
+
+    if (count <= 1) {
+      return firstMessages.get(message) ?? message;
+    }
+
+    return `${message}（共 ${count} 行）`;
+  });
+}
+
 const nodeImportPlaceholder = `[
   {
     "name": "HK-01",
@@ -224,8 +252,16 @@ export function App(): JSX.Element {
   const nodeCreateExamples = useMemo(() => getNodeMetadataExamples(nodeForm.protocol), [nodeForm.protocol]);
   const nodeEditExamples = useMemo(() => getNodeMetadataExamples(nodeEditForm.protocol), [nodeEditForm.protocol]);
   const parsedNodeImport = useMemo(() => parseNodeImportText(nodeImportText), [nodeImportText]);
+  const summarizedParsedNodeImportErrors = useMemo(
+    () => summarizeImportErrors(parsedNodeImport.errors),
+    [parsedNodeImport.errors]
+  );
   const firstImportedNode = parsedNodeImport.nodes[0];
   const firstRemoteImportedNode = remoteNodeImportPreview?.nodes[0];
+  const summarizedRemoteNodeImportErrors = useMemo(
+    () => summarizeImportErrors(remoteNodeImportPreview?.errors ?? []),
+    [remoteNodeImportPreview?.errors]
+  );
 
   function reportValidationError(messageText: string): void {
     setMessage('');
@@ -615,21 +651,23 @@ export function App(): JSX.Element {
     setError('');
 
     try {
-      for (const importedNode of input.importedNodes) {
-        await createNode(token, {
+      const result = await importNodes(
+        token,
+        input.importedNodes.map((importedNode): NodeImportInput => ({
           name: importedNode.name,
           protocol: importedNode.protocol,
           server: importedNode.server,
           port: importedNode.port,
-          credentials: importedNode.credentials,
-          params: importedNode.params
-        });
-      }
-
+          ...(importedNode.credentials ? { credentials: importedNode.credentials } : {}),
+          ...(importedNode.params ? { params: importedNode.params } : {})
+        }))
+      );
       await refreshResources();
       input.onSuccess?.();
       setMessage(
-        `已导入 ${input.importedNodes.length} 个节点${
+        `已处理 ${result.importedCount} 个节点（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 去重 ${
+          result.duplicateCount ?? 0
+        }）${
           input.errorCount > 0 ? `，另有 ${input.errorCount} 条解析失败未导入` : ''
         }，请到“用户”页完成绑定并在“预览”页验证输出`
       );
@@ -1281,11 +1319,11 @@ export function App(): JSX.Element {
                   </button>
                 ) : null}
               </div>
-              {parsedNodeImport.errors.length > 0 ? (
+              {summarizedParsedNodeImportErrors.length > 0 ? (
                 <div className="import-errors full-span">
                   <strong>解析错误</strong>
                   <ul className="overview-list">
-                    {parsedNodeImport.errors.map((errorText) => <li key={errorText}>{errorText}</li>)}
+                    {summarizedParsedNodeImportErrors.map((errorText) => <li key={errorText}>{errorText}</li>)}
                   </ul>
                 </div>
               ) : null}
@@ -1368,11 +1406,11 @@ export function App(): JSX.Element {
                       ].join('\n')}</pre>
                     </div>
                   </div>
-                  {remoteNodeImportPreview.errors.length > 0 ? (
+                  {summarizedRemoteNodeImportErrors.length > 0 ? (
                     <div className="import-errors full-span">
                       <strong>解析错误</strong>
                       <ul className="overview-list">
-                        {remoteNodeImportPreview.errors.map((errorText) => <li key={errorText}>{errorText}</li>)}
+                        {summarizedRemoteNodeImportErrors.map((errorText) => <li key={errorText}>{errorText}</li>)}
                       </ul>
                     </div>
                   ) : null}

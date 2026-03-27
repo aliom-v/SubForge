@@ -182,3 +182,51 @@ test('parseNodeImportText auto-decodes base64 wrapped subscription text', () => 
   assert.equal(result.nodes[0].protocol, 'vless');
   assert.equal(result.nodes[1].protocol, 'vmess');
 });
+
+test('parseNodeImportText extracts wrapped share links from yaml-like lines', () => {
+  const result = parseNodeImportText([
+    'proxies:',
+    '  - "vless://11111111-1111-1111-1111-111111111111@hk.example.com:443?security=tls#HK"',
+    "  - 'trojan://replace-me@jp.example.com:443?sni=sub.example.com#JP'"
+  ].join('\n'));
+
+  assert.equal(result.nodes.length, 2);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.lineCount, 2);
+  assert.equal(result.nodes[0].protocol, 'vless');
+  assert.equal(result.nodes[1].protocol, 'trojan');
+});
+
+test('parseNodeImportText reports a concise hint for clash-like config content', () => {
+  const result = parseNodeImportText([
+    'mixed-port: 7890',
+    'proxies:',
+    '  - name: HK',
+    '    type: vless',
+    '    server: hk.example.com',
+    '    port: 443'
+  ].join('\n'));
+
+  assert.equal(result.nodes.length, 0);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Clash \/ Mihomo 配置/);
+});
+
+test('parseNodeImportText reports a concise hint for json node collections', () => {
+  const result = parseNodeImportText(
+    JSON.stringify({
+      nodes: [
+        {
+          name: 'HK',
+          protocol: 'vless',
+          server: 'hk.example.com',
+          port: 443
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.nodes.length, 0);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /JSON 节点清单/);
+});
