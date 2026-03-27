@@ -197,22 +197,81 @@ test('parseNodeImportText extracts wrapped share links from yaml-like lines', ()
   assert.equal(result.nodes[1].protocol, 'trojan');
 });
 
-test('parseNodeImportText reports a concise hint for clash-like config content', () => {
+test('parseNodeImportText parses clash-like yaml proxy configs', () => {
   const result = parseNodeImportText([
     'mixed-port: 7890',
     'proxies:',
     '  - name: HK',
     '    type: vless',
     '    server: hk.example.com',
-    '    port: 443'
+    '    port: 443',
+    '    uuid: 11111111-1111-1111-1111-111111111111',
+    '    tls: true',
+    '    servername: sub.example.com',
+    '  - name: JP',
+    '    type: trojan',
+    '    server: jp.example.com',
+    '    port: 443',
+    '    password: replace-me',
+    '    sni: sub.example.com'
   ].join('\n'));
 
-  assert.equal(result.nodes.length, 0);
-  assert.equal(result.errors.length, 1);
-  assert.match(result.errors[0], /Clash \/ Mihomo 配置/);
+  assert.equal(result.nodes.length, 2);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.lineCount, 2);
+  assert.equal(result.nodes[0].protocol, 'vless');
+  assert.equal(result.nodes[1].protocol, 'trojan');
 });
 
-test('parseNodeImportText reports a concise hint for json node collections', () => {
+test('parseNodeImportText parses sing-box outbound configs', () => {
+  const result = parseNodeImportText(
+    JSON.stringify({
+      outbounds: [
+        {
+          tag: 'HK',
+          type: 'vless',
+          server: 'hk.example.com',
+          server_port: 443,
+          uuid: '11111111-1111-1111-1111-111111111111',
+          tls: {
+            enabled: true,
+            server_name: 'sub.example.com'
+          },
+          transport: {
+            type: 'ws',
+            path: '/ws',
+            headers: {
+              Host: 'cdn.example.com'
+            }
+          }
+        },
+        {
+          tag: 'Auto',
+          type: 'selector',
+          outbounds: ['HK', 'direct']
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.nodes.length, 1);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.lineCount, 2);
+  assert.equal(result.nodes[0].protocol, 'vless');
+  assert.deepEqual(result.nodes[0].credentials, {
+    uuid: '11111111-1111-1111-1111-111111111111'
+  });
+  assert.deepEqual(result.nodes[0].params, {
+    tls: true,
+    servername: 'sub.example.com',
+    sni: 'sub.example.com',
+    network: 'ws',
+    path: '/ws',
+    host: 'cdn.example.com'
+  });
+});
+
+test('parseNodeImportText parses json node collections', () => {
   const result = parseNodeImportText(
     JSON.stringify({
       nodes: [
@@ -220,13 +279,20 @@ test('parseNodeImportText reports a concise hint for json node collections', () 
           name: 'HK',
           protocol: 'vless',
           server: 'hk.example.com',
-          port: 443
+          port: 443,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          },
+          params: {
+            tls: true
+          }
         }
       ]
     })
   );
 
-  assert.equal(result.nodes.length, 0);
-  assert.equal(result.errors.length, 1);
-  assert.match(result.errors[0], /JSON 节点清单/);
+  assert.equal(result.nodes.length, 1);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.lineCount, 1);
+  assert.equal(result.nodes[0].protocol, 'vless');
 });

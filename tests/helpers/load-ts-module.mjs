@@ -47,6 +47,9 @@ export async function loadTsModule(relativePath) {
 
   const result = await build({
     entryPoints: [entryPoint],
+    alias: {
+      yaml: resolve(process.cwd(), 'node_modules/yaml/browser/index.js')
+    },
     bundle: true,
     format: 'esm',
     platform: 'node',

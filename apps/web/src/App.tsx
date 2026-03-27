@@ -155,7 +155,7 @@ const emptyTemplateEditForm: TemplateEditForm = { id: '', name: '', content: '',
 const emptyRuleSourceEditForm: RuleSourceEditForm = { id: '', name: '', sourceUrl: '', format: 'text', enabled: true };
 
 function formatNodeImportContentEncoding(value: NodeImportContentEncoding): string {
-  return value === 'base64_text' ? 'Base64 订阅文本' : '明文分享链接';
+  return value === 'base64_text' ? 'Base64 文本' : '明文文本';
 }
 
 function summarizeImportErrors(errors: string[]): string[] {
@@ -1294,7 +1294,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                每行一条分享链接。当前支持 `vless://`、`trojan://`、`vmess://`、`ss://`、`hysteria2://` / `hy2://`，也支持直接粘贴整段 Base64 订阅文本；如果你拿到的是订阅 URL，请使用下方远程抓取预览。
+                当前支持 `vless://`、`trojan://`、`vmess://`、`ss://`、`hysteria2://` / `hy2://` 分享链接，也支持直接粘贴整段 Base64 订阅文本、Clash / Mihomo YAML 配置、sing-box JSON 配置和 JSON 节点清单；如果你拿到的是订阅 URL，请使用下方远程抓取预览。
               </p>
               {parsedNodeImport.lineCount > 0 ? (
                 <p className="helper full-span">
@@ -1359,7 +1359,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                Worker 会以管理员身份发起一次远程抓取并解析预览，不会把该 URL 保存成远程节点源，也不会自动持续同步。
+                Worker 会以管理员身份发起一次远程抓取并解析预览。当前支持分享链接订阅、Base64 文本、Clash / Mihomo YAML、sing-box JSON 和 JSON 节点清单；但不会把该 URL 保存成远程节点源，也不会自动持续同步。
               </p>
               <div className="inline-actions full-span">
                 <button
@@ -1430,7 +1430,7 @@ export function App(): JSX.Element {
                     </div>
                   ) : (
                     <p className="helper full-span">
-                      当前没有解析出可导入节点。远程内容需要是每行一条的 `vless://`、`trojan://`、`vmess://`、`ss://`、`hysteria2://` / `hy2://` 分享链接。
+                      当前没有解析出可导入节点。请先检查远程内容是否确实包含分享链接、可识别的 `proxies` / `outbounds`，或完整的节点数组。
                     </p>
                   )}
                 </>

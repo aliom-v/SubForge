@@ -1,4 +1,6 @@
+import { parse as parseYaml } from 'yaml';
 import {
+  canonicalizeNodeProtocol,
   findUnsupportedHysteria2ShareLinkQueryKeys,
   validateNodeProtocolMetadata
 } from './node-protocol-validation';
@@ -23,6 +25,14 @@ export interface ParsedNodeImportResult {
 export type NodeImportContentEncoding = 'plain_text' | 'base64_text';
 
 const supportedShareLinkSchemes = ['vless://', 'trojan://', 'vmess://', 'ss://', 'hysteria2://', 'hy2://'] as const;
+const supportedStructuredNodeProtocols = new Set(['vless', 'trojan', 'vmess', 'ss', 'hysteria2']);
+const ignoredSingboxOutboundTypes = new Set(['selector', 'urltest', 'direct', 'block', 'dns']);
+
+interface StructuredNodeImportResult {
+  nodes: ImportedNodePayload[];
+  errors: string[];
+  lineCount: number;
+}
 
 function decodeComponent(value: string): string {
   if (!value) {
@@ -60,6 +70,105 @@ function getNonEmptyLines(value: string): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeUnknownBoolean(value: unknown): boolean | null {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return null;
+  }
+
+  return maybeBoolean(typeof value === 'string' ? value : null);
+}
+
+function readNonEmptyStringArray(value: unknown): string[] | null {
+  if (Array.isArray(value)) {
+    const strings = value.flatMap((item) => {
+      const normalized = readNonEmptyString(item);
+      return normalized ? [normalized] : [];
+    });
+
+    return strings.length > 0 ? strings : null;
+  }
+
+  const single = readNonEmptyString(value);
+  return single ? [single] : null;
+}
+
+function readRecordValue(record: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (key in record) {
+      return record[key];
+    }
+  }
+
+  return undefined;
+}
+
+function readRecordString(record: Record<string, unknown>, keys: string[]): string | null {
+  return readNonEmptyString(readRecordValue(record, keys));
+}
+
+function readRecordNumber(record: Record<string, unknown>, keys: string[]): number | null {
+  const value = readRecordValue(record, keys);
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function readRecordBoolean(record: Record<string, unknown>, keys: string[]): boolean | null {
+  return normalizeUnknownBoolean(readRecordValue(record, keys));
+}
+
+function readRecordObject(record: Record<string, unknown>, keys: string[]): Record<string, unknown> | null {
+  const value = readRecordValue(record, keys);
+  return isObjectRecord(value) ? value : null;
+}
+
+function readRecordStringArray(record: Record<string, unknown>, keys: string[]): string[] | null {
+  return readNonEmptyStringArray(readRecordValue(record, keys));
+}
+
+function setOptionalValue(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (value === undefined || value === null) {
+    return;
+  }
+
+  if (typeof value === 'string' && value.trim() === '') {
+    return;
+  }
+
+  if (Array.isArray(value) && value.length === 0) {
+    return;
+  }
+
+  target[key] = value;
+}
+
+function canonicalizeImportedProtocol(protocol: string): string {
+  const normalized = canonicalizeNodeProtocol(protocol.trim().toLowerCase());
+  return normalized === 'shadowsocks' ? 'ss' : normalized;
 }
 
 function isSupportedShareLink(line: string): boolean {
@@ -237,15 +346,15 @@ function buildUnsupportedImportHint(content: string, lines: string[]): string | 
   }
 
   if (looksLikeClashLikeConfig(lines)) {
-    return '当前内容看起来是 Clash / Mihomo 配置，不是逐行分享链接订阅；这个入口暂不支持直接解析整份 YAML 配置。';
+    return '当前内容看起来是 Clash / Mihomo 配置，但没有找到可导入的 proxies，或其中没有当前支持的协议。';
   }
 
   if (looksLikeSingboxLikeConfig(content, lines)) {
-    return '当前内容看起来是 sing-box 配置，不是逐行分享链接订阅；这个入口暂不支持直接解析整份配置。';
+    return '当前内容看起来是 sing-box 配置，但没有找到可导入的 outbounds，或其中没有当前支持的协议。';
   }
 
   if (looksLikeJsonNodeCollection(content)) {
-    return '当前内容看起来是 JSON 节点清单；请改用“远程节点源手动同步”，不要走“订阅 URL 预览导入”这个入口。';
+    return '当前内容看起来是 JSON 节点清单，但节点字段不完整，无法导入。';
   }
 
   return null;
@@ -395,6 +504,419 @@ function validateImportedNodePayload(node: ImportedNodePayload): ImportedNodePay
   }
 
   return node;
+}
+
+function buildImportedNodePayload(input: {
+  name: string;
+  protocol: string;
+  server: string;
+  port: number;
+  credentials?: Record<string, unknown> | null;
+  params?: Record<string, unknown> | null;
+  source: string;
+}): ImportedNodePayload {
+  const normalizedProtocol = canonicalizeImportedProtocol(input.protocol);
+
+  if (!supportedStructuredNodeProtocols.has(normalizedProtocol)) {
+    throw new Error(`当前暂不支持 ${input.protocol} 协议导入`);
+  }
+
+  return validateImportedNodePayload({
+    name: input.name.trim(),
+    protocol: normalizedProtocol,
+    server: input.server.trim(),
+    port: input.port,
+    credentials: input.credentials ?? null,
+    params: input.params ?? null,
+    source: input.source
+  });
+}
+
+function readClashHost(record: Record<string, unknown>): string | null {
+  const wsOptions = readRecordObject(record, ['ws-opts', 'wsOpts']);
+  const headers = wsOptions ? readRecordObject(wsOptions, ['headers']) : null;
+
+  return (
+    readRecordString(record, ['host']) ??
+    (headers ? readRecordString(headers, ['Host', 'host']) : null)
+  );
+}
+
+function readClashPath(record: Record<string, unknown>): string | null {
+  const wsOptions = readRecordObject(record, ['ws-opts', 'wsOpts']);
+  return readRecordString(record, ['path']) ?? (wsOptions ? readRecordString(wsOptions, ['path']) : null);
+}
+
+function buildCommonClashParams(record: Record<string, unknown>): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+
+  setOptionalValue(params, 'tls', readRecordBoolean(record, ['tls']));
+  setOptionalValue(params, 'udp', readRecordBoolean(record, ['udp']));
+  setOptionalValue(params, 'network', readRecordString(record, ['network', 'net']));
+  setOptionalValue(params, 'servername', readRecordString(record, ['servername', 'server-name', 'serverName', 'sni']));
+  setOptionalValue(params, 'sni', readRecordString(record, ['sni']));
+  setOptionalValue(params, 'path', readClashPath(record));
+  setOptionalValue(params, 'host', readClashHost(record));
+  setOptionalValue(params, 'alpn', readRecordStringArray(record, ['alpn']) ?? readRecordString(record, ['alpn']));
+  setOptionalValue(params, 'fp', readRecordString(record, ['client-fingerprint', 'clientFingerprint', 'fp']));
+  setOptionalValue(params, 'flow', readRecordString(record, ['flow']));
+  setOptionalValue(params, 'pbk', readRecordString(record, ['public-key', 'publicKey', 'pbk']));
+  setOptionalValue(params, 'sid', readRecordString(record, ['short-id', 'shortId', 'sid']));
+  setOptionalValue(
+    params,
+    'skip-cert-verify',
+    readRecordBoolean(record, ['skip-cert-verify', 'skipCertVerify'])
+  );
+
+  return params;
+}
+
+function parseClashProxyRecord(record: Record<string, unknown>): ImportedNodePayload {
+  const protocolRaw = readRecordString(record, ['type']);
+
+  if (!protocolRaw) {
+    throw new Error('代理缺少 type');
+  }
+
+  const protocol = canonicalizeImportedProtocol(protocolRaw);
+  const name = readRecordString(record, ['name']) ?? readRecordString(record, ['server']) ?? 'Imported Node';
+  const server = readRecordString(record, ['server']);
+  const port = readRecordNumber(record, ['port']);
+
+  if (!server || !port) {
+    throw new Error('代理缺少合法的 server / port');
+  }
+
+  const params = buildCommonClashParams(record);
+  let credentials: Record<string, unknown> | null = null;
+
+  if (protocol === 'vless' || protocol === 'vmess') {
+    const uuid = readRecordString(record, ['uuid', 'id']);
+
+    if (!uuid) {
+      throw new Error(`${protocol} 代理缺少 uuid`);
+    }
+
+    credentials = { uuid };
+
+    const alterId = readRecordNumber(record, ['alterId', 'alter-id', 'aid']);
+
+    if (protocol === 'vmess' && alterId !== null) {
+      credentials.alterId = alterId;
+    }
+  } else if (protocol === 'trojan') {
+    const password = readRecordString(record, ['password']);
+
+    if (!password) {
+      throw new Error('trojan 代理缺少 password');
+    }
+
+    credentials = { password };
+  } else if (protocol === 'ss') {
+    const cipher = readRecordString(record, ['cipher', 'method']);
+    const password = readRecordString(record, ['password']);
+
+    if (!cipher || !password) {
+      throw new Error('ss 代理缺少 cipher / password');
+    }
+
+    credentials = { cipher, password };
+    setOptionalValue(params, 'plugin', readRecordString(record, ['plugin']));
+  } else if (protocol === 'hysteria2') {
+    const password = readRecordString(record, ['password', 'auth']);
+
+    if (!password) {
+      throw new Error('hysteria2 代理缺少 password');
+    }
+
+    credentials = { password };
+    setOptionalValue(params, 'sni', readRecordString(record, ['sni']));
+    setOptionalValue(params, 'obfs', readRecordString(record, ['obfs']));
+    setOptionalValue(params, 'obfs-password', readRecordString(record, ['obfs-password', 'obfsPassword']));
+    setOptionalValue(params, 'insecure', readRecordBoolean(record, ['insecure']));
+    setOptionalValue(params, 'pinSHA256', readRecordStringArray(record, ['pinSHA256']));
+    setOptionalValue(params, 'alpn', readRecordStringArray(record, ['alpn']) ?? readRecordString(record, ['alpn']));
+  }
+
+  return buildImportedNodePayload({
+    name,
+    protocol,
+    server,
+    port,
+    credentials,
+    params: Object.keys(params).length > 0 ? params : null,
+    source: JSON.stringify(record)
+  });
+}
+
+function parseGenericNodeRecord(record: Record<string, unknown>): ImportedNodePayload {
+  const protocolRaw = readRecordString(record, ['protocol', 'type']);
+
+  if (!protocolRaw) {
+    throw new Error('节点缺少 protocol');
+  }
+
+  const protocol = canonicalizeImportedProtocol(protocolRaw);
+  const name = readRecordString(record, ['name', 'tag']) ?? readRecordString(record, ['server']) ?? 'Imported Node';
+  const server = readRecordString(record, ['server', 'address']);
+  const port = readRecordNumber(record, ['port', 'server_port']);
+
+  if (!server || !port) {
+    throw new Error('节点缺少合法的 server / port');
+  }
+
+  const credentials = readRecordObject(record, ['credentials']) ?? null;
+  const params = readRecordObject(record, ['params']) ?? null;
+
+  return buildImportedNodePayload({
+    name,
+    protocol,
+    server,
+    port,
+    credentials,
+    params,
+    source: JSON.stringify(record)
+  });
+}
+
+function readSingboxTransportHost(transport: Record<string, unknown>): string | null {
+  const headers = readRecordObject(transport, ['headers']);
+
+  return (
+    readRecordString(transport, ['host']) ??
+    (headers ? readRecordString(headers, ['Host', 'host']) : null)
+  );
+}
+
+function buildCommonSingboxParams(record: Record<string, unknown>): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+  const tls = readRecordObject(record, ['tls']);
+  const transport = readRecordObject(record, ['transport']);
+
+  if (tls) {
+    setOptionalValue(params, 'tls', readRecordBoolean(tls, ['enabled']));
+    setOptionalValue(params, 'servername', readRecordString(tls, ['server_name', 'serverName']));
+    setOptionalValue(params, 'sni', readRecordString(tls, ['server_name', 'serverName']));
+    setOptionalValue(params, 'alpn', readRecordStringArray(tls, ['alpn']) ?? readRecordString(tls, ['alpn']));
+    setOptionalValue(params, 'insecure', readRecordBoolean(tls, ['insecure']));
+
+    const utls = readRecordObject(tls, ['utls']);
+    const reality = readRecordObject(tls, ['reality']);
+
+    if (utls) {
+      setOptionalValue(params, 'fp', readRecordString(utls, ['fingerprint']));
+    }
+
+    if (reality) {
+      setOptionalValue(params, 'pbk', readRecordString(reality, ['public_key', 'publicKey']));
+      setOptionalValue(params, 'sid', readRecordString(reality, ['short_id', 'shortId']));
+    }
+  }
+
+  if (transport) {
+    setOptionalValue(params, 'network', readRecordString(transport, ['type']));
+    setOptionalValue(params, 'path', readRecordString(transport, ['path']));
+    setOptionalValue(params, 'host', readSingboxTransportHost(transport));
+    setOptionalValue(params, 'service_name', readRecordString(transport, ['service_name', 'serviceName']));
+  }
+
+  return params;
+}
+
+function parseSingboxOutboundRecord(record: Record<string, unknown>): ImportedNodePayload | null {
+  const typeRaw = readRecordString(record, ['type']);
+
+  if (!typeRaw) {
+    throw new Error('outbound 缺少 type');
+  }
+
+  const type = canonicalizeImportedProtocol(typeRaw);
+
+  if (ignoredSingboxOutboundTypes.has(type)) {
+    return null;
+  }
+
+  const name = readRecordString(record, ['tag', 'name']) ?? readRecordString(record, ['server']) ?? 'Imported Node';
+  const server = readRecordString(record, ['server']);
+  const port = readRecordNumber(record, ['server_port', 'port']);
+
+  if (!server || !port) {
+    throw new Error('outbound 缺少合法的 server / server_port');
+  }
+
+  const params = buildCommonSingboxParams(record);
+  let credentials: Record<string, unknown> | null = null;
+
+  if (type === 'vless' || type === 'vmess') {
+    const uuid = readRecordString(record, ['uuid']);
+
+    if (!uuid) {
+      throw new Error(`${type} outbound 缺少 uuid`);
+    }
+
+    credentials = { uuid };
+    const alterId = readRecordNumber(record, ['alter_id', 'alterId']);
+
+    if (type === 'vmess' && alterId !== null) {
+      credentials.alterId = alterId;
+    }
+
+    setOptionalValue(params, 'flow', readRecordString(record, ['flow']));
+  } else if (type === 'trojan') {
+    const password = readRecordString(record, ['password']);
+
+    if (!password) {
+      throw new Error('trojan outbound 缺少 password');
+    }
+
+    credentials = { password };
+  } else if (type === 'ss') {
+    const cipher = readRecordString(record, ['method', 'cipher']);
+    const password = readRecordString(record, ['password']);
+
+    if (!cipher || !password) {
+      throw new Error('shadowsocks outbound 缺少 method / password');
+    }
+
+    credentials = { cipher, password };
+    setOptionalValue(params, 'plugin', readRecordString(record, ['plugin']));
+  } else if (type === 'hysteria2') {
+    const password = readRecordString(record, ['password']);
+
+    if (!password) {
+      throw new Error('hysteria2 outbound 缺少 password');
+    }
+
+    credentials = { password };
+    const obfs = readRecordObject(record, ['obfs']);
+    if (obfs) {
+      setOptionalValue(params, 'obfs', readRecordString(obfs, ['type']));
+      setOptionalValue(params, 'obfs-password', readRecordString(obfs, ['password']));
+    }
+  }
+
+  return buildImportedNodePayload({
+    name,
+    protocol: type,
+    server,
+    port,
+    credentials,
+    params: Object.keys(params).length > 0 ? params : null,
+    source: JSON.stringify(record)
+  });
+}
+
+function parseStructuredNodeList(
+  items: unknown[],
+  label: string,
+  parser: (record: Record<string, unknown>) => ImportedNodePayload | null
+): StructuredNodeImportResult {
+  const nodes: ImportedNodePayload[] = [];
+  const errors: string[] = [];
+
+  for (const [index, item] of items.entries()) {
+    if (!isObjectRecord(item)) {
+      errors.push(`第 ${index + 1} 个${label}必须是对象`);
+      continue;
+    }
+
+    try {
+      const parsed = parser(item);
+
+      if (parsed) {
+        nodes.push(parsed);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知解析错误';
+      errors.push(`第 ${index + 1} 个${label}：${message}`);
+    }
+  }
+
+  return {
+    nodes,
+    errors,
+    lineCount: items.length
+  };
+}
+
+function tryParseJsonNodeImportContent(content: string): StructuredNodeImportResult | null {
+  const trimmed = content.trim();
+
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return null;
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (Array.isArray(parsed)) {
+    return parseStructuredNodeList(parsed, '个节点', parseGenericNodeRecord);
+  }
+
+  if (!isObjectRecord(parsed)) {
+    return null;
+  }
+
+  if (Array.isArray(parsed.outbounds)) {
+    const result = parseStructuredNodeList(parsed.outbounds, '个 outbound', parseSingboxOutboundRecord);
+
+    if (result.nodes.length === 0 && result.errors.length === 0) {
+      result.errors.push('当前 sing-box 配置里没有可导入的代理 outbound。');
+    }
+
+    return result;
+  }
+
+  if (Array.isArray(parsed.proxies)) {
+    return parseStructuredNodeList(parsed.proxies, '个代理', parseClashProxyRecord);
+  }
+
+  if (Array.isArray(parsed.nodes)) {
+    return parseStructuredNodeList(parsed.nodes, '个节点', parseGenericNodeRecord);
+  }
+
+  if (Array.isArray(parsed.servers)) {
+    return parseStructuredNodeList(parsed.servers, '个节点', parseGenericNodeRecord);
+  }
+
+  return null;
+}
+
+function tryParseYamlNodeImportContent(content: string): StructuredNodeImportResult | null {
+  let parsed: unknown;
+
+  try {
+    parsed = parseYaml(content) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (Array.isArray(parsed)) {
+    return parseStructuredNodeList(parsed, '个代理', parseClashProxyRecord);
+  }
+
+  if (!isObjectRecord(parsed)) {
+    return null;
+  }
+
+  if (Array.isArray(parsed.proxies)) {
+    return parseStructuredNodeList(parsed.proxies, '个代理', parseClashProxyRecord);
+  }
+
+  if (Array.isArray(parsed.nodes)) {
+    return parseStructuredNodeList(parsed.nodes, '个节点', parseGenericNodeRecord);
+  }
+
+  if (Array.isArray(parsed.servers)) {
+    return parseStructuredNodeList(parsed.servers, '个节点', parseGenericNodeRecord);
+  }
+
+  return null;
 }
 
 function parseSsUserInfo(value: string): { cipher: string; password: string } {
@@ -668,15 +1190,30 @@ export function parseNodeShareLink(raw: string): ImportedNodePayload {
 
 export function parseNodeImportText(value: string): ParsedNodeImportResult {
   const normalized = normalizeNodeImportLines(value);
-  const unsupportedImportHint = buildUnsupportedImportHint(normalized.contentForHint, normalized.lines);
 
-  if (normalized.lines.length > 0 && !normalized.hasSupportedLinks && unsupportedImportHint) {
-    return {
-      nodes: [],
-      errors: [unsupportedImportHint],
-      lineCount: normalized.lines.length,
-      contentEncoding: normalized.contentEncoding
-    };
+  if (!normalized.hasSupportedLinks) {
+    const structuredResult =
+      tryParseJsonNodeImportContent(normalized.contentForHint) ?? tryParseYamlNodeImportContent(normalized.contentForHint);
+
+    if (structuredResult) {
+      return {
+        nodes: structuredResult.nodes,
+        errors: structuredResult.errors,
+        lineCount: structuredResult.lineCount,
+        contentEncoding: normalized.contentEncoding
+      };
+    }
+
+    const unsupportedImportHint = buildUnsupportedImportHint(normalized.contentForHint, normalized.lines);
+
+    if (normalized.lines.length > 0 && unsupportedImportHint) {
+      return {
+        nodes: [],
+        errors: [unsupportedImportHint],
+        lineCount: normalized.lines.length,
+        contentEncoding: normalized.contentEncoding
+      };
+    }
   }
 
   const nodes: ImportedNodePayload[] = [];

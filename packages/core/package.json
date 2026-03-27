@@ -10,7 +10,8 @@
     "typecheck": "node ../../node_modules/typescript/bin/tsc --noEmit"
   },
   "dependencies": {
-    "@subforge/shared": "0.1.0"
+    "@subforge/shared": "0.1.0",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
