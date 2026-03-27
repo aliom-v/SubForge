@@ -68,7 +68,13 @@ import {
   summarizeNodeMetadataParts,
   type NodeProtocolGuideState
 } from './node-metadata';
-import { parseNodeImportText, type ImportedNodePayload, type NodeImportContentEncoding } from './node-import';
+import {
+  parseImportedConfig,
+  parseNodeImportText,
+  type ImportedConfigPayload,
+  type ImportedNodePayload,
+  type NodeImportContentEncoding
+} from './node-import';
 import { canonicalizeNodeProtocol, validateNodeProtocolMetadata } from './node-protocol-validation';
 
 const metadata = getServiceMetadata();
@@ -198,6 +204,23 @@ const nodeImportPlaceholder = `[
   }
 ]`;
 
+const fullConfigImportPlaceholder = `# Mihomo / Clash YAML
+proxies:
+  - name: HK Relay
+    type: vless
+    server: hk.example.com
+    port: 443
+    uuid: 11111111-1111-1111-1111-111111111111
+    tls: true
+    dialer-proxy: Transit Node
+proxy-groups:
+  - name: Auto
+    type: select
+    proxies:
+      - HK Relay
+rules:
+  - MATCH,DIRECT`;
+
 export function App(): JSX.Element {
   const [token, setToken] = useState<string>(() => localStorage.getItem(sessionStorageKey) ?? '');
   const [admin, setAdmin] = useState<AdminSession | null>(null);
@@ -218,6 +241,7 @@ export function App(): JSX.Element {
   const [userForm, setUserForm] = useState({ name: '', remark: '', expiresAt: '' });
   const [nodeForm, setNodeForm] = useState<NodeDraftForm>(emptyNodeDraftForm);
   const [nodeImportText, setNodeImportText] = useState('');
+  const [configImportText, setConfigImportText] = useState('');
   const [nodeImportSourceUrl, setNodeImportSourceUrl] = useState('');
   const [remoteNodeImportPreview, setRemoteNodeImportPreview] = useState<NodeImportPreviewPayload | null>(null);
   const [remoteNodeSourceUrl, setRemoteNodeSourceUrl] = useState('');
@@ -252,6 +276,7 @@ export function App(): JSX.Element {
   const nodeCreateExamples = useMemo(() => getNodeMetadataExamples(nodeForm.protocol), [nodeForm.protocol]);
   const nodeEditExamples = useMemo(() => getNodeMetadataExamples(nodeEditForm.protocol), [nodeEditForm.protocol]);
   const parsedNodeImport = useMemo(() => parseNodeImportText(nodeImportText), [nodeImportText]);
+  const parsedConfigImport = useMemo(() => parseImportedConfig(configImportText), [configImportText]);
   const summarizedParsedNodeImportErrors = useMemo(
     () => summarizeImportErrors(parsedNodeImport.errors),
     [parsedNodeImport.errors]
@@ -262,6 +287,9 @@ export function App(): JSX.Element {
     () => summarizeImportErrors(remoteNodeImportPreview?.errors ?? []),
     [remoteNodeImportPreview?.errors]
   );
+  const nodeChainSummaries = useMemo(() => buildNodeChainSummaries(resources.nodes), [resources.nodes]);
+  const createFormUpstreamProxy = useMemo(() => readNodeUpstreamProxyFromText(nodeForm.paramsText), [nodeForm.paramsText]);
+  const editFormUpstreamProxy = useMemo(() => readNodeUpstreamProxyFromText(nodeEditForm.paramsText), [nodeEditForm.paramsText]);
 
   function reportValidationError(messageText: string): void {
     setMessage('');
@@ -635,6 +663,42 @@ export function App(): JSX.Element {
     setMessage(`已将 ${importedNode.name} 载入创建表单`);
   }
 
+  function loadImportedTemplateToCreateForm(importedConfig: ImportedConfigPayload): void {
+    setTemplateForm({
+      name: importedConfig.suggestedTemplateName,
+      targetType: importedConfig.targetType,
+      content: importedConfig.templateContent,
+      isDefault: false
+    });
+    setActiveTab('templates');
+    setError('');
+    setMessage(`已将 ${importedConfig.suggestedTemplateName} 载入模板创建表单`);
+  }
+
+  function updateCreateFormUpstreamProxy(upstreamProxy: string): void {
+    const result = applyUpstreamProxyToParamsText(nodeForm.paramsText, upstreamProxy);
+
+    if (result.error) {
+      reportValidationError(result.error);
+      return;
+    }
+
+    setNodeForm((current) => ({ ...current, paramsText: result.value }));
+    setError('');
+  }
+
+  function updateEditFormUpstreamProxy(upstreamProxy: string): void {
+    const result = applyUpstreamProxyToParamsText(nodeEditForm.paramsText, upstreamProxy);
+
+    if (result.error) {
+      reportValidationError(result.error);
+      return;
+    }
+
+    setNodeEditForm((current) => ({ ...current, paramsText: result.value }));
+    setError('');
+  }
+
   async function createImportedNodes(input: {
     importedNodes: ImportedNodePayload[];
     errorCount: number;
@@ -691,6 +755,49 @@ export function App(): JSX.Element {
       errorCount: parsedNodeImport.errors.length,
       ...(parsedNodeImport.errors.length === 0 ? { onSuccess: () => setNodeImportText('') } : {})
     });
+  }
+
+  async function handleImportConfigNodes(): Promise<void> {
+    if (!token) return;
+
+    if (!parsedConfigImport) {
+      reportValidationError('请先粘贴可识别的 Mihomo / Clash YAML 或 sing-box JSON 配置');
+      return;
+    }
+
+    await createImportedNodes({
+      importedNodes: parsedConfigImport.nodes,
+      errorCount: parsedConfigImport.errors.length
+    });
+  }
+
+  async function handleCreateImportedTemplate(): Promise<void> {
+    if (!token) return;
+
+    if (!parsedConfigImport) {
+      reportValidationError('请先粘贴可识别的 Mihomo / Clash YAML 或 sing-box JSON 配置');
+      return;
+    }
+
+    const validationError = validateTemplateDraft({
+      name: parsedConfigImport.suggestedTemplateName,
+      content: parsedConfigImport.templateContent,
+      version: 1
+    });
+
+    if (validationError) {
+      reportValidationError(validationError);
+      return;
+    }
+
+    await withAction(async () => {
+      await createTemplate(token, {
+        name: parsedConfigImport.suggestedTemplateName,
+        targetType: parsedConfigImport.targetType,
+        content: parsedConfigImport.templateContent,
+        isDefault: false
+      });
+    }, `已根据完整配置创建模板：${parsedConfigImport.suggestedTemplateName}`);
   }
 
   async function handlePreviewNodeImportFromUrl(): Promise<void> {
@@ -1255,10 +1362,10 @@ export function App(): JSX.Element {
           <article className="panel">
             <h2>节点录入说明</h2>
             <ul className="overview-list">
-              <li>当前支持手动录入、`vless://` / `trojan://` / `vmess://` / `ss://` / `hysteria2://` 分享链接导入，以及订阅 URL 远程抓取预览导入。</li>
+              <li>当前支持手动录入、`vless://` / `trojan://` / `vmess://` / `ss://` / `ssr://` / `tuic://` / `hysteria2://` 分享链接导入，以及订阅 URL 远程抓取预览导入。</li>
               <li>节点创建后还需要到“用户”页完成绑定，否则订阅不会包含该节点。</li>
               <li>要生成真实可用节点，通常还需要补齐 `credentials` 与 `params`。</li>
-              <li>常见协议 `vless` / `trojan` / `vmess` / `ss` / `hysteria2` 已提供结构化向导；更复杂变体继续使用原始 JSON。</li>
+              <li>常见协议 `vless` / `trojan` / `vmess` / `ss` / `ssr` / `tuic` / `hysteria2` 已提供结构化向导；更复杂变体继续使用原始 JSON。</li>
               <li>表单里的 JSON 留空或填写 `null` 表示不写入或清空 metadata。</li>
             </ul>
             <div className="metadata-grid">
@@ -1289,12 +1396,14 @@ export function App(): JSX.Element {
                     'trojan://password@host:443?sni=sub.example.com#JP%20Trojan',
                     'vmess://eyJhZGQiOiJ2bWVzcy5leGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjExMTExMTExLTExMTEtMTExMS0xMTExLTExMTExMTExMTExMSIsImFpZCI6IjAiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsInBzIjoiVkdNZXNzIn0=',
                     'ss://YWVzLTI1Ni1nY206cGFzc3cwcmQ=@ss.example.com:8388#SS%20Node',
+                    'ssr://c3NyLmV4YW1wbGUuY29tOjQ0MzphdXRoX2FlczEyOF9tZDU6YWVzLTI1Ni1jZmI6dGxzMS4yX3RpY2tldF9hdXRoOmNtVndiR0ZqWlMxbg==?remarks=U1NSJTIwTm9kZQ',
+                    'tuic://11111111-1111-1111-1111-111111111111:replace-me@tuic.example.com:443?sni=sub.example.com&congestion_control=bbr#TUIC%20Node',
                     'hysteria2://password@hy2.example.com:443?sni=sub.example.com&obfs=salamander&obfs-password=replace-me#HY2%20Node'
                   ].join('\n')}
                 />
               </Field>
               <p className="helper full-span">
-                当前支持 `vless://`、`trojan://`、`vmess://`、`ss://`、`hysteria2://` / `hy2://` 分享链接，也支持直接粘贴整段 Base64 订阅文本、Clash / Mihomo YAML 配置、sing-box JSON 配置和 JSON 节点清单；如果你拿到的是订阅 URL，请使用下方远程抓取预览。
+                当前支持 `vless://`、`trojan://`、`vmess://`、`ss://`、`ssr://`、`tuic://`、`hysteria2://` / `hy2://` 分享链接，也支持直接粘贴整段 Base64 订阅文本、Clash / Mihomo YAML 配置、sing-box JSON 配置和 JSON 节点清单；如果你拿到的是订阅 URL，请使用下方远程抓取预览。
               </p>
               {parsedNodeImport.lineCount > 0 ? (
                 <p className="helper full-span">
@@ -1438,6 +1547,118 @@ export function App(): JSX.Element {
             </div>
           </article>
 
+          <article className="panel full-width">
+            <h2>导入完整配置</h2>
+            <div className="form-grid">
+              <Field label="Mihomo / Clash YAML 或 sing-box JSON" full>
+                <textarea
+                  value={configImportText}
+                  onChange={(event) => setConfigImportText(event.target.value)}
+                  rows={16}
+                  placeholder={fullConfigImportPlaceholder}
+                />
+              </Field>
+              <p className="helper full-span">
+                这里不是只提取节点。识别成功后，会同时给出节点清单和一个可创建模板的配置骨架：Mihomo 会保留 `proxy-groups` / `rules`，sing-box 会保留静态 `outbounds` / `route.rules`，动态节点部分改成 SubForge 模板插槽。
+              </p>
+              {configImportText.trim() && !parsedConfigImport ? (
+                <p className="helper full-span">
+                  当前还没有识别为可导入的完整配置。请确认内容是完整的 Clash / Mihomo YAML，或 sing-box JSON。
+                </p>
+              ) : null}
+              {parsedConfigImport ? (
+                <>
+                  {(() => {
+                    const firstConfigImportedNode = parsedConfigImport.nodes[0];
+
+                    return (
+                      <>
+                  <div className="inline-actions full-span">
+                    <button
+                      type="button"
+                      disabled={loading || parsedConfigImport.nodes.length === 0}
+                      onClick={() => void handleImportConfigNodes()}
+                    >
+                      批量创建 {parsedConfigImport.nodes.length} 个节点
+                    </button>
+                    <button type="button" disabled={loading} onClick={() => void handleCreateImportedTemplate()}>
+                      创建 {parsedConfigImport.targetType} 模板
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => loadImportedTemplateToCreateForm(parsedConfigImport)}
+                    >
+                      载入模板表单
+                    </button>
+                    {firstConfigImportedNode ? (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => loadImportedNodeToCreateForm(firstConfigImportedNode)}
+                      >
+                        载入首个节点到创建表单
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="metadata-grid full-span">
+                    <div className="result-card">
+                      <strong>导入摘要</strong>
+                      <span>格式：{parsedConfigImport.format}</span>
+                      <span>目标：{parsedConfigImport.targetType}</span>
+                      <span>建议模板名：{parsedConfigImport.suggestedTemplateName}</span>
+                      <span>节点：{parsedConfigImport.nodes.length}</span>
+                    </div>
+                    <div className="result-card">
+                      <strong>导入诊断</strong>
+                      <span>警告：{parsedConfigImport.warnings.length}</span>
+                      <span>节点解析错误：{parsedConfigImport.errors.length}</span>
+                      <span>链式代理：已自动读取 `dialer-proxy` / `detour` 为 `params.upstreamProxy`</span>
+                    </div>
+                  </div>
+                  {parsedConfigImport.warnings.length > 0 ? (
+                    <div className="result-card full-span">
+                      <strong>导入警告</strong>
+                      <ul className="overview-list">
+                        {parsedConfigImport.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {parsedConfigImport.errors.length > 0 ? (
+                    <div className="import-errors full-span">
+                      <strong>节点解析错误</strong>
+                      <ul className="overview-list">
+                        {parsedConfigImport.errors.map((errorText) => <li key={errorText}>{errorText}</li>)}
+                      </ul>
+                    </div>
+                  ) : null}
+                  <div className="result-card full-span">
+                    <strong>模板预览</strong>
+                    <pre>{parsedConfigImport.templateContent}</pre>
+                  </div>
+                  {parsedConfigImport.nodes.length > 0 ? (
+                    <div className="full-span">
+                      <ResourceTable
+                        columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
+                        rows={parsedConfigImport.nodes.map((node, index) => [
+                          node.name,
+                          node.protocol,
+                          node.server,
+                          node.port,
+                          summarizeNodeMetadataParts(node.credentials, node.params),
+                          <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
+                        ])}
+                      />
+                    </div>
+                  ) : null}
+                      </>
+                    );
+                  })()}
+                </>
+              ) : null}
+            </div>
+          </article>
+
           <article className="panel">
             <h2>创建节点</h2>
             <form className="form-grid" onSubmit={handleCreateNode}>
@@ -1460,6 +1681,14 @@ export function App(): JSX.Element {
                   setNodeForm((current) => ({ ...current, credentialsText, paramsText }))
                 }
               />
+              <Field label="上游代理">
+                <select value={createFormUpstreamProxy} onChange={(event) => updateCreateFormUpstreamProxy(event.target.value)}>
+                  <option value="">直接连接</option>
+                  {resources.nodes
+                    .filter((node) => node.name !== nodeForm.name.trim())
+                    .map((node) => <option key={node.id} value={node.name}>{node.name} / {node.protocol}</option>)}
+                </select>
+              </Field>
               <Field label="凭据 JSON" full>
                 <textarea
                   value={nodeForm.credentialsText}
@@ -1477,7 +1706,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                可直接手动录入，也可先用上方分享链接导入。`ss` / `hysteria2` 已支持常见字段回填；复杂变体和高级参数仍建议继续核对 JSON，再完成用户绑定。
+                可直接手动录入，也可先用上方导入入口回填。上游代理会写入 `params.upstreamProxy`，渲染到 Mihomo 时会映射为 `dialer-proxy`，渲染到 sing-box 时会映射为 `detour`。
               </p>
               <button type="submit" disabled={loading}>创建节点</button>
             </form>
@@ -1569,6 +1798,14 @@ export function App(): JSX.Element {
                   setNodeEditForm((current) => ({ ...current, credentialsText, paramsText }))
                 }
               />
+              <Field label="上游代理">
+                <select value={editFormUpstreamProxy} onChange={(event) => updateEditFormUpstreamProxy(event.target.value)}>
+                  <option value="">直接连接</option>
+                  {resources.nodes
+                    .filter((node) => node.id !== nodeEditForm.id)
+                    .map((node) => <option key={node.id} value={node.name}>{node.name} / {node.protocol}</option>)}
+                </select>
+              </Field>
               <Field label="凭据 JSON" full>
                 <textarea
                   value={nodeEditForm.credentialsText}
@@ -1587,10 +1824,26 @@ export function App(): JSX.Element {
               </Field>
               <label className="checkbox-row"><input type="checkbox" checked={nodeEditForm.enabled} onChange={(event) => setNodeEditForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用节点</span></label>
               <p className="helper full-span">
-                这里会回显当前 metadata。留空或填写 `null` 表示清空已有的 `credentials` / `params`。
+                这里会回显当前 metadata。留空或填写 `null` 表示清空已有的 `credentials` / `params`；保存后链式代理拓扑会在下方重新计算。
               </p>
               <button type="submit" disabled={loading || !nodeEditForm.id}>保存节点</button>
             </form>
+          </article>
+
+          <article className="panel full-width">
+            <h2>链式代理拓扑</h2>
+            <p className="helper">
+              这里根据每个节点的 `params.upstreamProxy` 计算链路，方便检查 `dialer-proxy` / `detour` 是否连对了。如果节点名称重复、上游缺失、上游被禁用或形成环路，也会直接标出来。
+            </p>
+            <ResourceTable
+              columns={['节点', '上游代理', '链路', '状态']}
+              rows={nodeChainSummaries.map((item) => [
+                item.nodeName,
+                item.upstreamProxy ?? 'direct',
+                item.chain,
+                item.issue ?? '正常'
+              ])}
+            />
           </article>
 
           <datalist id="node-protocol-options">
@@ -1835,6 +2088,111 @@ export function App(): JSX.Element {
   );
 }
 
+
+interface NodeChainSummary {
+  nodeId: string;
+  nodeName: string;
+  upstreamProxy: string | null;
+  chain: string;
+  issue: string | null;
+}
+
+function readNodeUpstreamProxyFromRecord(params?: Record<string, unknown> | null): string | null {
+  const value = params?.upstreamProxy;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readNodeUpstreamProxyFromText(paramsText: string): string {
+  const parsed = parseNodeMetadataText(paramsText, 'params');
+  return parsed.error ? '' : readNodeUpstreamProxyFromRecord(parsed.value) ?? '';
+}
+
+function applyUpstreamProxyToParamsText(
+  paramsText: string,
+  upstreamProxy: string
+): { value: string; error?: string } {
+  const parsed = parseNodeMetadataText(paramsText, 'params');
+
+  if (parsed.error) {
+    return {
+      value: paramsText,
+      error: '当前参数 JSON 不是合法对象，暂时无法通过可视化方式设置上游代理'
+    };
+  }
+
+  const nextParams = { ...(parsed.value ?? {}) };
+
+  if (upstreamProxy.trim()) {
+    nextParams.upstreamProxy = upstreamProxy.trim();
+  } else {
+    delete nextParams.upstreamProxy;
+  }
+
+  return {
+    value: Object.keys(nextParams).length > 0 ? JSON.stringify(nextParams, null, 2) : ''
+  };
+}
+
+function buildNodeChainSummaries(nodes: NodeRecord[]): NodeChainSummary[] {
+  const nodesByName = new Map<string, NodeRecord[]>();
+
+  for (const node of nodes) {
+    const items = nodesByName.get(node.name) ?? [];
+    items.push(node);
+    nodesByName.set(node.name, items);
+  }
+
+  return nodes.map((node) => {
+    const chain = [node.name];
+    const visitedIds = new Set([node.id]);
+    const upstreamProxy = readNodeUpstreamProxyFromRecord(node.params);
+    let currentUpstream = upstreamProxy;
+    let issue: string | null = null;
+
+    while (currentUpstream) {
+      chain.push(currentUpstream);
+      const matches = nodesByName.get(currentUpstream) ?? [];
+
+      if (matches.length === 0) {
+        issue = `缺少上游节点：${currentUpstream}`;
+        break;
+      }
+
+      if (matches.length > 1) {
+        issue = `上游节点名称重复：${currentUpstream}`;
+        break;
+      }
+
+      const [upstreamNode] = matches;
+
+      if (!upstreamNode) {
+        issue = `缺少上游节点：${currentUpstream}`;
+        break;
+      }
+
+      if (visitedIds.has(upstreamNode.id)) {
+        issue = `检测到循环链路：${currentUpstream}`;
+        break;
+      }
+
+      if (!upstreamNode.enabled) {
+        issue = `上游节点已禁用：${currentUpstream}`;
+        break;
+      }
+
+      visitedIds.add(upstreamNode.id);
+      currentUpstream = readNodeUpstreamProxyFromRecord(upstreamNode.params);
+    }
+
+    return {
+      nodeId: node.id,
+      nodeName: node.name,
+      upstreamProxy,
+      chain: chain.join(' -> '),
+      issue
+    };
+  });
+}
 
 function isValidHttpUrl(value: string): boolean {
   try {
@@ -2445,7 +2803,7 @@ function NodeProtocolAssistant(props: {
           <span className="assistant-badge">custom</span>
         </div>
         <p className="helper">
-          当前协议暂无结构化字段向导，请继续使用下方 JSON 字段。常见的 `vless`、`trojan`、`vmess`、`ss`、`hysteria2`
+          当前协议暂无结构化字段向导，请继续使用下方 JSON 字段。常见的 `vless`、`trojan`、`vmess`、`ss`、`ssr`、`tuic`、`hysteria2`
           已支持自动回填。
         </p>
       </div>
@@ -2464,6 +2822,16 @@ function NodeProtocolAssistant(props: {
       {preset === 'hysteria2' ? (
         <p className="helper">
           `hysteria2` 向导当前优先覆盖 `password`、`sni`、`obfs`、`obfs-password`、`alpn`、`insecure`；多端口和更复杂组合仍请直接核对 JSON。
+        </p>
+      ) : null}
+      {preset === 'ssr' ? (
+        <p className="helper">
+          `ssr` 向导会回填 `cipher`、`password`、`protocol`、`obfs` 以及常见 `protocol-param` / `obfs-param`。
+        </p>
+      ) : null}
+      {preset === 'tuic' ? (
+        <p className="helper">
+          `tuic` 向导会回填 `uuid`、`password`、`sni`、`alpn`、拥塞控制、UDP relay、0-RTT 等常见字段；更少见的传输细节仍可继续编辑 JSON。
         </p>
       ) : null}
       {parsedCredentials.error || parsedParams.error ? (
@@ -2495,6 +2863,127 @@ function NodeProtocolAssistant(props: {
                 placeholder="v2ray-plugin"
               />
             </Field>
+          </>
+        ) : preset === 'ssr' ? (
+          <>
+            <Field label="Cipher">
+              <input
+                value={guideState.primaryCredential}
+                onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
+                placeholder="aes-256-cfb"
+              />
+            </Field>
+            <Field label="Password">
+              <input
+                value={guideState.secondaryCredential}
+                onChange={(event) => updateGuideState({ secondaryCredential: event.target.value })}
+                placeholder="replace-me"
+              />
+            </Field>
+            <Field label="Protocol">
+              <input
+                value={guideState.protocolName}
+                onChange={(event) => updateGuideState({ protocolName: event.target.value })}
+                placeholder="auth_aes128_md5"
+              />
+            </Field>
+            <Field label="Obfs">
+              <input
+                value={guideState.obfs}
+                onChange={(event) => updateGuideState({ obfs: event.target.value })}
+                placeholder="tls1.2_ticket_auth"
+              />
+            </Field>
+            <Field label="Protocol Param">
+              <input
+                value={guideState.protocolParam}
+                onChange={(event) => updateGuideState({ protocolParam: event.target.value })}
+                placeholder="100:replace-me"
+              />
+            </Field>
+            <Field label="Obfs Param">
+              <input
+                value={guideState.obfsParam}
+                onChange={(event) => updateGuideState({ obfsParam: event.target.value })}
+                placeholder="sub.example.com"
+              />
+            </Field>
+          </>
+        ) : preset === 'tuic' ? (
+          <>
+            <Field label="UUID">
+              <input
+                value={guideState.primaryCredential}
+                onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
+                placeholder="11111111-1111-1111-1111-111111111111"
+              />
+            </Field>
+            <Field label="Password">
+              <input
+                value={guideState.secondaryCredential}
+                onChange={(event) => updateGuideState({ secondaryCredential: event.target.value })}
+                placeholder="replace-me"
+              />
+            </Field>
+            <Field label="SNI">
+              <input
+                value={guideState.sni}
+                onChange={(event) => updateGuideState({ sni: event.target.value })}
+                placeholder="sub.example.com"
+              />
+            </Field>
+            <Field label="ALPN">
+              <input
+                value={guideState.alpn}
+                onChange={(event) => updateGuideState({ alpn: event.target.value })}
+                placeholder="h3"
+              />
+            </Field>
+            <Field label="Congestion">
+              <input
+                value={guideState.congestionController}
+                onChange={(event) => updateGuideState({ congestionController: event.target.value })}
+                placeholder="bbr"
+              />
+            </Field>
+            <Field label="UDP Relay">
+              <input
+                value={guideState.udpRelayMode}
+                onChange={(event) => updateGuideState({ udpRelayMode: event.target.value })}
+                placeholder="native"
+              />
+            </Field>
+            <Field label="Heartbeat">
+              <input
+                value={guideState.heartbeat}
+                onChange={(event) => updateGuideState({ heartbeat: event.target.value })}
+                placeholder="10s"
+              />
+            </Field>
+            <Field label="Request Timeout">
+              <input
+                type="number"
+                value={guideState.requestTimeout}
+                onChange={(event) => updateGuideState({ requestTimeout: event.target.value })}
+                placeholder="8000"
+              />
+            </Field>
+            <label className="checkbox-row assistant-checkbox">
+              <input
+                type="checkbox"
+                checked={guideState.disableSni}
+                onChange={(event) => updateGuideState({ disableSni: event.target.checked })}
+              />
+              <span>Disable SNI</span>
+            </label>
+            <label className="checkbox-row assistant-checkbox">
+              <input
+                type="checkbox"
+                checked={guideState.reduceRtt}
+                onChange={(event) => updateGuideState({ reduceRtt: event.target.checked })}
+              />
+              <span>启用 0-RTT</span>
+            </label>
           </>
         ) : preset === 'hysteria2' ? (
           <>
@@ -2604,7 +3093,7 @@ function NodeProtocolAssistant(props: {
             />
           </Field>
         ) : null}
-        {preset !== 'ss' ? (
+        {(preset === 'trojan' || preset === 'vless' || preset === 'vmess') ? (
           <label className="checkbox-row assistant-checkbox">
             <input
               type="checkbox"

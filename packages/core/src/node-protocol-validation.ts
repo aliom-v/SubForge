@@ -37,7 +37,20 @@ function isStringArray(value: unknown): value is string[] {
 
 export function canonicalizeNodeProtocol(protocol: string): string {
   const normalized = protocol.trim().toLowerCase();
-  return normalized === 'hy2' ? 'hysteria2' : normalized;
+
+  if (normalized === 'hy2') {
+    return 'hysteria2';
+  }
+
+  if (normalized === 'shadowsocks') {
+    return 'ss';
+  }
+
+  if (normalized === 'shadowsocksr') {
+    return 'ssr';
+  }
+
+  return normalized;
 }
 
 export function findUnsupportedHysteria2ShareLinkQueryKeys(url: URL): string[] {
@@ -56,6 +69,10 @@ export function validateNodeProtocolMetadata(input: NodeProtocolMetadataValidati
   const protocol = canonicalizeNodeProtocol(input.protocol);
   const credentials = input.credentials ?? null;
   const params = input.params ?? null;
+
+  if (hasOwn(params, 'upstreamProxy') && !readNonEmptyString(params?.upstreamProxy)) {
+    return '节点的 params.upstreamProxy 必须是非空字符串';
+  }
 
   if (protocol === 'ss') {
     const cipher = readNonEmptyString(credentials?.cipher);
@@ -125,6 +142,74 @@ export function validateNodeProtocolMetadata(input: NodeProtocolMetadataValidati
       if (!readNonEmptyString(value) && !isStringArray(value)) {
         return 'hysteria2 节点的 params.alpn 必须是字符串或非空字符串数组';
       }
+    }
+
+    return null;
+  }
+
+  if (protocol === 'ssr') {
+    const cipher = readNonEmptyString(credentials?.cipher);
+    const password = readNonEmptyString(credentials?.password);
+    const ssrProtocol = readNonEmptyString(credentials?.protocol);
+    const obfs = readNonEmptyString(credentials?.obfs);
+
+    if (!cipher || !password || !ssrProtocol || !obfs) {
+      return 'ssr 节点需要 credentials.cipher、credentials.password、credentials.protocol 和 credentials.obfs';
+    }
+
+    if (hasOwn(params, 'protocol-param') && !readNonEmptyString(params?.['protocol-param'])) {
+      return 'ssr 节点的 params["protocol-param"] 必须是非空字符串';
+    }
+
+    if (hasOwn(params, 'obfs-param') && !readNonEmptyString(params?.['obfs-param'])) {
+      return 'ssr 节点的 params["obfs-param"] 必须是非空字符串';
+    }
+
+    return null;
+  }
+
+  if (protocol === 'tuic') {
+    const uuid = readNonEmptyString(credentials?.uuid);
+    const password = readNonEmptyString(credentials?.password);
+
+    if (!uuid || !password) {
+      return 'tuic 节点需要 credentials.uuid 和 credentials.password';
+    }
+
+    if (hasOwn(params, 'sni') && !readNonEmptyString(params?.sni)) {
+      return 'tuic 节点的 params.sni 必须是非空字符串';
+    }
+
+    if (hasOwn(params, 'alpn')) {
+      const value = params?.alpn;
+
+      if (!readNonEmptyString(value) && !isStringArray(value)) {
+        return 'tuic 节点的 params.alpn 必须是字符串或非空字符串数组';
+      }
+    }
+
+    if (hasOwn(params, 'udp-relay-mode') && !readNonEmptyString(params?.['udp-relay-mode'])) {
+      return 'tuic 节点的 params["udp-relay-mode"] 必须是非空字符串';
+    }
+
+    if (hasOwn(params, 'congestion-controller') && !readNonEmptyString(params?.['congestion-controller'])) {
+      return 'tuic 节点的 params["congestion-controller"] 必须是非空字符串';
+    }
+
+    if (hasOwn(params, 'disable-sni') && typeof params?.['disable-sni'] !== 'boolean') {
+      return 'tuic 节点的 params["disable-sni"] 必须是布尔值';
+    }
+
+    if (hasOwn(params, 'heartbeat') && !readNonEmptyString(params?.heartbeat)) {
+      return 'tuic 节点的 params.heartbeat 必须是非空字符串';
+    }
+
+    if (hasOwn(params, 'request-timeout') && typeof params?.['request-timeout'] !== 'number') {
+      return 'tuic 节点的 params["request-timeout"] 必须是数字';
+    }
+
+    if (hasOwn(params, 'reduce-rtt') && typeof params?.['reduce-rtt'] !== 'boolean') {
+      return 'tuic 节点的 params["reduce-rtt"] 必须是布尔值';
     }
 
     return null;

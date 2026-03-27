@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTsModule } from './helpers/load-ts-module.mjs';
 
-const { parseNodeImportText, parseNodeShareLink } = await loadTsModule('packages/core/src/node-import.ts');
+const { parseImportedConfig, parseNodeImportText, parseNodeShareLink } = await loadTsModule(
+  'packages/core/src/node-import.ts'
+);
 
 function encodeVmess(payload) {
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
@@ -90,6 +92,55 @@ test('parseNodeShareLink parses ss share links into node payload', () => {
   });
 });
 
+test('parseNodeShareLink parses ssr share links into node payload', () => {
+  const encodedPassword = Buffer.from('passw0rd', 'utf8').toString('base64');
+  const encodedName = Buffer.from('SSR Node', 'utf8').toString('base64');
+  const encodedProtocolParam = Buffer.from('100:replace-me', 'utf8').toString('base64');
+  const encodedObfsParam = Buffer.from('sub.example.com', 'utf8').toString('base64');
+  const raw = `ssr://${Buffer.from(
+    `ssr.example.com:443:auth_aes128_md5:aes-256-cfb:tls1.2_ticket_auth:${encodedPassword}/?remarks=${encodedName}&protoparam=${encodedProtocolParam}&obfsparam=${encodedObfsParam}`,
+    'utf8'
+  ).toString('base64')}`;
+  const node = parseNodeShareLink(raw);
+
+  assert.equal(node.name, 'SSR Node');
+  assert.equal(node.protocol, 'ssr');
+  assert.equal(node.server, 'ssr.example.com');
+  assert.equal(node.port, 443);
+  assert.deepEqual(node.credentials, {
+    cipher: 'aes-256-cfb',
+    password: 'passw0rd',
+    protocol: 'auth_aes128_md5',
+    obfs: 'tls1.2_ticket_auth'
+  });
+  assert.deepEqual(node.params, {
+    'protocol-param': '100:replace-me',
+    'obfs-param': 'sub.example.com'
+  });
+});
+
+test('parseNodeShareLink parses tuic share links into node payload', () => {
+  const node = parseNodeShareLink(
+    'tuic://11111111-1111-1111-1111-111111111111:replace-me@tuic.example.com:443?sni=sub.example.com&alpn=h3&congestion_control=bbr&udp_relay_mode=native&zero_rtt_handshake=1#TUIC%20Node'
+  );
+
+  assert.equal(node.name, 'TUIC Node');
+  assert.equal(node.protocol, 'tuic');
+  assert.equal(node.server, 'tuic.example.com');
+  assert.equal(node.port, 443);
+  assert.deepEqual(node.credentials, {
+    uuid: '11111111-1111-1111-1111-111111111111',
+    password: 'replace-me'
+  });
+  assert.deepEqual(node.params, {
+    sni: 'sub.example.com',
+    alpn: 'h3',
+    'congestion-controller': 'bbr',
+    'udp-relay-mode': 'native',
+    'reduce-rtt': true
+  });
+});
+
 test('parseNodeShareLink parses hysteria2 share links into node payload', () => {
   const node = parseNodeShareLink(
     'hysteria2://replace-me@hy2-01.example.com:8443?sni=sub.example.com&obfs=salamander&obfs-password=secret&insecure=1#HY2%20Node'
@@ -148,14 +199,14 @@ test('parseNodeImportText parses multiple lines and reports unsupported schemes'
   const result = parseNodeImportText([
     'vless://11111111-1111-1111-1111-111111111111@hk.example.com:443#HK',
     `vmess://${vmessPayload}`,
-    'ssr://example.com:443'
+    'wireguard://example.com:443'
   ].join('\n'));
 
   assert.equal(result.nodes.length, 2);
   assert.equal(result.errors.length, 1);
   assert.equal(result.lineCount, 3);
   assert.equal(result.contentEncoding, 'plain_text');
-  assert.match(result.errors[0], /当前仅支持 vless:\/\/、trojan:\/\/、vmess:\/\/、ss:\/\/、hysteria2:\/\/ \/ hy2:\/\//);
+  assert.match(result.errors[0], /当前仅支持 vless:\/\/、trojan:\/\/、vmess:\/\/、ss:\/\/、ssr:\/\/、tuic:\/\/、hysteria2:\/\/ \/ hy2:\/\//);
 });
 
 test('parseNodeImportText auto-decodes base64 wrapped subscription text', () => {
@@ -295,4 +346,98 @@ test('parseNodeImportText parses json node collections', () => {
   assert.equal(result.errors.length, 0);
   assert.equal(result.lineCount, 1);
   assert.equal(result.nodes[0].protocol, 'vless');
+});
+
+test('parseImportedConfig builds mihomo template content and preserves upstream proxy relationships', () => {
+  const result = parseImportedConfig([
+    'proxies:',
+    '  - name: Transit Node',
+    '    type: trojan',
+    '    server: transit.example.com',
+    '    port: 443',
+    '    password: transit-password',
+    '  - name: HK Relay',
+    '    type: vless',
+    '    server: hk.example.com',
+    '    port: 443',
+    '    uuid: 11111111-1111-1111-1111-111111111111',
+    '    tls: true',
+    '    dialer-proxy: Transit Node',
+    'proxy-groups:',
+    '  - name: Auto',
+    '    type: select',
+    '    proxies:',
+    '      - HK Relay',
+    'rules:',
+    '  - MATCH,DIRECT'
+  ].join('\n'));
+
+  assert.ok(result);
+
+  if (!result) {
+    throw new Error('expected mihomo config import result');
+  }
+
+  assert.equal(result.targetType, 'mihomo');
+  assert.equal(result.nodes.length, 2);
+  assert.equal(result.nodes[1].params.upstreamProxy, 'Transit Node');
+  assert.match(result.templateContent, /{{proxies}}/);
+  assert.match(result.templateContent, /proxy-groups:/);
+  assert.match(result.templateContent, /MATCH,DIRECT/);
+});
+
+test('parseImportedConfig builds sing-box template content and preserves static outbounds', () => {
+  const result = parseImportedConfig(
+    JSON.stringify({
+      outbounds: [
+        {
+          tag: 'Transit',
+          type: 'trojan',
+          server: 'transit.example.com',
+          server_port: 443,
+          password: 'transit-password'
+        },
+        {
+          tag: 'HK',
+          type: 'vless',
+          server: 'hk.example.com',
+          server_port: 443,
+          uuid: '11111111-1111-1111-1111-111111111111',
+          detour: 'Transit',
+          tls: {
+            enabled: true,
+            server_name: 'sub.example.com'
+          },
+          transport: {
+            type: 'ws',
+            path: '/ws',
+            headers: {
+              Host: 'cdn.example.com'
+            }
+          }
+        },
+        {
+          tag: 'Auto',
+          type: 'selector',
+          outbounds: ['HK', 'Transit', 'direct']
+        }
+      ],
+      route: {
+        rules: [{ type: 'logical', mode: 'default', rule: 'MATCH,DIRECT' }]
+      }
+    })
+  );
+
+  assert.ok(result);
+
+  if (!result) {
+    throw new Error('expected sing-box config import result');
+  }
+
+  assert.equal(result.targetType, 'singbox');
+  assert.equal(result.nodes.length, 2);
+  assert.equal(result.nodes[1].params.upstreamProxy, 'Transit');
+  assert.match(result.templateContent, /{{outbound_items_with_leading_comma}}/);
+  assert.match(result.templateContent, /"tag": "Auto"/);
+  assert.match(result.templateContent, /"type": "logical"/);
 });

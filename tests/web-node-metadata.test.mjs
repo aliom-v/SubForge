@@ -18,6 +18,8 @@ test('detectNodeProtocolPreset recognizes common guided protocols', () => {
   assert.equal(detectNodeProtocolPreset(' TROJAN '), 'trojan');
   assert.equal(detectNodeProtocolPreset('vmess'), 'vmess');
   assert.equal(detectNodeProtocolPreset('ss'), 'ss');
+  assert.equal(detectNodeProtocolPreset('ssr'), 'ssr');
+  assert.equal(detectNodeProtocolPreset('tuic'), 'tuic');
   assert.equal(detectNodeProtocolPreset('hysteria2'), 'hysteria2');
   assert.equal(detectNodeProtocolPreset('hy2'), 'hysteria2');
   assert.equal(canonicalizeNodeProtocol(' hy2 '), 'hysteria2');
@@ -33,55 +35,74 @@ test('parseNodeMetadataText accepts objects and rejects arrays', () => {
   );
 });
 
-test('createNodeProtocolGuideState reads existing vless metadata into guided fields', () => {
-  const state = createNodeProtocolGuideState('vless', {
+test('createNodeProtocolGuideState reads existing guided metadata into fields', () => {
+  const vless = createNodeProtocolGuideState('vless', {
     credentials: { uuid: 'uuid-1' },
     params: { tls: true, network: 'ws', servername: 'sub.example.com', path: '/ws' }
   });
 
-  assert.equal(state.primaryCredential, 'uuid-1');
-  assert.equal(state.tls, true);
-  assert.equal(state.network, 'ws');
-  assert.equal(state.servername, 'sub.example.com');
-  assert.equal(state.path, '/ws');
-});
+  assert.equal(vless.primaryCredential, 'uuid-1');
+  assert.equal(vless.tls, true);
+  assert.equal(vless.network, 'ws');
+  assert.equal(vless.servername, 'sub.example.com');
+  assert.equal(vless.path, '/ws');
 
-test('createNodeProtocolGuideState reads existing ss metadata into guided fields', () => {
-  const state = createNodeProtocolGuideState('ss', {
-    credentials: { cipher: 'aes-256-gcm', password: 'replace-me' },
-    params: { plugin: 'v2ray-plugin' }
-  });
-
-  assert.equal(state.primaryCredential, 'aes-256-gcm');
-  assert.equal(state.secondaryCredential, 'replace-me');
-  assert.equal(state.plugin, 'v2ray-plugin');
-});
-
-test('createNodeProtocolGuideState reads existing hysteria2 metadata into guided fields', () => {
-  const state = createNodeProtocolGuideState('hysteria2', {
-    credentials: { password: 'replace-me' },
+  const ssr = createNodeProtocolGuideState('ssr', {
+    credentials: {
+      cipher: 'aes-256-cfb',
+      password: 'replace-me',
+      protocol: 'auth_aes128_md5',
+      obfs: 'tls1.2_ticket_auth'
+    },
     params: {
-      sni: 'sub.example.com',
-      obfs: 'salamander',
-      'obfs-password': 'secret',
-      alpn: 'h3',
-      insecure: true
+      'protocol-param': '100:replace-me',
+      'obfs-param': 'sub.example.com'
     }
   });
 
-  assert.equal(state.primaryCredential, 'replace-me');
-  assert.equal(state.sni, 'sub.example.com');
-  assert.equal(state.obfs, 'salamander');
-  assert.equal(state.obfsPassword, 'secret');
-  assert.equal(state.alpn, 'h3');
-  assert.equal(state.insecure, true);
+  assert.equal(ssr.primaryCredential, 'aes-256-cfb');
+  assert.equal(ssr.secondaryCredential, 'replace-me');
+  assert.equal(ssr.protocolName, 'auth_aes128_md5');
+  assert.equal(ssr.obfs, 'tls1.2_ticket_auth');
+  assert.equal(ssr.protocolParam, '100:replace-me');
+  assert.equal(ssr.obfsParam, 'sub.example.com');
+
+  const tuic = createNodeProtocolGuideState('tuic', {
+    credentials: {
+      uuid: '11111111-1111-1111-1111-111111111111',
+      password: 'replace-me'
+    },
+    params: {
+      sni: 'sub.example.com',
+      alpn: ['h3'],
+      'congestion-controller': 'bbr',
+      'udp-relay-mode': 'native',
+      'disable-sni': true,
+      heartbeat: '10s',
+      'request-timeout': 8000,
+      'reduce-rtt': true
+    }
+  });
+
+  assert.equal(tuic.primaryCredential, '11111111-1111-1111-1111-111111111111');
+  assert.equal(tuic.secondaryCredential, 'replace-me');
+  assert.equal(tuic.sni, 'sub.example.com');
+  assert.equal(tuic.alpn, 'h3');
+  assert.equal(tuic.congestionController, 'bbr');
+  assert.equal(tuic.udpRelayMode, 'native');
+  assert.equal(tuic.disableSni, true);
+  assert.equal(tuic.heartbeat, '10s');
+  assert.equal(tuic.requestTimeout, '8000');
+  assert.equal(tuic.reduceRtt, true);
 });
 
-test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects', () => {
+test('serializeNodeProtocolGuideState builds guided metadata objects', () => {
   const trojan = serializeNodeProtocolGuideState('trojan', {
     primaryCredential: 'replace-me',
     secondaryCredential: '',
     alterId: '',
+    protocolName: '',
+    protocolParam: '',
     tls: true,
     network: '',
     plugin: '',
@@ -90,8 +111,15 @@ test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects',
     sni: 'sub.example.com',
     obfs: '',
     obfsPassword: '',
+    obfsParam: '',
     alpn: '',
-    insecure: false
+    insecure: false,
+    congestionController: '',
+    udpRelayMode: '',
+    disableSni: false,
+    heartbeat: '',
+    requestTimeout: '',
+    reduceRtt: false
   });
 
   assert.deepEqual(trojan, {
@@ -103,6 +131,8 @@ test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects',
     primaryCredential: 'uuid-1',
     secondaryCredential: '',
     alterId: '0',
+    protocolName: '',
+    protocolParam: '',
     tls: true,
     network: 'ws',
     plugin: '',
@@ -111,8 +141,15 @@ test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects',
     sni: '',
     obfs: '',
     obfsPassword: '',
+    obfsParam: '',
     alpn: '',
-    insecure: false
+    insecure: false,
+    congestionController: '',
+    udpRelayMode: '',
+    disableSni: false,
+    heartbeat: '',
+    requestTimeout: '',
+    reduceRtt: false
   });
 
   assert.deepEqual(vmess, {
@@ -124,6 +161,8 @@ test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects',
     primaryCredential: 'aes-256-gcm',
     secondaryCredential: 'replace-me',
     alterId: '',
+    protocolName: '',
+    protocolParam: '',
     tls: false,
     network: '',
     plugin: 'v2ray-plugin',
@@ -132,8 +171,15 @@ test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects',
     sni: '',
     obfs: '',
     obfsPassword: '',
+    obfsParam: '',
     alpn: '',
-    insecure: false
+    insecure: false,
+    congestionController: '',
+    udpRelayMode: '',
+    disableSni: false,
+    heartbeat: '',
+    requestTimeout: '',
+    reduceRtt: false
   });
 
   assert.deepEqual(ss, {
@@ -141,10 +187,92 @@ test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects',
     params: { plugin: 'v2ray-plugin' }
   });
 
+  const ssr = serializeNodeProtocolGuideState('ssr', {
+    primaryCredential: 'aes-256-cfb',
+    secondaryCredential: 'replace-me',
+    alterId: '',
+    protocolName: 'auth_aes128_md5',
+    protocolParam: '100:replace-me',
+    tls: false,
+    network: '',
+    plugin: '',
+    servername: '',
+    path: '',
+    sni: '',
+    obfs: 'tls1.2_ticket_auth',
+    obfsPassword: '',
+    obfsParam: 'sub.example.com',
+    alpn: '',
+    insecure: false,
+    congestionController: '',
+    udpRelayMode: '',
+    disableSni: false,
+    heartbeat: '',
+    requestTimeout: '',
+    reduceRtt: false
+  });
+
+  assert.deepEqual(ssr, {
+    credentials: {
+      cipher: 'aes-256-cfb',
+      password: 'replace-me',
+      protocol: 'auth_aes128_md5',
+      obfs: 'tls1.2_ticket_auth'
+    },
+    params: {
+      'protocol-param': '100:replace-me',
+      'obfs-param': 'sub.example.com'
+    }
+  });
+
+  const tuic = serializeNodeProtocolGuideState('tuic', {
+    primaryCredential: '11111111-1111-1111-1111-111111111111',
+    secondaryCredential: 'replace-me',
+    alterId: '',
+    protocolName: '',
+    protocolParam: '',
+    tls: false,
+    network: '',
+    plugin: '',
+    servername: '',
+    path: '',
+    sni: 'sub.example.com',
+    obfs: '',
+    obfsPassword: '',
+    obfsParam: '',
+    alpn: 'h3',
+    insecure: false,
+    congestionController: 'bbr',
+    udpRelayMode: 'native',
+    disableSni: true,
+    heartbeat: '10s',
+    requestTimeout: '8000',
+    reduceRtt: true
+  });
+
+  assert.deepEqual(tuic, {
+    credentials: {
+      uuid: '11111111-1111-1111-1111-111111111111',
+      password: 'replace-me'
+    },
+    params: {
+      sni: 'sub.example.com',
+      alpn: 'h3',
+      'congestion-controller': 'bbr',
+      'udp-relay-mode': 'native',
+      'disable-sni': true,
+      heartbeat: '10s',
+      'request-timeout': 8000,
+      'reduce-rtt': true
+    }
+  });
+
   const hysteria2 = serializeNodeProtocolGuideState('hysteria2', {
     primaryCredential: 'replace-me',
     secondaryCredential: '',
     alterId: '',
+    protocolName: '',
+    protocolParam: '',
     tls: false,
     network: '',
     plugin: '',
@@ -153,8 +281,15 @@ test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects',
     sni: 'sub.example.com',
     obfs: 'salamander',
     obfsPassword: 'secret',
+    obfsParam: '',
     alpn: 'h3',
-    insecure: true
+    insecure: true,
+    congestionController: '',
+    udpRelayMode: '',
+    disableSni: false,
+    heartbeat: '',
+    requestTimeout: '',
+    reduceRtt: false
   });
 
   assert.deepEqual(hysteria2, {
@@ -171,13 +306,15 @@ test('serializeNodeProtocolGuideState builds trojan and vmess metadata objects',
 
 test('getNodeMetadataExamples returns protocol-specific samples', () => {
   assert.match(getNodeMetadataExamples('ss').credentials, /cipher/);
+  assert.match(getNodeMetadataExamples('ssr').credentials, /protocol/);
   assert.match(getNodeMetadataExamples('trojan').credentials, /password/);
+  assert.match(getNodeMetadataExamples('tuic').params, /congestion-controller/);
   assert.match(getNodeMetadataExamples('vmess').credentials, /alterId/);
   assert.match(getNodeMetadataExamples('vless').params, /servername/);
   assert.match(getNodeMetadataExamples('hysteria2').params, /obfs/);
 });
 
-test('validateNodeProtocolMetadata validates ss and hysteria2 common fields', () => {
+test('validateNodeProtocolMetadata validates ss, ssr, tuic and hysteria2 common fields', () => {
   assert.equal(
     validateNodeProtocolMetadata({
       protocol: 'ss',
@@ -194,6 +331,29 @@ test('validateNodeProtocolMetadata validates ss and hysteria2 common fields', ()
       params: { obfs: 'shadowtls' }
     }),
     'hysteria2 节点当前仅支持 params.obfs = "salamander"'
+  );
+
+  assert.equal(
+    validateNodeProtocolMetadata({
+      protocol: 'ssr',
+      credentials: {
+        cipher: 'aes-256-cfb',
+        password: 'replace-me',
+        protocol: 'auth_aes128_md5',
+        obfs: 'tls1.2_ticket_auth'
+      },
+      params: { 'protocol-param': '100:replace-me' }
+    }),
+    null
+  );
+
+  assert.equal(
+    validateNodeProtocolMetadata({
+      protocol: 'tuic',
+      credentials: { uuid: 'uuid-1', password: 'replace-me' },
+      params: { 'request-timeout': '8000' }
+    }),
+    'tuic 节点的 params["request-timeout"] 必须是数字'
   );
 
   assert.equal(

@@ -179,3 +179,104 @@ test('compileSubscription falls back to MATCH,DIRECT when rules are empty', () =
 
   assert.match(result.data.content, /MATCH,DIRECT/);
 });
+
+test('compileSubscription maps upstreamProxy to dialer-proxy for mihomo output', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_transit',
+          name: 'Transit Node',
+          protocol: 'trojan',
+          server: 'transit.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            password: 'replace-me'
+          }
+        },
+        {
+          id: 'node_hk_chain',
+          name: 'HK Chain',
+          protocol: 'vless',
+          server: 'hk-chain.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          },
+          params: {
+            tls: true,
+            upstreamProxy: 'Transit Node'
+          }
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /dialer-proxy: "Transit Node"/);
+});
+
+test('compileSubscription maps detour and transport fields for sing-box templates', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      target: 'singbox',
+      nodes: [
+        {
+          id: 'node_singbox',
+          name: 'HK TUIC',
+          protocol: 'tuic',
+          server: 'tuic.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111',
+            password: 'replace-me'
+          },
+          params: {
+            sni: 'sub.example.com',
+            alpn: ['h3'],
+            'congestion-controller': 'bbr',
+            'udp-relay-mode': 'native',
+            'disable-sni': true,
+            'request-timeout': 8000,
+            'reduce-rtt': true,
+            upstreamProxy: 'Transit'
+          }
+        }
+      ],
+      ruleSets: [],
+      template: {
+        id: 'tpl_singbox',
+        name: 'Imported Sing-box',
+        target: 'singbox',
+        content: '{\n  "outbounds": [\n{{outbound_items}}\n  ],\n  "route": {\n      "rules": {{rules}}\n  }\n}',
+        version: 1,
+        isDefault: true
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  const parsed = JSON.parse(result.data.content);
+
+  assert.equal(parsed.outbounds[0].detour, 'Transit');
+  assert.equal(parsed.outbounds[0].tls.server_name, 'sub.example.com');
+  assert.deepEqual(parsed.outbounds[0].tls.alpn, ['h3']);
+  assert.equal(parsed.outbounds[0].congestion_control, 'bbr');
+  assert.equal(parsed.outbounds[0].udp_relay_mode, 'native');
+  assert.equal(parsed.outbounds[0].disable_sni, true);
+  assert.equal(parsed.outbounds[0].request_timeout, 8000);
+  assert.equal(parsed.outbounds[0].zero_rtt_handshake, true);
+});

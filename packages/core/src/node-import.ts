@@ -1,4 +1,4 @@
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import {
   canonicalizeNodeProtocol,
   findUnsupportedHysteria2ShareLinkQueryKeys,
@@ -24,9 +24,30 @@ export interface ParsedNodeImportResult {
 
 export type NodeImportContentEncoding = 'plain_text' | 'base64_text';
 
-const supportedShareLinkSchemes = ['vless://', 'trojan://', 'vmess://', 'ss://', 'hysteria2://', 'hy2://'] as const;
-const supportedStructuredNodeProtocols = new Set(['vless', 'trojan', 'vmess', 'ss', 'hysteria2']);
+const supportedShareLinkSchemes = [
+  'vless://',
+  'trojan://',
+  'vmess://',
+  'ss://',
+  'ssr://',
+  'tuic://',
+  'hysteria2://',
+  'hy2://'
+] as const;
+const supportedStructuredNodeProtocols = new Set(['vless', 'trojan', 'vmess', 'ss', 'ssr', 'tuic', 'hysteria2']);
 const ignoredSingboxOutboundTypes = new Set(['selector', 'urltest', 'direct', 'block', 'dns']);
+const supportedShareLinkMessage =
+  '当前仅支持 vless://、trojan://、vmess://、ss://、ssr://、tuic://、hysteria2:// / hy2:// 分享链接';
+
+export interface ImportedConfigPayload {
+  format: 'mihomo_yaml' | 'singbox_json';
+  targetType: 'mihomo' | 'singbox';
+  nodes: ImportedNodePayload[];
+  templateContent: string;
+  suggestedTemplateName: string;
+  errors: string[];
+  warnings: string[];
+}
 
 interface StructuredNodeImportResult {
   nodes: ImportedNodePayload[];
@@ -167,8 +188,7 @@ function setOptionalValue(target: Record<string, unknown>, key: string, value: u
 }
 
 function canonicalizeImportedProtocol(protocol: string): string {
-  const normalized = canonicalizeNodeProtocol(protocol.trim().toLowerCase());
-  return normalized === 'shadowsocks' ? 'ss' : normalized;
+  return canonicalizeNodeProtocol(protocol.trim().toLowerCase());
 }
 
 function isSupportedShareLink(line: string): boolean {
@@ -207,7 +227,7 @@ function extractSupportedShareLink(line: string): string | null {
     return stripTrailingShareLinkPunctuation(trimmed);
   }
 
-  const match = trimmed.match(/(?:vless|trojan|vmess|ss|hysteria2|hy2):\/\/\S+/i);
+  const match = trimmed.match(/(?:vless|trojan|vmess|ssr|ss|tuic|hysteria2|hy2):\/\/\S+/i);
 
   if (!match) {
     return null;
@@ -562,6 +582,7 @@ function buildCommonClashParams(record: Record<string, unknown>): Record<string,
   setOptionalValue(params, 'flow', readRecordString(record, ['flow']));
   setOptionalValue(params, 'pbk', readRecordString(record, ['public-key', 'publicKey', 'pbk']));
   setOptionalValue(params, 'sid', readRecordString(record, ['short-id', 'shortId', 'sid']));
+  setOptionalValue(params, 'upstreamProxy', readRecordString(record, ['dialer-proxy', 'dialerProxy']));
   setOptionalValue(
     params,
     'skip-cert-verify',
@@ -622,6 +643,41 @@ function parseClashProxyRecord(record: Record<string, unknown>): ImportedNodePay
 
     credentials = { cipher, password };
     setOptionalValue(params, 'plugin', readRecordString(record, ['plugin']));
+  } else if (protocol === 'ssr') {
+    const cipher = readRecordString(record, ['cipher', 'method']);
+    const password = readRecordString(record, ['password']);
+    const ssrProtocol = readRecordString(record, ['protocol']);
+    const obfs = readRecordString(record, ['obfs']);
+
+    if (!cipher || !password || !ssrProtocol || !obfs) {
+      throw new Error('ssr 代理缺少 cipher / password / protocol / obfs');
+    }
+
+    credentials = {
+      cipher,
+      password,
+      protocol: ssrProtocol,
+      obfs
+    };
+    setOptionalValue(params, 'protocol-param', readRecordString(record, ['protocol-param', 'protocolParam']));
+    setOptionalValue(params, 'obfs-param', readRecordString(record, ['obfs-param', 'obfsParam']));
+  } else if (protocol === 'tuic') {
+    const uuid = readRecordString(record, ['uuid']);
+    const password = readRecordString(record, ['password', 'token']);
+
+    if (!uuid || !password) {
+      throw new Error('tuic 代理缺少 uuid / password');
+    }
+
+    credentials = { uuid, password };
+    setOptionalValue(params, 'sni', readRecordString(record, ['sni', 'servername', 'server-name']));
+    setOptionalValue(params, 'alpn', readRecordStringArray(record, ['alpn']) ?? readRecordString(record, ['alpn']));
+    setOptionalValue(params, 'congestion-controller', readRecordString(record, ['congestion-controller', 'congestionController']));
+    setOptionalValue(params, 'udp-relay-mode', readRecordString(record, ['udp-relay-mode', 'udpRelayMode']));
+    setOptionalValue(params, 'disable-sni', readRecordBoolean(record, ['disable-sni', 'disableSni']));
+    setOptionalValue(params, 'heartbeat', readRecordString(record, ['heartbeat']));
+    setOptionalValue(params, 'reduce-rtt', readRecordBoolean(record, ['reduce-rtt', 'reduceRtt']));
+    setOptionalValue(params, 'request-timeout', readRecordNumber(record, ['request-timeout', 'requestTimeout']));
   } else if (protocol === 'hysteria2') {
     const password = readRecordString(record, ['password', 'auth']);
 
@@ -692,6 +748,8 @@ function buildCommonSingboxParams(record: Record<string, unknown>): Record<strin
   const params: Record<string, unknown> = {};
   const tls = readRecordObject(record, ['tls']);
   const transport = readRecordObject(record, ['transport']);
+
+  setOptionalValue(params, 'upstreamProxy', readRecordString(record, ['detour']));
 
   if (tls) {
     setOptionalValue(params, 'tls', readRecordBoolean(tls, ['enabled']));
@@ -780,6 +838,22 @@ function parseSingboxOutboundRecord(record: Record<string, unknown>): ImportedNo
 
     credentials = { cipher, password };
     setOptionalValue(params, 'plugin', readRecordString(record, ['plugin']));
+  } else if (type === 'tuic') {
+    const uuid = readRecordString(record, ['uuid']);
+    const password = readRecordString(record, ['password', 'token']);
+
+    if (!uuid || !password) {
+      throw new Error('tuic outbound 缺少 uuid / password');
+    }
+
+    credentials = { uuid, password };
+    setOptionalValue(params, 'sni', readRecordString(record, ['server_name', 'serverName']));
+    setOptionalValue(params, 'alpn', readRecordStringArray(record, ['alpn']) ?? readRecordString(record, ['alpn']));
+    setOptionalValue(params, 'congestion-controller', readRecordString(record, ['congestion_control', 'congestionController']));
+    setOptionalValue(params, 'udp-relay-mode', readRecordString(record, ['udp_relay_mode', 'udpRelayMode']));
+    setOptionalValue(params, 'disable-sni', readRecordBoolean(record, ['disable_sni', 'disableSni']));
+    setOptionalValue(params, 'heartbeat', readRecordString(record, ['heartbeat']));
+    setOptionalValue(params, 'reduce-rtt', readRecordBoolean(record, ['zero_rtt_handshake', 'zeroRttHandshake']));
   } else if (type === 'hysteria2') {
     const password = readRecordString(record, ['password']);
 
@@ -1103,6 +1177,96 @@ function parseVmessShareLink(raw: string): ImportedNodePayload {
   };
 }
 
+function parseSsrShareLink(raw: string): ImportedNodePayload {
+  const encoded = raw.slice('ssr://'.length).trim();
+  const decoded = decodeBase64Utf8(encoded);
+  const separatorIndex = decoded.indexOf('/?');
+  const mainPart = separatorIndex >= 0 ? decoded.slice(0, separatorIndex) : decoded;
+  const queryPart = separatorIndex >= 0 ? decoded.slice(separatorIndex + 2) : '';
+  const segments = mainPart.split(':');
+
+  if (segments.length < 6) {
+    throw new Error('ssr 分享链接格式不合法');
+  }
+
+  const [server, portRaw, protocolRaw, methodRaw, obfsRaw, passwordEncoded] = segments;
+  const serverName = server?.trim() ?? '';
+  const protocol = protocolRaw?.trim() ?? '';
+  const cipher = methodRaw?.trim() ?? '';
+  const obfs = obfsRaw?.trim() ?? '';
+
+  if (!serverName || !protocol || !cipher || !obfs || !passwordEncoded) {
+    throw new Error('ssr 分享链接缺少必要字段');
+  }
+
+  const params = new URLSearchParams(queryPart);
+  const password = decodeBase64Utf8(passwordEncoded);
+  const name = params.get('remarks') ? decodeBase64Utf8(params.get('remarks') as string) : serverName;
+  const extraParams: Record<string, unknown> = {};
+
+  if (params.get('protoparam')) {
+    setOptionalValue(extraParams, 'protocol-param', decodeBase64Utf8(params.get('protoparam') as string));
+  }
+
+  if (params.get('obfsparam')) {
+    setOptionalValue(extraParams, 'obfs-param', decodeBase64Utf8(params.get('obfsparam') as string));
+  }
+
+  if (params.get('group')) {
+    setOptionalValue(extraParams, 'group', decodeBase64Utf8(params.get('group') as string));
+  }
+
+  return buildImportedNodePayload({
+    name,
+    protocol: 'ssr',
+    server: serverName,
+    port: parsePort(portRaw ?? '', 'ssr'),
+    credentials: {
+      cipher,
+      password,
+      protocol,
+      obfs
+    },
+    params: Object.keys(extraParams).length > 0 ? extraParams : null,
+    source: raw
+  });
+}
+
+function parseTuicShareLink(raw: string): ImportedNodePayload {
+  const url = new URL(raw);
+  const uuid = decodeComponent(url.username);
+  const password = decodeComponent(url.password);
+
+  if (!uuid || !password) {
+    throw new Error('tuic 分享链接缺少 uuid / password');
+  }
+
+  const params: Record<string, unknown> = {};
+
+  setOptionalValue(params, 'sni', url.searchParams.get('sni'));
+  setOptionalValue(params, 'alpn', url.searchParams.getAll('alpn').length > 1 ? url.searchParams.getAll('alpn') : url.searchParams.get('alpn'));
+  setOptionalValue(params, 'congestion-controller', url.searchParams.get('congestion_control') ?? url.searchParams.get('congestion-controller'));
+  setOptionalValue(params, 'udp-relay-mode', url.searchParams.get('udp_relay_mode') ?? url.searchParams.get('udp-relay-mode'));
+  setOptionalValue(params, 'disable-sni', maybeBoolean(url.searchParams.get('disable_sni') ?? url.searchParams.get('disable-sni')));
+  setOptionalValue(params, 'heartbeat', url.searchParams.get('heartbeat'));
+  setOptionalValue(params, 'request-timeout', url.searchParams.get('request_timeout') ? Number(url.searchParams.get('request_timeout')) : null);
+  setOptionalValue(
+    params,
+    'reduce-rtt',
+    maybeBoolean(url.searchParams.get('zero_rtt_handshake') ?? url.searchParams.get('reduce-rtt'))
+  );
+
+  return buildImportedNodePayload({
+    name: decodeComponent(url.hash.slice(1)) || decodeComponent(url.hostname),
+    protocol: 'tuic',
+    server: decodeComponent(url.hostname),
+    port: parsePort(url.port, 'tuic'),
+    credentials: { uuid, password },
+    params: Object.keys(params).length > 0 ? params : null,
+    source: raw
+  });
+}
+
 function parseHysteria2ShareLink(raw: string): ImportedNodePayload {
   let url: URL;
 
@@ -1181,11 +1345,168 @@ export function parseNodeShareLink(raw: string): ImportedNodePayload {
     return parseSsShareLink(normalized);
   }
 
+  if (normalized.startsWith('ssr://')) {
+    return parseSsrShareLink(normalized);
+  }
+
+  if (normalized.startsWith('tuic://')) {
+    return parseTuicShareLink(normalized);
+  }
+
   if (normalized.startsWith('hysteria2://') || normalized.startsWith('hy2://')) {
     return parseHysteria2ShareLink(normalized);
   }
 
-  throw new Error('当前仅支持 vless://、trojan://、vmess://、ss://、hysteria2:// / hy2:// 分享链接');
+  throw new Error(supportedShareLinkMessage);
+}
+
+function cloneJsonLike<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function replaceYamlMarkerBlock(template: string, key: string, marker: string, replacement: string): string {
+  const pattern = new RegExp(`^${key}:\\s*(?:"${marker}"|'${marker}'|${marker})\\s*$`, 'm');
+  return template.replace(pattern, `${key}:\n${replacement}`);
+}
+
+function formatJsonBlockLines(value: unknown, spaces: number): string {
+  return indentBlockLike(JSON.stringify(value, null, 2), spaces);
+}
+
+function indentBlockLike(content: string, spaces: number): string {
+  const prefix = ' '.repeat(spaces);
+  return content
+    .split('\n')
+    .map((line) => `${prefix}${line}`)
+    .join('\n');
+}
+
+function isImportableSingboxOutboundRecord(value: unknown): boolean {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  const typeRaw = readRecordString(value, ['type']);
+
+  if (!typeRaw) {
+    return false;
+  }
+
+  const type = canonicalizeImportedProtocol(typeRaw);
+  return supportedStructuredNodeProtocols.has(type) && !ignoredSingboxOutboundTypes.has(type);
+}
+
+function buildMihomoImportedTemplate(content: string): ImportedConfigPayload | null {
+  let parsed: unknown;
+
+  try {
+    parsed = parseYaml(content) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (!isObjectRecord(parsed) || !Array.isArray(parsed.proxies)) {
+    return null;
+  }
+
+  const nodeResult = parseStructuredNodeList(parsed.proxies, '个代理', parseClashProxyRecord);
+  const warnings: string[] = [];
+  const templateObject = cloneJsonLike(parsed);
+
+  const hadProxyGroups = Array.isArray(templateObject['proxy-groups']);
+  const hadRules = Array.isArray(templateObject.rules);
+
+  templateObject.proxies = '__SUBFORGE_MIHOMO_PROXIES__';
+
+  if (!hadProxyGroups) {
+    templateObject['proxy-groups'] = '__SUBFORGE_MIHOMO_PROXY_GROUPS__';
+    warnings.push('原配置未包含 proxy-groups，已注入默认代理组占位符。');
+  }
+
+  if (!hadRules) {
+    templateObject.rules = '__SUBFORGE_MIHOMO_RULES__';
+    warnings.push('原配置未包含 rules，已注入默认规则占位符。');
+  }
+
+  let templateContent = stringifyYaml(templateObject, { lineWidth: 0 });
+  templateContent = replaceYamlMarkerBlock(templateContent, 'proxies', '__SUBFORGE_MIHOMO_PROXIES__', '{{proxies}}');
+  templateContent = replaceYamlMarkerBlock(
+    templateContent,
+    'proxy-groups',
+    '__SUBFORGE_MIHOMO_PROXY_GROUPS__',
+    '{{proxy_groups}}'
+  );
+  templateContent = replaceYamlMarkerBlock(templateContent, 'rules', '__SUBFORGE_MIHOMO_RULES__', '{{rules}}');
+
+  return {
+    format: 'mihomo_yaml',
+    targetType: 'mihomo',
+    nodes: nodeResult.nodes,
+    templateContent,
+    suggestedTemplateName: 'Imported Mihomo Config',
+    errors: nodeResult.errors,
+    warnings
+  };
+}
+
+function buildSingboxImportedTemplate(content: string): ImportedConfigPayload | null {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(content) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (!isObjectRecord(parsed) || !Array.isArray(parsed.outbounds)) {
+    return null;
+  }
+
+  const nodeResult = parseStructuredNodeList(parsed.outbounds, '个 outbound', parseSingboxOutboundRecord);
+  const staticOutbounds = parsed.outbounds.filter((item) => !isImportableSingboxOutboundRecord(item));
+  const templateObject = cloneJsonLike(parsed);
+  const warnings: string[] = [];
+  const staticOutboundsBlock =
+    staticOutbounds.length > 0 ? staticOutbounds.map((item) => formatJsonBlockLines(item, 4)).join(',\n') : '';
+
+  templateObject.outbounds = '__SUBFORGE_SINGBOX_OUTBOUNDS__';
+
+  if (!isObjectRecord(templateObject.route)) {
+    templateObject.route = { rules: '__SUBFORGE_SINGBOX_RULES__' };
+    warnings.push('原配置未包含 route.rules，已注入规则占位符。');
+  } else if (!Array.isArray(templateObject.route.rules)) {
+    templateObject.route.rules = '__SUBFORGE_SINGBOX_RULES__';
+    warnings.push('原配置未包含 route.rules，已注入规则占位符。');
+  }
+
+  let templateContent = JSON.stringify(templateObject, null, 2);
+  templateContent = templateContent.replace(
+    '"outbounds": "__SUBFORGE_SINGBOX_OUTBOUNDS__"',
+    staticOutbounds.length > 0
+      ? `"outbounds": [\n${staticOutboundsBlock}{{outbound_items_with_leading_comma}}\n  ]`
+      : '"outbounds": [\n{{outbound_items}}\n  ]'
+  );
+  templateContent = templateContent.replace('"rules": "__SUBFORGE_SINGBOX_RULES__"', '"rules": {{rules}}');
+
+  return {
+    format: 'singbox_json',
+    targetType: 'singbox',
+    nodes: nodeResult.nodes,
+    templateContent,
+    suggestedTemplateName: 'Imported Sing-box Config',
+    errors: nodeResult.errors,
+    warnings
+  };
+}
+
+export function parseImportedConfig(value: string): ImportedConfigPayload | null {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  return buildSingboxImportedTemplate(trimmed) ?? buildMihomoImportedTemplate(trimmed);
 }
 
 export function parseNodeImportText(value: string): ParsedNodeImportResult {
@@ -1240,7 +1561,7 @@ export function parseNodeImportText(value: string): ParsedNodeImportResult {
   }
 
   for (const index of unsupportedShareLinkLikeLineIndexes) {
-    errors.push(`第 ${index + 1} 行：当前仅支持 vless://、trojan://、vmess://、ss://、hysteria2:// / hy2:// 分享链接`);
+    errors.push(`第 ${index + 1} 行：${supportedShareLinkMessage}`);
   }
 
   const lineCount =

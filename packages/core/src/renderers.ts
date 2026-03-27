@@ -26,6 +26,25 @@ function replaceTemplateSlots(template: string, slots: Record<string, string>): 
   }, template);
 }
 
+function readNodeParamString(params: SubscriptionNode['params'], key: string): string | null {
+  const value = params?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readNodeParamNumber(params: SubscriptionNode['params'], key: string): number | null {
+  const value = params?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readNodeParamBoolean(params: SubscriptionNode['params'], key: string): boolean | null {
+  const value = params?.[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function hasNodeParam(params: SubscriptionNode['params'], key: string): boolean {
+  return Boolean(params) && Object.prototype.hasOwnProperty.call(params, key);
+}
+
 function toMihomoProxy(node: SubscriptionNode): string {
   const entries = [
     `name: ${JSON.stringify(node.name)}`,
@@ -39,7 +58,8 @@ function toMihomoProxy(node: SubscriptionNode): string {
   }
 
   for (const [key, value] of Object.entries(node.params ?? {})) {
-    entries.push(`${key}: ${JSON.stringify(value)}`);
+    const outputKey = key === 'upstreamProxy' ? 'dialer-proxy' : key;
+    entries.push(`${outputKey}: ${JSON.stringify(value)}`);
   }
 
   return `- ${entries[0]}\n${entries.slice(1).map((entry) => `  ${entry}`).join('\n')}`;
@@ -69,15 +89,177 @@ function toMihomoRules(ruleSets: SubscriptionRuleSet[]): string {
   return lines.map((line) => `  - ${line}`).join('\n');
 }
 
-function toSingboxOutbounds(nodes: SubscriptionNode[]): string {
-  const outbounds = nodes.map((node) => ({
+function toSingboxOutbound(node: SubscriptionNode): Record<string, unknown> {
+  const outbound: Record<string, unknown> = {
     tag: node.name,
     type: node.protocol,
     server: node.server,
     server_port: node.port,
-    ...node.credentials,
-    ...node.params
-  }));
+    ...(node.credentials ?? {})
+  };
+  const params = node.params ?? {};
+  const handledKeys = new Set<string>();
+  const tls: Record<string, unknown> = {};
+  const transport: Record<string, unknown> = {};
+  const maybeServerName = readNodeParamString(params, 'servername') ?? readNodeParamString(params, 'sni');
+
+  if (hasNodeParam(params, 'tls')) {
+    handledKeys.add('tls');
+    const enabled = readNodeParamBoolean(params, 'tls');
+    if (enabled !== null) {
+      tls.enabled = enabled;
+    }
+  }
+
+  if (maybeServerName) {
+    handledKeys.add('servername');
+    handledKeys.add('sni');
+    tls.server_name = maybeServerName;
+  }
+
+  if (hasNodeParam(params, 'alpn')) {
+    handledKeys.add('alpn');
+    tls.alpn = params.alpn;
+  }
+
+  if (hasNodeParam(params, 'insecure')) {
+    handledKeys.add('insecure');
+    const insecure = readNodeParamBoolean(params, 'insecure');
+    if (insecure !== null) {
+      tls.insecure = insecure;
+    }
+  }
+
+  const fingerprint = readNodeParamString(params, 'fp');
+  if (fingerprint) {
+    handledKeys.add('fp');
+    tls.utls = { enabled: true, fingerprint };
+  }
+
+  const publicKey = readNodeParamString(params, 'pbk');
+  const shortId = readNodeParamString(params, 'sid');
+  if (publicKey || shortId) {
+    handledKeys.add('pbk');
+    handledKeys.add('sid');
+    tls.reality = {
+      ...(publicKey ? { public_key: publicKey } : {}),
+      ...(shortId ? { short_id: shortId } : {})
+    };
+  }
+
+  const network = readNodeParamString(params, 'network');
+  const path = readNodeParamString(params, 'path');
+  const host = readNodeParamString(params, 'host');
+  const serviceName = readNodeParamString(params, 'service_name');
+
+  if (network) {
+    handledKeys.add('network');
+    transport.type = network;
+  }
+
+  if (path) {
+    handledKeys.add('path');
+    transport.path = path;
+  }
+
+  if (host) {
+    handledKeys.add('host');
+    transport.headers = { Host: host };
+  }
+
+  if (serviceName) {
+    handledKeys.add('service_name');
+    transport.service_name = serviceName;
+  }
+
+  const flow = readNodeParamString(params, 'flow');
+  if (flow) {
+    handledKeys.add('flow');
+    outbound.flow = flow;
+  }
+
+  const upstreamProxy = readNodeParamString(params, 'upstreamProxy');
+  if (upstreamProxy) {
+    handledKeys.add('upstreamProxy');
+    outbound.detour = upstreamProxy;
+  }
+
+  const congestionController = readNodeParamString(params, 'congestion-controller');
+  if (congestionController) {
+    handledKeys.add('congestion-controller');
+    outbound.congestion_control = congestionController;
+  }
+
+  const udpRelayMode = readNodeParamString(params, 'udp-relay-mode');
+  if (udpRelayMode) {
+    handledKeys.add('udp-relay-mode');
+    outbound.udp_relay_mode = udpRelayMode;
+  }
+
+  if (hasNodeParam(params, 'disable-sni')) {
+    handledKeys.add('disable-sni');
+    const disableSni = readNodeParamBoolean(params, 'disable-sni');
+    if (disableSni !== null) {
+      outbound.disable_sni = disableSni;
+    }
+  }
+
+  const heartbeat = readNodeParamString(params, 'heartbeat');
+  if (heartbeat) {
+    handledKeys.add('heartbeat');
+    outbound.heartbeat = heartbeat;
+  }
+
+  if (hasNodeParam(params, 'reduce-rtt')) {
+    handledKeys.add('reduce-rtt');
+    const reduceRtt = readNodeParamBoolean(params, 'reduce-rtt');
+    if (reduceRtt !== null) {
+      outbound.zero_rtt_handshake = reduceRtt;
+    }
+  }
+
+  if (hasNodeParam(params, 'request-timeout')) {
+    handledKeys.add('request-timeout');
+    const requestTimeout = readNodeParamNumber(params, 'request-timeout');
+    if (requestTimeout !== null) {
+      outbound.request_timeout = requestTimeout;
+    }
+  }
+
+  const obfs = readNodeParamString(params, 'obfs');
+  const obfsPassword = readNodeParamString(params, 'obfs-password');
+  if (obfs || obfsPassword) {
+    handledKeys.add('obfs');
+    handledKeys.add('obfs-password');
+    outbound.obfs = {
+      ...(obfs ? { type: obfs } : {}),
+      ...(obfsPassword ? { password: obfsPassword } : {})
+    };
+  }
+
+  if (Object.keys(tls).length > 0) {
+    outbound.tls = tls;
+  }
+
+  if (Object.keys(transport).length > 0) {
+    outbound.transport = transport;
+  }
+
+  for (const [key, value] of Object.entries(params)) {
+    if (!handledKeys.has(key)) {
+      outbound[key] = value;
+    }
+  }
+
+  return outbound;
+}
+
+function toSingboxOutboundItems(nodes: SubscriptionNode[]): string {
+  return nodes.map((node) => indentBlock(JSON.stringify(toSingboxOutbound(node), null, 2), 4)).join(',\n');
+}
+
+function toSingboxOutbounds(nodes: SubscriptionNode[]): string {
+  const outbounds = nodes.map((node) => toSingboxOutbound(node));
 
   return JSON.stringify(outbounds, null, 2);
 }
@@ -122,8 +304,11 @@ export const singboxRenderer: SubscriptionRenderer = {
   target: 'singbox',
   mimeType: 'application/json; charset=utf-8',
   render(context): string {
+    const outboundItems = toSingboxOutboundItems(context.nodes);
     return replaceTemplateSlots(context.template.content, {
       outbounds: indentBlock(toSingboxOutbounds(context.nodes), 2).trimStart(),
+      outbound_items: outboundItems,
+      outbound_items_with_leading_comma: outboundItems ? `,\n${outboundItems}` : '',
       rules: indentBlock(toSingboxRules(context.ruleSets), 6).trimStart()
     });
   }
