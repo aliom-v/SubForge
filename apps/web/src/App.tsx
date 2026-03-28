@@ -142,6 +142,22 @@ interface RuleSourceEditForm {
   enabled: boolean;
 }
 
+interface HostedSubscriptionTargetState {
+  target: SubscriptionTarget;
+  url: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface HostedSubscriptionResult {
+  userId: string;
+  userName: string;
+  token: string;
+  sourceLabel: string;
+  nodeCount: number;
+  targets: HostedSubscriptionTargetState[];
+}
+
 const emptyResources: ResourceState = {
   users: [],
   nodes: [],
@@ -150,6 +166,15 @@ const emptyResources: ResourceState = {
   syncLogs: [],
   auditLogs: []
 };
+
+const AUTO_HOSTED_USER_NAME = '个人托管订阅';
+const AUTO_HOSTED_USER_REMARK = 'subforge:auto-hosted';
+const AUTO_HOSTED_TEMPLATE_NAMES: Record<SubscriptionTarget, string> = {
+  mihomo: 'Auto Hosted Mihomo',
+  singbox: 'Auto Hosted Sing-box'
+};
+const AUTO_HOSTED_MIHOMO_TEMPLATE = ['mixed-port: 7890', 'mode: rule', 'proxies:', '{{proxies}}', 'proxy-groups:', '{{proxy_groups}}', 'rules:', '{{rules}}'].join('\n');
+const AUTO_HOSTED_SINGBOX_TEMPLATE = ['{', '  "outbounds": {{outbounds}},', '  "route": {', '    "rules": {{rules}}', '  }', '}'].join('\n');
 
 const emptyUserEditForm: UserEditForm = { id: '', name: '', status: 'active', remark: '', expiresAt: '' };
 const emptyNodeDraftForm: NodeDraftForm = {
@@ -234,6 +259,7 @@ export function App(): JSX.Element {
   const [cacheRebuildResult, setCacheRebuildResult] = useState<CacheRebuildPayload | null>(null);
   const [remoteNodeImportResult, setRemoteNodeImportResult] = useState<NodeImportPayload | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatusPayload | null>(null);
+  const [hostedSubscriptionResult, setHostedSubscriptionResult] = useState<HostedSubscriptionResult | null>(null);
 
   const [loginForm, setLoginForm] = useState({ username: 'admin', password: '' });
   const [setupForm, setSetupForm] = useState({ username: 'admin', password: '', confirmPassword: '' });
@@ -339,6 +365,7 @@ export function App(): JSX.Element {
     setCacheRebuildResult(null);
     setRemoteNodeImportResult(null);
     setRemoteNodeImportPreview(null);
+    setHostedSubscriptionResult(null);
     setBindingUserId('');
     setBindingNodeIds([]);
   }
@@ -472,7 +499,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function refreshResources(currentToken = token): Promise<void> {
+  async function refreshResources(currentToken = token): Promise<ResourceState> {
     const [users, nodes, templates, ruleSources, syncLogs, auditLogs] = await Promise.all([
       fetchUsers(currentToken),
       fetchNodes(currentToken),
@@ -489,6 +516,7 @@ export function App(): JSX.Element {
       userId: users.some((user) => user.id === current.userId) ? current.userId : firstUser?.id ?? ''
     }));
     setBindingUserId((current) => (users.some((user) => user.id === current) ? current : firstUser?.id ?? ''));
+    return { users, nodes, templates, ruleSources, syncLogs, auditLogs };
   }
 
   async function loadUserBindings(userId: string): Promise<void> {
@@ -734,10 +762,146 @@ export function App(): JSX.Element {
     setError('');
   }
 
+  async function copyHostedUrl(url: string, target: SubscriptionTarget): Promise<void> {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      setError('');
+      setMessage(`${target} 托管 URL：${url}`);
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setError('');
+      setMessage(`${target} 托管 URL 已复制`);
+    } catch (caughtError) {
+      reportValidationError(`复制失败：${getErrorMessage(caughtError)}`);
+    }
+  }
+
+  async function fetchRemoteNodeImportPreviewData(sourceUrl: string): Promise<NodeImportPreviewPayload> {
+    if (!token) {
+      throw new Error('当前未登录，无法抓取订阅 URL');
+    }
+
+    return previewNodeImportFromUrl(token, sourceUrl);
+  }
+
+  async function ensureHostedSubscriptions(input: {
+    currentResources: ResourceState;
+    importedNodes: ImportedNodePayload[];
+    sourceLabel: string;
+    importedConfig?: ImportedConfigPayload | null;
+  }): Promise<HostedSubscriptionResult> {
+    if (!token) {
+      throw new Error('当前未登录，无法生成托管 URL');
+    }
+
+    const matchedNodes = matchImportedNodesToRecords(input.importedNodes, input.currentResources.nodes).filter((node) => node.enabled);
+
+    if (matchedNodes.length === 0) {
+      throw new Error('导入完成，但没有匹配到可托管的启用节点');
+    }
+
+    let managedUser = findAutoHostedUser(input.currentResources.users);
+
+    if (!managedUser) {
+      managedUser = await createUser(token, {
+        name: AUTO_HOSTED_USER_NAME,
+        remark: AUTO_HOSTED_USER_REMARK
+      });
+    } else if (
+      managedUser.name !== AUTO_HOSTED_USER_NAME ||
+      managedUser.remark !== AUTO_HOSTED_USER_REMARK ||
+      managedUser.status !== 'active' ||
+      managedUser.expiresAt
+    ) {
+      managedUser = await updateUser(token, managedUser.id, {
+        name: AUTO_HOSTED_USER_NAME,
+        remark: AUTO_HOSTED_USER_REMARK,
+        status: 'active',
+        expiresAt: null
+      });
+    }
+
+    for (const target of SUBSCRIPTION_TARGETS) {
+      const desiredContent = buildAutoHostedTemplateContent(target, input.importedConfig);
+      const managedTemplate = findAutoHostedTemplate(input.currentResources.templates, target);
+
+      if (!managedTemplate) {
+        await createTemplate(token, {
+          name: AUTO_HOSTED_TEMPLATE_NAMES[target],
+          targetType: target,
+          content: desiredContent,
+          isDefault: true
+        });
+        continue;
+      }
+
+      const requiresContentRefresh = managedTemplate.content !== desiredContent;
+      const requiresStateRefresh =
+        managedTemplate.name !== AUTO_HOSTED_TEMPLATE_NAMES[target] ||
+        managedTemplate.status !== 'enabled' ||
+        !managedTemplate.isDefault;
+
+      if (requiresContentRefresh || requiresStateRefresh) {
+        await updateTemplate(token, managedTemplate.id, {
+          name: AUTO_HOSTED_TEMPLATE_NAMES[target],
+          content: desiredContent,
+          enabled: true,
+          isDefault: true,
+          ...(requiresContentRefresh ? { version: managedTemplate.version + 1 } : {})
+        });
+      }
+    }
+
+    const boundNodeIds = matchedNodes.map((node) => node.id);
+    await replaceUserNodeBindings(token, managedUser.id, boundNodeIds);
+
+    const targets = await Promise.all(
+      SUBSCRIPTION_TARGETS.map(async (target): Promise<HostedSubscriptionTargetState> => {
+        const url = buildHostedSubscriptionUrl(managedUser.token, target);
+
+        try {
+          const previewResult = await fetchPreview(token, managedUser.id, target);
+          return {
+            target,
+            url,
+            ok: true,
+            detail: `${previewResult.metadata.nodeCount} 个节点 / 模板 ${previewResult.metadata.templateName}`
+          };
+        } catch (caughtError) {
+          return {
+            target,
+            url,
+            ok: false,
+            detail: getErrorMessage(caughtError)
+          };
+        }
+      })
+    );
+
+    setPreviewForm((current) => ({ ...current, userId: managedUser.id }));
+    setBindingUserId(managedUser.id);
+    setBindingNodeIds(boundNodeIds);
+
+    return {
+      userId: managedUser.id,
+      userName: managedUser.name,
+      token: managedUser.token,
+      sourceLabel: input.sourceLabel,
+      nodeCount: boundNodeIds.length,
+      targets
+    };
+  }
+
   async function createImportedNodes(input: {
     importedNodes: ImportedNodePayload[];
     errorCount: number;
     onSuccess?: () => void;
+    autoHost?: {
+      sourceLabel: string;
+      importedConfig?: ImportedConfigPayload | null;
+    };
   }): Promise<void> {
     if (!token) return;
 
@@ -761,14 +925,31 @@ export function App(): JSX.Element {
           ...(importedNode.params ? { params: importedNode.params } : {})
         }))
       );
-      await refreshResources();
+      const nextResources = await refreshResources();
       input.onSuccess?.();
+      let nextHostedResult: HostedSubscriptionResult | null = null;
+
+      if (input.autoHost) {
+        nextHostedResult = await ensureHostedSubscriptions({
+          currentResources: nextResources,
+          importedNodes: input.importedNodes,
+          sourceLabel: input.autoHost.sourceLabel,
+          importedConfig: input.autoHost.importedConfig ?? null
+        });
+        setHostedSubscriptionResult(nextHostedResult);
+        await refreshResources();
+      }
+
+      const hostedSummary = nextHostedResult
+        ? `，已刷新托管 URL（${nextHostedResult.targets.filter((target) => target.ok).length}/${nextHostedResult.targets.length} 个目标已通过预览校验）`
+        : '，请到“用户”页完成绑定并在“预览”页验证输出';
+
       setMessage(
         `已处理 ${result.importedCount} 个节点（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 去重 ${
           result.duplicateCount ?? 0
         }）${
           input.errorCount > 0 ? `，另有 ${input.errorCount} 条解析失败未导入` : ''
-        }，请到“用户”页完成绑定并在“预览”页验证输出`
+        }${hostedSummary}`
       );
     } catch (caughtError) {
       await handleProtectedApiError(caughtError);
@@ -792,6 +973,24 @@ export function App(): JSX.Element {
     });
   }
 
+  async function handleImportShareLinksAndHost(): Promise<void> {
+    if (!token) return;
+
+    if (!nodeImportText.trim()) {
+      reportValidationError('请先粘贴分享链接');
+      return;
+    }
+
+    await createImportedNodes({
+      importedNodes: parsedNodeImport.nodes,
+      errorCount: parsedNodeImport.errors.length,
+      ...(parsedNodeImport.errors.length === 0 ? { onSuccess: () => setNodeImportText('') } : {}),
+      autoHost: {
+        sourceLabel: '节点文本导入'
+      }
+    });
+  }
+
   async function handleImportConfigNodes(): Promise<void> {
     if (!token) return;
 
@@ -803,6 +1002,24 @@ export function App(): JSX.Element {
     await createImportedNodes({
       importedNodes: parsedConfigImport.nodes,
       errorCount: parsedConfigImport.errors.length
+    });
+  }
+
+  async function handleImportConfigAndHost(): Promise<void> {
+    if (!token) return;
+
+    if (!parsedConfigImport) {
+      reportValidationError('请先粘贴可识别的 Mihomo / Clash YAML 或 sing-box JSON 配置');
+      return;
+    }
+
+    await createImportedNodes({
+      importedNodes: parsedConfigImport.nodes,
+      errorCount: parsedConfigImport.errors.length,
+      autoHost: {
+        sourceLabel: `完整配置导入 / ${parsedConfigImport.targetType}`,
+        importedConfig: parsedConfigImport
+      }
     });
   }
 
@@ -848,7 +1065,7 @@ export function App(): JSX.Element {
     setRemoteNodeImportPreview(null);
 
     try {
-      const result = await previewNodeImportFromUrl(token, nodeImportSourceUrl.trim());
+      const result = await fetchRemoteNodeImportPreviewData(nodeImportSourceUrl.trim());
       setRemoteNodeImportPreview(result);
       setMessage(
         result.nodes.length > 0
@@ -862,6 +1079,51 @@ export function App(): JSX.Element {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleImportRemoteUrlAndHost(): Promise<void> {
+    if (!token) return;
+
+    const sourceUrl = nodeImportSourceUrl.trim();
+
+    if (!sourceUrl) {
+      reportValidationError('请先填写订阅 URL');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    let previewResult: NodeImportPreviewPayload;
+
+    try {
+      previewResult = await fetchRemoteNodeImportPreviewData(sourceUrl);
+      setRemoteNodeImportPreview(previewResult);
+      setMessage(
+        previewResult.nodes.length > 0
+          ? `远程订阅已抓取，可导入 ${previewResult.nodes.length} 个节点${
+              previewResult.errors.length > 0 ? `，另有 ${previewResult.errors.length} 条解析失败` : ''
+            }`
+          : '远程订阅已抓取，但当前没有解析出可导入节点'
+      );
+    } catch (caughtError) {
+      await handleProtectedApiError(caughtError);
+      return;
+    } finally {
+      setLoading(false);
+    }
+
+    if (previewResult.nodes.length === 0) {
+      return;
+    }
+
+    await createImportedNodes({
+      importedNodes: previewResult.nodes,
+      errorCount: previewResult.errors.length,
+      autoHost: {
+        sourceLabel: `订阅 URL / ${sourceUrl}`
+      }
+    });
   }
 
   async function handleCreatePreviewedRemoteNodes(): Promise<void> {
@@ -1370,11 +1632,40 @@ export function App(): JSX.Element {
               这里优先只保留三条主路径：节点文本导入、订阅 URL 解析、完整配置导入。手动协议字段向导和远程 JSON 节点源同步还在，但已经下沉到下方“高级手动入口”。
             </p>
             <div className="inline-meta">
-              <span>节点创建后还需要到“用户”页绑定</span>
+              <span>一键托管模式会自动维护用户、模板和绑定</span>
               <span>分享链接 / Base64 / YAML / JSON 都支持</span>
               <span>链式代理会继续映射到 `params.upstreamProxy`</span>
             </div>
           </article>
+
+          {hostedSubscriptionResult ? (
+            <article className="panel full-width">
+              <h2>当前托管 URL</h2>
+              <p className="helper">
+                最近一次来源：{hostedSubscriptionResult.sourceLabel}。系统会复用同一组个人托管链接，并把这次导入匹配到的 {hostedSubscriptionResult.nodeCount} 个节点绑定进去。
+              </p>
+              <div className="metadata-grid">
+                {hostedSubscriptionResult.targets.map((target) => (
+                  <div className="result-card" key={target.target}>
+                    <strong>{target.target}</strong>
+                    <a className="result-link" href={target.url} target="_blank" rel="noreferrer">
+                      {target.url}
+                    </a>
+                    <span>{target.ok ? '预览校验通过' : '预览校验失败'}</span>
+                    <span>{target.detail}</span>
+                    <div className="inline-actions">
+                      <button type="button" className="secondary" onClick={() => void copyHostedUrl(target.url, target.target)}>
+                        复制 URL
+                      </button>
+                      <a className="button-link" href={target.url} target="_blank" rel="noreferrer">
+                        打开
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ) : null}
 
           <article className="panel">
             <h2>节点文本导入</h2>
@@ -1407,9 +1698,17 @@ export function App(): JSX.Element {
                 <button
                   type="button"
                   disabled={loading || parsedNodeImport.nodes.length === 0}
+                  onClick={() => void handleImportShareLinksAndHost()}
+                >
+                  导入并生成托管 URL
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={loading || parsedNodeImport.nodes.length === 0}
                   onClick={() => void handleImportShareLinks()}
                 >
-                  批量创建 {parsedNodeImport.nodes.length} 个节点
+                  仅导入节点 {parsedNodeImport.nodes.length}
                 </button>
                 {firstImportedNode ? (
                   <button
@@ -1464,11 +1763,19 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                Worker 会远程抓取并做一次性解析预览。这里适合先确认 URL 里到底是分享链接订阅、YAML、JSON 还是节点数组；不会自动保存成定时任务。
+                Worker 会远程抓取并做一次性解析预览。你可以先确认 URL 里到底是分享链接订阅、YAML、JSON 还是节点数组，也可以直接导入并生成托管 URL；不会自动保存成定时任务。
               </p>
               <div className="inline-actions full-span">
                 <button
                   type="button"
+                  disabled={loading || !nodeImportSourceUrl.trim()}
+                  onClick={() => void handleImportRemoteUrlAndHost()}
+                >
+                  直接导入并生成托管 URL
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
                   disabled={loading || !nodeImportSourceUrl.trim()}
                   onClick={() => void handlePreviewNodeImportFromUrl()}
                 >
@@ -1486,10 +1793,11 @@ export function App(): JSX.Element {
                 {remoteNodeImportPreview ? (
                   <button
                     type="button"
+                    className="secondary"
                     disabled={loading || remoteNodeImportPreview.nodes.length === 0}
                     onClick={() => void handleCreatePreviewedRemoteNodes()}
                   >
-                    批量创建 {remoteNodeImportPreview.nodes.length} 个节点
+                    仅导入节点 {remoteNodeImportPreview.nodes.length}
                   </button>
                 ) : null}
               </div>
@@ -1570,11 +1878,19 @@ export function App(): JSX.Element {
                     <button
                       type="button"
                       disabled={loading || parsedConfigImport.nodes.length === 0}
+                      onClick={() => void handleImportConfigAndHost()}
+                    >
+                      导入并生成托管 URL
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={loading || parsedConfigImport.nodes.length === 0}
                       onClick={() => void handleImportConfigNodes()}
                     >
-                      批量创建 {parsedConfigImport.nodes.length} 个节点
+                      仅导入节点 {parsedConfigImport.nodes.length}
                     </button>
-                    <button type="button" disabled={loading} onClick={() => void handleCreateImportedTemplate()}>
+                    <button type="button" className="secondary" disabled={loading} onClick={() => void handleCreateImportedTemplate()}>
                       创建 {parsedConfigImport.targetType} 模板
                     </button>
                     <button
@@ -2214,6 +2530,80 @@ function selectPreferredMihomoTemplate(templates: TemplateRecord[]): TemplateRec
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function findAutoHostedUser(users: UserRecord[]): UserRecord | null {
+  return (
+    users.find((user) => user.remark === AUTO_HOSTED_USER_REMARK) ??
+    users.find((user) => user.name === AUTO_HOSTED_USER_NAME) ??
+    null
+  );
+}
+
+function findAutoHostedTemplate(templates: TemplateRecord[], target: SubscriptionTarget): TemplateRecord | null {
+  return (
+    templates.find((template) => template.targetType === target && template.name === AUTO_HOSTED_TEMPLATE_NAMES[target]) ?? null
+  );
+}
+
+function buildAutoHostedTemplateContent(
+  target: SubscriptionTarget,
+  importedConfig?: ImportedConfigPayload | null
+): string {
+  if (importedConfig?.targetType === target) {
+    return importedConfig.templateContent;
+  }
+
+  return target === 'mihomo' ? AUTO_HOSTED_MIHOMO_TEMPLATE : AUTO_HOSTED_SINGBOX_TEMPLATE;
+}
+
+function buildHostedSubscriptionUrl(token: string, target: SubscriptionTarget): string {
+  const origin =
+    typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'http://127.0.0.1:8787';
+  return `${origin}/s/${encodeURIComponent(token)}/${target}`;
+}
+
+function matchImportedNodesToRecords(importedNodes: ImportedNodePayload[], records: NodeRecord[]): NodeRecord[] {
+  const signatures = new Set(importedNodes.map(buildImportedNodeSignature));
+  return records.filter((record) => signatures.has(buildNodeRecordSignature(record)));
+}
+
+function buildImportedNodeSignature(node: ImportedNodePayload): string {
+  return [
+    node.name.trim(),
+    canonicalizeNodeProtocol(node.protocol),
+    node.server.trim(),
+    String(node.port),
+    stableJsonStringify(node.credentials ?? null),
+    stableJsonStringify(node.params ?? null)
+  ].join('|');
+}
+
+function buildNodeRecordSignature(node: NodeRecord): string {
+  return [
+    node.name.trim(),
+    canonicalizeNodeProtocol(node.protocol),
+    node.server.trim(),
+    String(node.port),
+    stableJsonStringify(node.credentials ?? null),
+    stableJsonStringify(node.params ?? null)
+  ].join('|');
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(',')}]`;
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort((left, right) => left.localeCompare(right))
+      .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`)
+      .join(',')}}`;
+  }
+
+  return JSON.stringify(value);
 }
 
 function buildNodeMutationInput(input: NodeDraftForm): {

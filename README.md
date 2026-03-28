@@ -149,6 +149,28 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 - `/s/:token/mihomo`
 - `/s/:token/singbox`
 
+## 个人使用的最短路径
+
+如果你的需求只是：
+
+- 导入节点文本
+- 或导入远程订阅 URL
+- 或导入完整 Mihomo / sing-box 配置
+- 然后立刻拿到可托管的订阅 URL
+
+现在优先直接用后台 `节点` 页的三个主入口：
+
+- `节点文本导入`
+- `订阅 URL 解析`
+- `导入完整配置`
+
+对应主按钮：
+
+- `导入并生成托管 URL`
+- `直接导入并生成托管 URL`
+
+系统会自动维护托管用户、默认模板和节点绑定，你不需要再手动先去创建用户、模板或规则集。
+
 ## 关键环境变量
 
 - `ADMIN_JWT_SECRET`：管理员会话签名密钥

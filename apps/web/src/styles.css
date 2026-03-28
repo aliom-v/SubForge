@@ -50,6 +50,10 @@ button:disabled {
   cursor: not-allowed;
 }
 
+a {
+  color: #8fc5ff;
+}
+
 input,
 select,
 textarea {
@@ -514,10 +518,26 @@ pre {
   color: #eef6ff;
 }
 
+.result-link {
+  word-break: break-all;
+}
+
 .inline-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: rgba(124, 184, 255, 0.16);
+  color: #d9e9f9;
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .checkbox-list {
