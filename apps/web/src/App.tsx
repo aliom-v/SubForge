@@ -1414,7 +1414,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                当前支持 `vless://`、`trojan://`、`vmess://`、`ss://`、`ssr://`、`tuic://`、`hysteria2://` / `hy2://` 分享链接，也支持直接粘贴整段 Base64 订阅文本、Clash / Mihomo YAML 配置、sing-box JSON 配置和 JSON 节点清单；如果你拿到的是订阅 URL，请使用下方远程抓取预览。
+                当前支持 `vless://`、`trojan://`、`vmess://`、`ss://`、`ssr://`、`tuic://`、`hysteria2://` / `hy2://` 分享链接，也支持直接粘贴整段 Base64 订阅文本、Clash / Mihomo YAML 配置、sing-box JSON 配置和 JSON 节点清单；如果是只引用 `proxy-providers` 的 Mihomo YAML，这里可能只能识别到 provider 内联的代理，纯 provider 骨架更适合放到下方“导入完整配置”。
               </p>
               {parsedNodeImport.lineCount > 0 ? (
                 <p className="helper full-span">
@@ -1570,7 +1570,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                这里不是只提取节点。识别成功后，会同时给出节点清单和一个可创建模板的配置骨架：Mihomo 会保留 `proxy-groups` / `rules`，sing-box 会保留静态 `outbounds` / `route.rules`，动态节点部分改成 SubForge 模板插槽。
+                这里不是只提取节点。识别成功后，会同时给出节点清单和一个可创建模板的配置骨架：Mihomo 会保留 `proxy-groups` / `rules` / `proxy-providers`，sing-box 会保留静态 `outbounds` / `route.rules`，动态节点部分改成 SubForge 模板插槽。
               </p>
               {configImportText.trim() && !parsedConfigImport ? (
                 <p className="helper full-span">

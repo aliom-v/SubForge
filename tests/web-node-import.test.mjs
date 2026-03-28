@@ -274,6 +274,32 @@ test('parseNodeImportText parses clash-like yaml proxy configs', () => {
   assert.equal(result.nodes[1].protocol, 'trojan');
 });
 
+test('parseNodeImportText parses mihomo proxy-providers with embedded proxies', () => {
+  const result = parseNodeImportText([
+    'proxy-providers:',
+    '  provider-a:',
+    '    type: file',
+    '    proxies:',
+    '      - name: HK Provider',
+    '        type: vless',
+    '        server: hk-provider.example.com',
+    '        port: 443',
+    '        uuid: 11111111-1111-1111-1111-111111111111',
+    '        tls: true',
+    'proxy-groups:',
+    '  - name: Auto',
+    '    type: select',
+    '    use:',
+    '      - provider-a'
+  ].join('\n'));
+
+  assert.equal(result.nodes.length, 1);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.lineCount, 1);
+  assert.equal(result.nodes[0].name, 'HK Provider');
+  assert.equal(result.nodes[0].protocol, 'vless');
+});
+
 test('parseNodeImportText parses sing-box outbound configs', () => {
   const result = parseNodeImportText(
     JSON.stringify({
@@ -384,6 +410,37 @@ test('parseImportedConfig builds mihomo template content and preserves upstream 
   assert.match(result.templateContent, /{{proxies}}/);
   assert.match(result.templateContent, /proxy-groups:/);
   assert.match(result.templateContent, /MATCH,DIRECT/);
+});
+
+test('parseImportedConfig keeps mihomo proxy-provider skeletons even when there are no local proxies', () => {
+  const result = parseImportedConfig([
+    'proxy-providers:',
+    '  provider-a:',
+    '    type: http',
+    '    url: https://example.com/provider.yaml',
+    '    path: ./providers/provider-a.yaml',
+    '    interval: 3600',
+    'proxy-groups:',
+    '  - name: Auto',
+    '    type: select',
+    '    use:',
+    '      - provider-a',
+    'rules:',
+    '  - MATCH,Auto'
+  ].join('\n'));
+
+  assert.ok(result);
+
+  if (!result) {
+    throw new Error('expected mihomo provider config import result');
+  }
+
+  assert.equal(result.targetType, 'mihomo');
+  assert.equal(result.nodes.length, 0);
+  assert.match(result.templateContent, /proxy-providers:/);
+  assert.match(result.templateContent, /\{\{proxies\}\}/);
+  assert.match(result.templateContent, /use:/);
+  assert.match(result.warnings.join('\n'), /proxy-providers/);
 });
 
 test('parseImportedConfig builds sing-box template content and preserves static outbounds', () => {

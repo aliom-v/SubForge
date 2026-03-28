@@ -295,6 +295,84 @@ function looksLikeClashLikeConfig(lines: string[]): boolean {
   return hasTopLevelKey && hasNamedListItem;
 }
 
+function parseYamlSafely(content: string): unknown | null {
+  try {
+    return parseYaml(content) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function collectNestedNodeItems(record: Record<string, unknown>, key: string): unknown[] {
+  const container = record[key];
+
+  if (!isObjectRecord(container)) {
+    return [];
+  }
+
+  const items: unknown[] = [];
+
+  for (const value of Object.values(container)) {
+    if (!isObjectRecord(value)) {
+      continue;
+    }
+
+    if (Array.isArray(value.proxies)) {
+      items.push(...value.proxies);
+      continue;
+    }
+
+    if (Array.isArray(value.nodes)) {
+      items.push(...value.nodes);
+      continue;
+    }
+
+    if (Array.isArray(value.servers)) {
+      items.push(...value.servers);
+    }
+  }
+
+  return items;
+}
+
+function getYamlNodeCandidates(parsed: unknown): unknown[] {
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  if (!isObjectRecord(parsed)) {
+    return [];
+  }
+
+  if (Array.isArray(parsed.proxies)) {
+    return parsed.proxies;
+  }
+
+  if (Array.isArray(parsed.nodes)) {
+    return parsed.nodes;
+  }
+
+  if (Array.isArray(parsed.servers)) {
+    return parsed.servers;
+  }
+
+  const providerItems = collectNestedNodeItems(parsed, 'proxy-providers');
+
+  if (providerItems.length > 0) {
+    return providerItems;
+  }
+
+  return [];
+}
+
+function looksLikeProxyProviderOnlyYaml(parsed: unknown): boolean {
+  return (
+    isObjectRecord(parsed) &&
+    !Array.isArray(parsed.proxies) &&
+    isObjectRecord(parsed['proxy-providers'])
+  );
+}
+
 function looksLikeSingboxLikeConfig(value: string, lines: string[]): boolean {
   const trimmed = value.trim();
   const normalizedLines = lines.map((line) => line.trim().toLowerCase());
@@ -363,6 +441,12 @@ function looksLikeJsonNodeCollection(value: string): boolean {
 function buildUnsupportedImportHint(content: string, lines: string[]): string | null {
   if (looksLikeHtmlDocument(content)) {
     return '当前内容看起来是 HTML 页面，不是订阅分享链接；请先检查订阅 URL 是否正确，或是否被登录页 / 鉴权页 / 重定向拦截。';
+  }
+
+  const parsedYaml = parseYamlSafely(content);
+
+  if (looksLikeProxyProviderOnlyYaml(parsedYaml)) {
+    return '当前内容看起来是 Clash / Mihomo 的 proxy-providers 配置，本地没有可直接导入的 proxies。若只想保留模板骨架，请使用“导入完整配置”；若想导入节点，请粘贴 provider 返回的 YAML 或订阅内容。';
   }
 
   if (looksLikeClashLikeConfig(lines)) {
@@ -962,32 +1046,16 @@ function tryParseJsonNodeImportContent(content: string): StructuredNodeImportRes
 }
 
 function tryParseYamlNodeImportContent(content: string): StructuredNodeImportResult | null {
-  let parsed: unknown;
+  const parsed = parseYamlSafely(content);
 
-  try {
-    parsed = parseYaml(content) as unknown;
-  } catch {
+  if (parsed == null) {
     return null;
   }
 
-  if (Array.isArray(parsed)) {
-    return parseStructuredNodeList(parsed, '个代理', parseClashProxyRecord);
-  }
+  const nodeCandidates = getYamlNodeCandidates(parsed);
 
-  if (!isObjectRecord(parsed)) {
-    return null;
-  }
-
-  if (Array.isArray(parsed.proxies)) {
-    return parseStructuredNodeList(parsed.proxies, '个代理', parseClashProxyRecord);
-  }
-
-  if (Array.isArray(parsed.nodes)) {
-    return parseStructuredNodeList(parsed.nodes, '个节点', parseGenericNodeRecord);
-  }
-
-  if (Array.isArray(parsed.servers)) {
-    return parseStructuredNodeList(parsed.servers, '个节点', parseGenericNodeRecord);
+  if (nodeCandidates.length > 0) {
+    return parseStructuredNodeList(nodeCandidates, '个代理', parseClashProxyRecord);
   }
 
   return null;
@@ -1397,26 +1465,40 @@ function isImportableSingboxOutboundRecord(value: unknown): boolean {
 }
 
 function buildMihomoImportedTemplate(content: string): ImportedConfigPayload | null {
-  let parsed: unknown;
+  const parsed = parseYamlSafely(content);
 
-  try {
-    parsed = parseYaml(content) as unknown;
-  } catch {
+  if (!isObjectRecord(parsed)) {
     return null;
   }
 
-  if (!isObjectRecord(parsed) || !Array.isArray(parsed.proxies)) {
+  const hasMihomoShape =
+    Array.isArray(parsed.proxies) ||
+    Array.isArray(parsed['proxy-groups']) ||
+    Array.isArray(parsed.rules) ||
+    isObjectRecord(parsed['proxy-providers']);
+
+  if (!hasMihomoShape) {
     return null;
   }
 
-  const nodeResult = parseStructuredNodeList(parsed.proxies, '个代理', parseClashProxyRecord);
+  const nodeCandidates = getYamlNodeCandidates(parsed);
+  const nodeResult =
+    nodeCandidates.length > 0
+      ? parseStructuredNodeList(nodeCandidates, '个代理', parseClashProxyRecord)
+      : { nodes: [], errors: [], lineCount: 0 };
   const warnings: string[] = [];
   const templateObject = cloneJsonLike(parsed);
 
   const hadProxyGroups = Array.isArray(templateObject['proxy-groups']);
   const hadRules = Array.isArray(templateObject.rules);
+  const hadLocalProxies = Array.isArray(templateObject.proxies);
+  const hasProxyProviders = isObjectRecord(templateObject['proxy-providers']);
 
   templateObject.proxies = '__SUBFORGE_MIHOMO_PROXIES__';
+
+  if (!hadLocalProxies && hasProxyProviders) {
+    warnings.push('检测到当前配置主要引用 proxy-providers，本地没有可直接导入的 proxies；已保留模板骨架，并注入动态 proxies 占位符。');
+  }
 
   if (!hadProxyGroups) {
     templateObject['proxy-groups'] = '__SUBFORGE_MIHOMO_PROXY_GROUPS__';
