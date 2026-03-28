@@ -204,18 +204,6 @@ function summarizeImportErrors(errors: string[]): string[] {
   });
 }
 
-const nodeImportPlaceholder = `[
-  {
-    "name": "HK-01",
-    "protocol": "vless",
-    "server": "hk.example.com",
-    "port": 443,
-    "enabled": true,
-    "credentials": { "uuid": "replace-with-uuid" },
-    "params": { "tls": true, "sni": "hk.example.com" }
-  }
-]`;
-
 const fullConfigImportPlaceholder = `# Mihomo / Clash YAML
 proxies:
   - name: HK Relay
@@ -244,7 +232,6 @@ export function App(): JSX.Element {
   const [preview, setPreview] = useState<PreviewPayload | null>(null);
   const [syncResult, setSyncResult] = useState<RuleSourceSyncPayload | null>(null);
   const [cacheRebuildResult, setCacheRebuildResult] = useState<CacheRebuildPayload | null>(null);
-  const [nodeImportResult, setNodeImportResult] = useState<NodeImportPayload | null>(null);
   const [remoteNodeImportResult, setRemoteNodeImportResult] = useState<NodeImportPayload | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatusPayload | null>(null);
 
@@ -350,7 +337,6 @@ export function App(): JSX.Element {
     setPreview(null);
     setSyncResult(null);
     setCacheRebuildResult(null);
-    setNodeImportResult(null);
     setRemoteNodeImportResult(null);
     setRemoteNodeImportPreview(null);
     setBindingUserId('');
@@ -930,36 +916,6 @@ export function App(): JSX.Element {
     }, '节点已删除');
   }
 
-  async function handleImportNodes(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token) return;
-
-    const parsed = parseNodeImportDraft(nodeImportText);
-
-    if (!parsed.ok) {
-      reportValidationError(parsed.error);
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    setMessage('');
-
-    try {
-      const result = await importNodes(token, parsed.nodes);
-      setNodeImportResult(result);
-      setNodeImportText('');
-      await refreshResources();
-      setMessage(
-        `已处理 ${result.importedCount} 个节点（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 去重 ${result.duplicateCount ?? 0}）`
-      );
-    } catch (caughtError) {
-      await handleProtectedApiError(caughtError);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function handleImportRemoteNodes(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!token) return;
@@ -1408,38 +1364,26 @@ export function App(): JSX.Element {
 
       {activeTab === 'nodes' ? (
         <section className="panel-grid users-grid">
-          <article className="panel">
-            <h2>节点录入说明</h2>
-            <ul className="overview-list">
-              <li>当前支持手动录入、`vless://` / `trojan://` / `vmess://` / `ss://` / `ssr://` / `tuic://` / `hysteria2://` 分享链接导入，以及订阅 URL 远程抓取预览导入。</li>
-              <li>节点创建后还需要到“用户”页完成绑定，否则订阅不会包含该节点。</li>
-              <li>要生成真实可用节点，通常还需要补齐 `credentials` 与 `params`。</li>
-              <li>常见协议 `vless` / `trojan` / `vmess` / `ss` / `ssr` / `tuic` / `hysteria2` 已提供结构化向导；更复杂变体继续使用原始 JSON。</li>
-              <li>表单里的 JSON 留空或填写 `null` 表示不写入或清空 metadata。</li>
-            </ul>
-            <div className="metadata-grid">
-              <div className="result-card">
-                <strong>凭据示例</strong>
-                <pre>{nodeCreateExamples.credentials}</pre>
-              </div>
-              <div className="result-card">
-                <strong>参数示例</strong>
-                <pre>{nodeCreateExamples.params}</pre>
-              </div>
-            </div>
+          <article className="panel full-width">
+            <h2>节点主入口</h2>
             <p className="helper">
-              当前支持“手动录入 + 分享链接导入 + 订阅 URL 远程预览导入 + 远程节点源手动同步”四条路径；但仍不支持把订阅 URL 自动持久化为可定时同步的节点源任务。
+              这里优先只保留三条主路径：节点文本导入、订阅 URL 解析、完整配置导入。手动协议字段向导和远程 JSON 节点源同步还在，但已经下沉到下方“高级手动入口”。
             </p>
+            <div className="inline-meta">
+              <span>节点创建后还需要到“用户”页绑定</span>
+              <span>分享链接 / Base64 / YAML / JSON 都支持</span>
+              <span>链式代理会继续映射到 `params.upstreamProxy`</span>
+            </div>
           </article>
 
           <article className="panel">
-            <h2>导入分享链接</h2>
+            <h2>节点文本导入</h2>
             <div className="form-grid">
-              <Field label="分享链接">
+              <Field label="分享链接 / Base64 / 节点 JSON">
                 <textarea
                   value={nodeImportText}
                   onChange={(event) => setNodeImportText(event.target.value)}
-                  rows={8}
+                  rows={10}
                   placeholder={[
                     'vless://uuid@host:443?security=tls&type=ws&sni=sub.example.com&path=%2Fws#HK%20VLESS',
                     'trojan://password@host:443?sni=sub.example.com#JP%20Trojan',
@@ -1452,7 +1396,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                当前支持 `vless://`、`trojan://`、`vmess://`、`ss://`、`ssr://`、`tuic://`、`hysteria2://` / `hy2://` 分享链接，也支持直接粘贴整段 Base64 订阅文本、Clash / Mihomo YAML 配置、sing-box JSON 配置和 JSON 节点清单；如果是只引用 `proxy-providers` 的 Mihomo YAML，这里可能只能识别到 provider 内联的代理，纯 provider 骨架更适合放到下方“导入完整配置”。
+                适合直接粘贴节点文本。这里会优先识别分享链接、Base64 订阅文本和 JSON 节点清单；如果是 provider 骨架型 Mihomo 配置，更适合放到右侧“完整配置导入”。
               </p>
               {parsedNodeImport.lineCount > 0 ? (
                 <p className="helper full-span">
@@ -1486,25 +1430,28 @@ export function App(): JSX.Element {
                 </div>
               ) : null}
               {parsedNodeImport.nodes.length > 0 ? (
-                <div className="full-span">
-                  <ResourceTable
-                    columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
-                    rows={parsedNodeImport.nodes.map((node, index) => [
-                      node.name,
-                      node.protocol,
-                      node.server,
-                      node.port,
-                      summarizeNodeMetadataParts(node.credentials, node.params),
-                      <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
-                    ])}
-                  />
-                </div>
+                <details className="disclosure full-span" open={parsedNodeImport.nodes.length <= 3}>
+                  <summary>查看识别结果（{parsedNodeImport.nodes.length}）</summary>
+                  <div className="disclosure-body">
+                    <ResourceTable
+                      columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
+                      rows={parsedNodeImport.nodes.map((node, index) => [
+                        node.name,
+                        node.protocol,
+                        node.server,
+                        node.port,
+                        summarizeNodeMetadataParts(node.credentials, node.params),
+                        <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
+                      ])}
+                    />
+                  </div>
+                </details>
               ) : null}
             </div>
           </article>
 
           <article className="panel">
-            <h2>导入订阅 URL</h2>
+            <h2>订阅 URL 解析</h2>
             <div className="form-grid">
               <Field label="订阅 URL">
                 <input
@@ -1517,7 +1464,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                Worker 会以管理员身份发起一次远程抓取并解析预览。当前支持分享链接订阅、Base64 文本、Clash / Mihomo YAML、sing-box JSON 和 JSON 节点清单；但不会把该 URL 保存成远程节点源，也不会自动持续同步。
+                Worker 会远程抓取并做一次性解析预览。这里适合先确认 URL 里到底是分享链接订阅、YAML、JSON 还是节点数组；不会自动保存成定时任务。
               </p>
               <div className="inline-actions full-span">
                 <button
@@ -1550,18 +1497,12 @@ export function App(): JSX.Element {
                 <>
                   <div className="metadata-grid full-span">
                     <div className="result-card">
-                      <strong>远程来源</strong>
-                      <pre>{remoteNodeImportPreview.sourceUrl}</pre>
-                    </div>
-                    <div className="result-card">
                       <strong>抓取摘要</strong>
-                      <pre>{[
-                        `HTTP ${remoteNodeImportPreview.upstreamStatus}`,
-                        `耗时 ${remoteNodeImportPreview.durationMs} ms`,
-                        `体积 ${remoteNodeImportPreview.fetchedBytes} bytes`,
-                        `内容 ${formatNodeImportContentEncoding(remoteNodeImportPreview.contentEncoding)}`,
-                        `有效行 ${remoteNodeImportPreview.lineCount}`
-                      ].join('\n')}</pre>
+                      <span>HTTP {remoteNodeImportPreview.upstreamStatus}</span>
+                      <span>耗时 {remoteNodeImportPreview.durationMs} ms</span>
+                      <span>体积 {remoteNodeImportPreview.fetchedBytes} bytes</span>
+                      <span>内容 {formatNodeImportContentEncoding(remoteNodeImportPreview.contentEncoding)}</span>
+                      <span>有效行 {remoteNodeImportPreview.lineCount}</span>
                     </div>
                   </div>
                   {summarizedRemoteNodeImportErrors.length > 0 ? (
@@ -1573,19 +1514,22 @@ export function App(): JSX.Element {
                     </div>
                   ) : null}
                   {remoteNodeImportPreview.nodes.length > 0 ? (
-                    <div className="full-span">
-                      <ResourceTable
-                        columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
-                        rows={remoteNodeImportPreview.nodes.map((node, index) => [
-                          node.name,
-                          node.protocol,
-                          node.server,
-                          node.port,
-                          summarizeNodeMetadataParts(node.credentials, node.params),
-                          <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
-                        ])}
-                      />
-                    </div>
+                    <details className="disclosure full-span" open={remoteNodeImportPreview.nodes.length <= 3}>
+                      <summary>查看识别结果（{remoteNodeImportPreview.nodes.length}）</summary>
+                      <div className="disclosure-body">
+                        <ResourceTable
+                          columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
+                          rows={remoteNodeImportPreview.nodes.map((node, index) => [
+                            node.name,
+                            node.protocol,
+                            node.server,
+                            node.port,
+                            summarizeNodeMetadataParts(node.credentials, node.params),
+                            <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
+                          ])}
+                        />
+                      </div>
+                    </details>
                   ) : (
                     <p className="helper full-span">
                       当前没有解析出可导入节点。请先检查远程内容是否确实包含分享链接、可识别的 `proxies` / `outbounds`，或完整的节点数组。
@@ -1596,19 +1540,19 @@ export function App(): JSX.Element {
             </div>
           </article>
 
-          <article className="panel full-width">
+          <article className="panel">
             <h2>导入完整配置</h2>
             <div className="form-grid">
               <Field label="Mihomo / Clash YAML 或 sing-box JSON" full>
                 <textarea
                   value={configImportText}
                   onChange={(event) => setConfigImportText(event.target.value)}
-                  rows={16}
+                  rows={10}
                   placeholder={fullConfigImportPlaceholder}
                 />
               </Field>
               <p className="helper full-span">
-                这里不是只提取节点。识别成功后，会同时给出节点清单和一个可创建模板的配置骨架：Mihomo 会保留 `proxy-groups` / `rules` / `proxy-providers`，sing-box 会保留静态 `outbounds` / `route.rules`，动态节点部分改成 SubForge 模板插槽。
+                这里不是只提取节点。识别成功后，会同时给出节点清单和模板骨架：Mihomo 会保留 `proxy-groups` / `rules` / `proxy-providers`，sing-box 会保留静态 `outbounds` / `route.rules`。
               </p>
               {configImportText.trim() && !parsedConfigImport ? (
                 <p className="helper full-span">
@@ -1681,24 +1625,32 @@ export function App(): JSX.Element {
                       </ul>
                     </div>
                   ) : null}
-                  <div className="result-card full-span">
-                    <strong>模板预览</strong>
-                    <pre>{parsedConfigImport.templateContent}</pre>
-                  </div>
-                  {parsedConfigImport.nodes.length > 0 ? (
-                    <div className="full-span">
-                      <ResourceTable
-                        columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
-                        rows={parsedConfigImport.nodes.map((node, index) => [
-                          node.name,
-                          node.protocol,
-                          node.server,
-                          node.port,
-                          summarizeNodeMetadataParts(node.credentials, node.params),
-                          <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
-                        ])}
-                      />
+                  <details className="disclosure full-span">
+                    <summary>查看模板预览</summary>
+                    <div className="disclosure-body">
+                      <div className="result-card">
+                        <strong>模板预览</strong>
+                        <pre>{parsedConfigImport.templateContent}</pre>
+                      </div>
                     </div>
+                  </details>
+                  {parsedConfigImport.nodes.length > 0 ? (
+                    <details className="disclosure full-span" open={parsedConfigImport.nodes.length <= 3}>
+                      <summary>查看识别节点（{parsedConfigImport.nodes.length}）</summary>
+                      <div className="disclosure-body">
+                        <ResourceTable
+                          columns={['名称', '协议', '地址', '端口', '元数据', '操作']}
+                          rows={parsedConfigImport.nodes.map((node, index) => [
+                            node.name,
+                            node.protocol,
+                            node.server,
+                            node.port,
+                            summarizeNodeMetadataParts(node.credentials, node.params),
+                            <button type="button" key={`${node.name}-${index}`} onClick={() => loadImportedNodeToCreateForm(node)}>载入表单</button>
+                          ])}
+                        />
+                      </div>
+                    </details>
                   ) : null}
                       </>
                     );
@@ -1708,127 +1660,122 @@ export function App(): JSX.Element {
             </div>
           </article>
 
-          <article className="panel">
-            <h2>创建节点</h2>
-            <form className="form-grid" onSubmit={handleCreateNode}>
-              <Field label="名称"><input value={nodeForm.name} onChange={(event) => setNodeForm((current) => ({ ...current, name: event.target.value }))} /></Field>
-              <Field label="协议">
-                <input
-                  list="node-protocol-options"
-                  value={nodeForm.protocol}
-                  onChange={(event) => setNodeForm((current) => ({ ...current, protocol: event.target.value }))}
-                  placeholder="vless / trojan / vmess / ss / hysteria2"
-                />
-              </Field>
-              <Field label="地址"><input value={nodeForm.server} onChange={(event) => setNodeForm((current) => ({ ...current, server: event.target.value }))} /></Field>
-              <Field label="端口"><input type="number" value={nodeForm.port} onChange={(event) => setNodeForm((current) => ({ ...current, port: Number(event.target.value) }))} /></Field>
-              <NodeProtocolAssistant
-                protocol={nodeForm.protocol}
-                credentialsText={nodeForm.credentialsText}
-                paramsText={nodeForm.paramsText}
-                onMetadataChange={({ credentialsText, paramsText }) =>
-                  setNodeForm((current) => ({ ...current, credentialsText, paramsText }))
-                }
-              />
-              <Field label="上游代理">
-                <select value={createFormUpstreamProxy} onChange={(event) => updateCreateFormUpstreamProxy(event.target.value)}>
-                  <option value="">直接连接</option>
-                  <optgroup label="节点">
-                    {resources.nodes
-                      .filter((node) => node.name !== nodeForm.name.trim())
-                      .map((node) => <option key={node.id} value={node.name}>{node.name} / {node.protocol}</option>)}
-                  </optgroup>
-                  {mihomoProxyGroupNames.length > 0 ? (
-                    <optgroup label={mihomoTopology.templateName ? `Mihomo 代理组 / ${mihomoTopology.templateName}` : 'Mihomo 代理组'}>
-                      {mihomoProxyGroupNames.map((groupName) => <option key={`create-group-${groupName}`} value={groupName}>{groupName} / group</option>)}
-                    </optgroup>
-                  ) : null}
-                </select>
-              </Field>
-              <Field label="凭据 JSON" full>
-                <textarea
-                  value={nodeForm.credentialsText}
-                  onChange={(event) => setNodeForm((current) => ({ ...current, credentialsText: event.target.value }))}
-                  rows={6}
-                  placeholder={nodeCreateExamples.credentials}
-                />
-              </Field>
-              <Field label="参数 JSON" full>
-                <textarea
-                  value={nodeForm.paramsText}
-                  onChange={(event) => setNodeForm((current) => ({ ...current, paramsText: event.target.value }))}
-                  rows={6}
-                  placeholder={nodeCreateExamples.params}
-                />
-              </Field>
-              <p className="helper full-span">
-                可直接手动录入，也可先用上方导入入口回填。上游代理会写入 `params.upstreamProxy`，渲染到 Mihomo 时会映射为 `dialer-proxy`，渲染到 sing-box 时会映射为 `detour`。如果这里选择了 Mihomo 代理组，当前拓扑会按默认 Mihomo 模板继续解析。
-              </p>
-              {mihomoTopology.error ? <p className="helper full-span">默认 Mihomo 模板解析失败：{mihomoTopology.error}</p> : null}
-              <button type="submit" disabled={loading}>创建节点</button>
-            </form>
+          <article className="panel full-width">
+            <h2>高级手动入口</h2>
+            <p className="helper">
+              只有在导入不够用时再展开。这里保留手动录入、协议字段向导和远程 JSON 节点源同步，方便补字段或处理少量特殊节点。
+            </p>
+            <div className="advanced-entry-stack">
+              <details className="disclosure">
+                <summary>手动录入与协议字段向导</summary>
+                <div className="disclosure-body">
+                  <form className="form-grid" onSubmit={handleCreateNode}>
+                    <Field label="名称"><input value={nodeForm.name} onChange={(event) => setNodeForm((current) => ({ ...current, name: event.target.value }))} /></Field>
+                    <Field label="协议">
+                      <input
+                        list="node-protocol-options"
+                        value={nodeForm.protocol}
+                        onChange={(event) => setNodeForm((current) => ({ ...current, protocol: event.target.value }))}
+                        placeholder="vless / trojan / vmess / ss / hysteria2"
+                      />
+                    </Field>
+                    <Field label="地址"><input value={nodeForm.server} onChange={(event) => setNodeForm((current) => ({ ...current, server: event.target.value }))} /></Field>
+                    <Field label="端口"><input type="number" value={nodeForm.port} onChange={(event) => setNodeForm((current) => ({ ...current, port: Number(event.target.value) }))} /></Field>
+                    <NodeProtocolAssistant
+                      protocol={nodeForm.protocol}
+                      credentialsText={nodeForm.credentialsText}
+                      paramsText={nodeForm.paramsText}
+                      onMetadataChange={({ credentialsText, paramsText }) =>
+                        setNodeForm((current) => ({ ...current, credentialsText, paramsText }))
+                      }
+                    />
+                    <Field label="上游代理">
+                      <select value={createFormUpstreamProxy} onChange={(event) => updateCreateFormUpstreamProxy(event.target.value)}>
+                        <option value="">直接连接</option>
+                        <optgroup label="节点">
+                          {resources.nodes
+                            .filter((node) => node.name !== nodeForm.name.trim())
+                            .map((node) => <option key={node.id} value={node.name}>{node.name} / {node.protocol}</option>)}
+                        </optgroup>
+                        {mihomoProxyGroupNames.length > 0 ? (
+                          <optgroup label={mihomoTopology.templateName ? `Mihomo 代理组 / ${mihomoTopology.templateName}` : 'Mihomo 代理组'}>
+                            {mihomoProxyGroupNames.map((groupName) => <option key={`create-group-${groupName}`} value={groupName}>{groupName} / group</option>)}
+                          </optgroup>
+                        ) : null}
+                      </select>
+                    </Field>
+                    <Field label="凭据 JSON" full>
+                      <textarea
+                        value={nodeForm.credentialsText}
+                        onChange={(event) => setNodeForm((current) => ({ ...current, credentialsText: event.target.value }))}
+                        rows={6}
+                        placeholder={nodeCreateExamples.credentials}
+                      />
+                    </Field>
+                    <Field label="参数 JSON" full>
+                      <textarea
+                        value={nodeForm.paramsText}
+                        onChange={(event) => setNodeForm((current) => ({ ...current, paramsText: event.target.value }))}
+                        rows={6}
+                        placeholder={nodeCreateExamples.params}
+                      />
+                    </Field>
+                    <p className="helper full-span">
+                      这里主要用于导入后补字段。上游代理会写入 `params.upstreamProxy`，渲染到 Mihomo 时会映射为 `dialer-proxy`，渲染到 sing-box 时会映射为 `detour`。
+                    </p>
+                    {mihomoTopology.error ? <p className="helper full-span">默认 Mihomo 模板解析失败：{mihomoTopology.error}</p> : null}
+                    <div className="metadata-grid full-span">
+                      <div className="result-card">
+                        <strong>凭据示例</strong>
+                        <pre>{nodeCreateExamples.credentials}</pre>
+                      </div>
+                      <div className="result-card">
+                        <strong>参数示例</strong>
+                        <pre>{nodeCreateExamples.params}</pre>
+                      </div>
+                    </div>
+                    <button type="submit" disabled={loading}>创建节点</button>
+                  </form>
+                </div>
+              </details>
+
+              <details className="disclosure">
+                <summary>远程节点源手动同步</summary>
+                <div className="disclosure-body">
+                  <form className="form-grid" onSubmit={handleImportRemoteNodes}>
+                    <Field label="远程 URL" full>
+                      <input
+                        value={remoteNodeSourceUrl}
+                        onChange={(event) => setRemoteNodeSourceUrl(event.target.value)}
+                        placeholder="https://example.com/nodes.json"
+                      />
+                    </Field>
+                    <p className="helper">
+                      这里专门处理返回 JSON 数组或 <code>{'{"nodes": [...]}'}</code> 的远程节点清单，会按协议 / 地址 / 端口 / 凭证去重，但不会自动定时拉取。
+                    </p>
+                    <button type="submit" disabled={loading}>同步远程节点源</button>
+                  </form>
+                  {remoteNodeImportResult ? (
+                    <div className="result-card">
+                      <strong>最近一次远程同步</strong>
+                      <span>时间：{remoteNodeImportResult.importedAt}</span>
+                      <span>数量：{remoteNodeImportResult.importedCount}</span>
+                      <span>来源：{remoteNodeImportResult.sourceId ?? 'remote'}</span>
+                      <span>新增：{remoteNodeImportResult.createdCount ?? 0}</span>
+                      <span>更新：{remoteNodeImportResult.updatedCount ?? 0}</span>
+                      <span>禁用：{remoteNodeImportResult.disabledCount ?? 0}</span>
+                      <span>去重：{remoteNodeImportResult.duplicateCount ?? 0}</span>
+                    </div>
+                  ) : (
+                    <p className="helper">如果你只处理分享链接、订阅 URL 或完整配置，这一块通常可以忽略。</p>
+                  )}
+                </div>
+              </details>
+            </div>
           </article>
 
           <article className="panel">
-            <h2>批量导入</h2>
-            <form className="form-grid" onSubmit={handleImportNodes}>
-              <Field label="节点 JSON" full>
-                <textarea
-                  value={nodeImportText}
-                  onChange={(event) => setNodeImportText(event.target.value)}
-                  rows={12}
-                  placeholder={nodeImportPlaceholder}
-                />
-              </Field>
-              <p className="helper">支持直接粘贴 JSON 数组，或 <code>{'{"nodes": [...]}'}</code> 对象；每个节点至少需要 <code>name</code>、<code>protocol</code>、<code>server</code>、<code>port</code>。</p>
-              <button type="submit" disabled={loading}>导入节点</button>
-            </form>
-            {nodeImportResult ? (
-              <div className="result-card">
-                <strong>最近一次批量导入</strong>
-                <span>时间：{nodeImportResult.importedAt}</span>
-                <span>数量：{nodeImportResult.importedCount}</span>
-                <span>来源：{nodeImportResult.sourceType ?? 'manual'}</span>
-                <span>新增：{nodeImportResult.createdCount ?? 0}</span>
-                <span>更新：{nodeImportResult.updatedCount ?? 0}</span>
-                <span>去重：{nodeImportResult.duplicateCount ?? 0}</span>
-              </div>
-            ) : (
-              <p className="helper">适合一次性导入已有节点清单；导入完成后可继续在右侧逐条编辑。</p>
-            )}
-          </article>
-
-          <article className="panel">
-            <h2>远程节点源手动同步</h2>
-            <form className="form-grid" onSubmit={handleImportRemoteNodes}>
-              <Field label="远程 URL" full>
-                <input
-                  value={remoteNodeSourceUrl}
-                  onChange={(event) => setRemoteNodeSourceUrl(event.target.value)}
-                  placeholder="https://example.com/nodes.json"
-                />
-              </Field>
-              <p className="helper">当前远程节点源要求返回 JSON 数组，或 <code>{'{"nodes": [...]}'}</code> 结构；同步时会按协议/地址/端口/凭证做去重。这是手动入口，不会自动定时拉取。</p>
-              <button type="submit" disabled={loading}>同步远程节点源</button>
-            </form>
-            {remoteNodeImportResult ? (
-              <div className="result-card">
-                <strong>最近一次远程同步</strong>
-                <span>时间：{remoteNodeImportResult.importedAt}</span>
-                <span>数量：{remoteNodeImportResult.importedCount}</span>
-                <span>来源：{remoteNodeImportResult.sourceId ?? 'remote'}</span>
-                <span>新增：{remoteNodeImportResult.createdCount ?? 0}</span>
-                <span>更新：{remoteNodeImportResult.updatedCount ?? 0}</span>
-                <span>禁用：{remoteNodeImportResult.disabledCount ?? 0}</span>
-                <span>去重：{remoteNodeImportResult.duplicateCount ?? 0}</span>
-              </div>
-            ) : (
-              <p className="helper">适合对外部节点 JSON 做手动拉取同步；同一来源会复用已有远程节点，并自动禁用本次未出现的旧节点。</p>
-            )}
-          </article>
-
-          <article className="panel">
-            <h2>编辑节点</h2>
+            <h2>编辑已有节点</h2>
             <form className="form-grid" onSubmit={handleUpdateNode}>
               <Field label="选择节点">
                 <select value={nodeEditForm.id} onChange={(event) => setNodeEditForm((current) => ({ ...current, id: event.target.value }))}>
@@ -2347,90 +2294,6 @@ function buildNodeMutationInput(input: NodeDraftForm): {
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseNodeImportDraft(raw: string): { ok: true; nodes: NodeImportInput[] } | { ok: false; error: string } {
-  if (!raw.trim()) {
-    return { ok: false, error: '请先粘贴要导入的节点 JSON' };
-  }
-
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, error: '批量导入内容必须是合法 JSON' };
-  }
-
-  const rawNodes = Array.isArray(parsed) ? parsed : isObjectRecord(parsed) && Array.isArray(parsed.nodes) ? parsed.nodes : null;
-
-  if (!rawNodes) {
-    return { ok: false, error: '批量导入内容必须是 JSON 数组或包含 nodes 数组的对象' };
-  }
-
-  if (rawNodes.length === 0) {
-    return { ok: false, error: '至少需要导入 1 个节点' };
-  }
-
-  if (rawNodes.length > 200) {
-    return { ok: false, error: '单次最多导入 200 个节点' };
-  }
-
-  const nodes: NodeImportInput[] = [];
-
-  for (const [index, rawNode] of rawNodes.entries()) {
-    if (!isObjectRecord(rawNode)) {
-      return { ok: false, error: `第 ${index + 1} 个节点必须是对象` };
-    }
-
-    const port =
-      typeof rawNode.port === 'number'
-        ? rawNode.port
-        : typeof rawNode.port === 'string' && rawNode.port.trim()
-          ? Number(rawNode.port)
-          : Number.NaN;
-
-    const draft: NodeImportInput = {
-      name: typeof rawNode.name === 'string' ? rawNode.name.trim() : '',
-      protocol: typeof rawNode.protocol === 'string' ? rawNode.protocol.trim() : '',
-      server: typeof rawNode.server === 'string' ? rawNode.server.trim() : '',
-      port
-    };
-
-    const validationError = validateNodeDraft(draft);
-
-    if (validationError) {
-      return { ok: false, error: `第 ${index + 1} 个节点无效：${validationError}` };
-    }
-
-    if ('enabled' in rawNode && typeof rawNode.enabled !== 'boolean') {
-      return { ok: false, error: `第 ${index + 1} 个节点的 enabled 必须是布尔值` };
-    }
-
-    if ('credentials' in rawNode && rawNode.credentials != null && !isObjectRecord(rawNode.credentials)) {
-      return { ok: false, error: `第 ${index + 1} 个节点的 credentials 必须是对象` };
-    }
-
-    if ('params' in rawNode && rawNode.params != null && !isObjectRecord(rawNode.params)) {
-      return { ok: false, error: `第 ${index + 1} 个节点的 params 必须是对象` };
-    }
-
-    if (typeof rawNode.enabled === 'boolean') {
-      draft.enabled = rawNode.enabled;
-    }
-
-    if (isObjectRecord(rawNode.credentials)) {
-      draft.credentials = rawNode.credentials;
-    }
-
-    if (isObjectRecord(rawNode.params)) {
-      draft.params = rawNode.params;
-    }
-
-    nodes.push(draft);
-  }
-
-  return { ok: true, nodes };
 }
 
 function validateTemplateDraft(input: { name: string; content: string; version: number }): string | null {

@@ -323,6 +323,53 @@ h2 {
   background: rgba(4, 12, 24, 0.48);
 }
 
+.advanced-entry-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.disclosure {
+  border: 1px solid rgba(124, 184, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(4, 12, 24, 0.42);
+  overflow: hidden;
+}
+
+.disclosure > summary {
+  cursor: pointer;
+  padding: 16px 18px;
+  font-weight: 700;
+  color: #e6eef8;
+  list-style: none;
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary::after {
+  content: '展开';
+  float: right;
+  color: #8fb8e3;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.disclosure[open] > summary::after {
+  content: '收起';
+}
+
+.disclosure[open] > summary {
+  border-bottom: 1px solid rgba(124, 184, 255, 0.12);
+}
+
+.disclosure-body {
+  display: grid;
+  gap: 16px;
+  padding: 16px 18px 18px;
+}
+
 .reference-editor {
   display: grid;
   gap: 10px;
