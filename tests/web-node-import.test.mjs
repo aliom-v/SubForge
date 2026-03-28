@@ -412,6 +412,40 @@ test('parseImportedConfig builds mihomo template content and preserves upstream 
   assert.match(result.templateContent, /MATCH,DIRECT/);
 });
 
+test('parseImportedConfig preserves mihomo reality options from nested reality-opts blocks', () => {
+  const result = parseImportedConfig([
+    'proxies:',
+    '  - name: Reality Node',
+    '    type: vless',
+    '    server: reality.example.com',
+    '    port: 443',
+    '    uuid: 11111111-1111-1111-1111-111111111111',
+    '    tls: true',
+    '    servername: www.cloudflare.com',
+    '    client-fingerprint: chrome',
+    '    reality-opts:',
+    '      public-key: demo-public-key',
+    '      short-id: demo-short-id',
+    'rules:',
+    '  - MATCH,DIRECT'
+  ].join('\n'));
+
+  assert.ok(result);
+
+  if (!result) {
+    throw new Error('expected mihomo config import result');
+  }
+
+  assert.equal(result.nodes.length, 1);
+  assert.deepEqual(result.nodes[0].params, {
+    tls: true,
+    servername: 'www.cloudflare.com',
+    fp: 'chrome',
+    pbk: 'demo-public-key',
+    sid: 'demo-short-id'
+  });
+});
+
 test('parseImportedConfig keeps mihomo proxy-provider skeletons even when there are no local proxies', () => {
   const result = parseImportedConfig([
     'proxy-providers:',
@@ -480,7 +514,7 @@ test('parseImportedConfig builds sing-box template content and preserves static 
         }
       ],
       route: {
-        rules: [{ type: 'logical', mode: 'default', rule: 'MATCH,DIRECT' }]
+        rules: [{ action: 'route', outbound: 'direct' }]
       }
     })
   );
@@ -496,5 +530,5 @@ test('parseImportedConfig builds sing-box template content and preserves static 
   assert.equal(result.nodes[1].params.upstreamProxy, 'Transit');
   assert.match(result.templateContent, /{{outbound_items_with_leading_comma}}/);
   assert.match(result.templateContent, /"tag": "Auto"/);
-  assert.match(result.templateContent, /"type": "logical"/);
+  assert.match(result.templateContent, /"outbound": "direct"/);
 });

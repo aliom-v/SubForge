@@ -653,6 +653,7 @@ function readClashPath(record: Record<string, unknown>): string | null {
 
 function buildCommonClashParams(record: Record<string, unknown>): Record<string, unknown> {
   const params: Record<string, unknown> = {};
+  const realityOptions = readRecordObject(record, ['reality-opts', 'realityOpts']);
 
   setOptionalValue(params, 'tls', readRecordBoolean(record, ['tls']));
   setOptionalValue(params, 'udp', readRecordBoolean(record, ['udp']));
@@ -664,8 +665,18 @@ function buildCommonClashParams(record: Record<string, unknown>): Record<string,
   setOptionalValue(params, 'alpn', readRecordStringArray(record, ['alpn']) ?? readRecordString(record, ['alpn']));
   setOptionalValue(params, 'fp', readRecordString(record, ['client-fingerprint', 'clientFingerprint', 'fp']));
   setOptionalValue(params, 'flow', readRecordString(record, ['flow']));
-  setOptionalValue(params, 'pbk', readRecordString(record, ['public-key', 'publicKey', 'pbk']));
-  setOptionalValue(params, 'sid', readRecordString(record, ['short-id', 'shortId', 'sid']));
+  setOptionalValue(
+    params,
+    'pbk',
+    readRecordString(record, ['public-key', 'publicKey', 'pbk']) ??
+      (realityOptions ? readRecordString(realityOptions, ['public-key', 'publicKey']) : null)
+  );
+  setOptionalValue(
+    params,
+    'sid',
+    readRecordString(record, ['short-id', 'shortId', 'sid']) ??
+      (realityOptions ? readRecordString(realityOptions, ['short-id', 'shortId']) : null)
+  );
   setOptionalValue(params, 'upstreamProxy', readRecordString(record, ['dialer-proxy', 'dialerProxy']));
   setOptionalValue(
     params,

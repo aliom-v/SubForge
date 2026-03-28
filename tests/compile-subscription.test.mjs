@@ -223,6 +223,45 @@ test('compileSubscription maps upstreamProxy to dialer-proxy for mihomo output',
   assert.match(result.data.content, /dialer-proxy: "Transit Node"/);
 });
 
+test('compileSubscription maps reality metadata to mihomo-specific fields', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_reality',
+          name: 'Reality Node',
+          protocol: 'vless',
+          server: 'reality.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          },
+          params: {
+            tls: true,
+            servername: 'www.cloudflare.com',
+            fp: 'chrome',
+            pbk: 'demo-public-key',
+            sid: 'demo-short-id'
+          }
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /client-fingerprint: "chrome"/);
+  assert.match(result.data.content, /reality-opts:\n\s+public-key: "demo-public-key"\n\s+short-id: "demo-short-id"/);
+  assert.doesNotMatch(result.data.content, /\n\s+fp: "chrome"/);
+  assert.doesNotMatch(result.data.content, /\n\s+pbk: "demo-public-key"/);
+  assert.doesNotMatch(result.data.content, /\n\s+sid: "demo-short-id"/);
+});
+
 test('compileSubscription maps detour and transport fields for sing-box templates', () => {
   const result = compileSubscription(
     createCompileInput({
@@ -323,6 +362,77 @@ test('compileSubscription appends dynamic sing-box rules and outbounds after sta
   assert.equal(parsed.outbounds[0].tag, 'direct');
   assert.equal(parsed.outbounds[1].tag, 'HK VLESS');
   assert.equal(parsed.route.rules[0].outbound, 'direct');
-  assert.equal(parsed.route.rules[1].remark, 'Default Rules');
-  assert.equal(parsed.route.rules[1].rule, 'DOMAIN-SUFFIX,example.com,DIRECT');
+  assert.equal(parsed.route.rules[1].action, 'route');
+  assert.equal(parsed.route.rules[1].outbound, 'direct');
+  assert.deepEqual(parsed.route.rules[1].domain_suffix, ['example.com']);
+});
+
+test('compileSubscription converts common Clash rules into structured sing-box route rules', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      target: 'singbox',
+      ruleSets: [
+        {
+          id: 'rules_structured',
+          name: 'Structured Rules',
+          format: 'text',
+          content: [
+            'RULE-SET,github,GitHub Proxy',
+            'GEOIP,private,DIRECT',
+            'DOMAIN-KEYWORD,openai,AI Proxy',
+            'PROCESS-NAME,steam.exe,Game Proxy',
+            'DOMAIN,ads.example,REJECT-DROP',
+            'MATCH,DIRECT'
+          ].join('\n'),
+          sourceId: 'rs_structured'
+        }
+      ],
+      template: {
+        id: 'tpl_singbox_rules',
+        name: 'Sing-box Rules',
+        target: 'singbox',
+        content: '{\n  "outbounds": [\n{{outbound_items}}\n  ],\n  "route": {\n    "rules": {{rules}},\n    "rule_set": [\n      {\n        "tag": "github",\n        "type": "inline",\n        "rules": []\n      }\n    ]\n  }\n}',
+        version: 1,
+        isDefault: true
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  const parsed = JSON.parse(result.data.content);
+
+  assert.deepEqual(parsed.route.rules[0], {
+    rule_set: ['github'],
+    action: 'route',
+    outbound: 'GitHub Proxy'
+  });
+  assert.deepEqual(parsed.route.rules[1], {
+    ip_is_private: true,
+    action: 'route',
+    outbound: 'direct'
+  });
+  assert.deepEqual(parsed.route.rules[2], {
+    domain_keyword: ['openai'],
+    action: 'route',
+    outbound: 'AI Proxy'
+  });
+  assert.deepEqual(parsed.route.rules[3], {
+    process_name: ['steam.exe'],
+    action: 'route',
+    outbound: 'Game Proxy'
+  });
+  assert.deepEqual(parsed.route.rules[4], {
+    domain: ['ads.example'],
+    action: 'reject',
+    method: 'drop'
+  });
+  assert.deepEqual(parsed.route.rules[5], {
+    action: 'route',
+    outbound: 'direct'
+  });
 });

@@ -26,6 +26,19 @@ function replaceTemplateSlots(template: string, slots: Record<string, string>): 
   }, template);
 }
 
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
 function readNodeParamString(params: SubscriptionNode['params'], key: string): string | null {
   const value = params?.[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -45,19 +58,48 @@ function hasNodeParam(params: SubscriptionNode['params'], key: string): boolean 
   return Boolean(params) && Object.prototype.hasOwnProperty.call(params, key);
 }
 
+function collectRuleLines(ruleSets: SubscriptionRuleSet[]): string[] {
+  return ruleSets.flatMap((ruleSet) =>
+    ruleSet.content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
+}
+
 function toMihomoProxy(node: SubscriptionNode): string {
-  const entries = [
-    `name: ${JSON.stringify(node.name)}`,
-    `type: ${node.protocol}`,
-    `server: ${node.server}`,
-    `port: ${node.port}`
-  ];
+  const entries = [`name: ${JSON.stringify(node.name)}`, `type: ${node.protocol}`, `server: ${node.server}`, `port: ${node.port}`];
+  const params = node.params ?? {};
+  const handledKeys = new Set<string>();
 
   for (const [key, value] of Object.entries(node.credentials ?? {})) {
     entries.push(`${key}: ${JSON.stringify(value)}`);
   }
 
-  for (const [key, value] of Object.entries(node.params ?? {})) {
+  const fingerprint = readNodeParamString(params, 'fp');
+  if (fingerprint) {
+    handledKeys.add('fp');
+    entries.push(`client-fingerprint: ${JSON.stringify(fingerprint)}`);
+  }
+
+  const publicKey = readNodeParamString(params, 'pbk');
+  const shortId = readNodeParamString(params, 'sid');
+  if (publicKey || shortId) {
+    handledKeys.add('pbk');
+    handledKeys.add('sid');
+    entries.push('reality-opts:');
+    if (publicKey) {
+      entries.push(`  public-key: ${JSON.stringify(publicKey)}`);
+    }
+    if (shortId) {
+      entries.push(`  short-id: ${JSON.stringify(shortId)}`);
+    }
+  }
+
+  for (const [key, value] of Object.entries(params)) {
+    if (handledKeys.has(key)) {
+      continue;
+    }
     const outputKey = key === 'upstreamProxy' ? 'dialer-proxy' : key;
     entries.push(`${outputKey}: ${JSON.stringify(value)}`);
   }
@@ -75,12 +117,7 @@ function toMihomoProxyGroup(nodes: SubscriptionNode[]): string {
 }
 
 function toMihomoRules(ruleSets: SubscriptionRuleSet[]): string {
-  const lines = ruleSets.flatMap((ruleSet) =>
-    ruleSet.content
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-  );
+  const lines = collectRuleLines(ruleSets);
 
   if (lines.length === 0) {
     return '  - MATCH,DIRECT';
@@ -264,19 +301,248 @@ function toSingboxOutbounds(nodes: SubscriptionNode[]): string {
   return JSON.stringify(outbounds, null, 2);
 }
 
+const singboxRuleOptionTokens = new Set(['NO-RESOLVE']);
+
+function buildSingboxRuleAction(targetRaw: string): Record<string, unknown> {
+  const target = stripWrappingQuotes(targetRaw);
+  const normalized = target.toUpperCase();
+
+  if (normalized === 'REJECT') {
+    return { action: 'reject' };
+  }
+
+  if (normalized === 'REJECT-DROP') {
+    return {
+      action: 'reject',
+      method: 'drop'
+    };
+  }
+
+  if (normalized === 'REJECT-TINYGIF' || normalized === 'REJECT-UDP') {
+    return { action: 'reject' };
+  }
+
+  return {
+    action: 'route',
+    outbound: normalized === 'DIRECT' ? 'direct' : target
+  };
+}
+
+function buildStringArrayCondition(field: string, value: string): Record<string, unknown> | null {
+  const normalized = stripWrappingQuotes(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return { [field]: [normalized] };
+}
+
+function buildLowercaseStringArrayCondition(field: string, value: string): Record<string, unknown> | null {
+  const normalized = stripWrappingQuotes(value).toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return { [field]: [normalized] };
+}
+
+function normalizePortRange(value: string): string {
+  return value.replace(/\s+/g, '').replace('-', ':');
+}
+
+function buildPortCondition(
+  directField: string,
+  rangeField: string,
+  value: string
+): Record<string, unknown> | null {
+  const normalized = stripWrappingQuotes(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes('-') || normalized.includes(':')) {
+    return { [rangeField]: [normalizePortRange(normalized)] };
+  }
+
+  const parsed = Number(normalized);
+
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return { [directField]: [parsed] };
+  }
+
+  return { [rangeField]: [normalized] };
+}
+
+function buildNetworkCondition(value: string): Record<string, unknown> | null {
+  const items = stripWrappingQuotes(value)
+    .split(/[|/]/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return { network: items };
+}
+
+function buildClashModeCondition(value: string): Record<string, unknown> | null {
+  const normalized = stripWrappingQuotes(value).toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return { clash_mode: normalized };
+}
+
+function buildGeoCondition(
+  field: string,
+  privateField: string,
+  value: string
+): Record<string, unknown> | null {
+  const normalized = stripWrappingQuotes(value).toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === 'private' || normalized === 'lan') {
+    return { [privateField]: true };
+  }
+
+  return { [field]: [normalized] };
+}
+
+function buildIpCidrCondition(
+  field: string,
+  privateField: string,
+  value: string
+): Record<string, unknown> | null {
+  const normalized = stripWrappingQuotes(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.toLowerCase() === 'private' || normalized.toLowerCase() === 'lan') {
+    return { [privateField]: true };
+  }
+
+  return { [field]: [normalized] };
+}
+
+function buildSingboxRuleMatch(type: string, payload: string): Record<string, unknown> | null {
+  switch (type) {
+    case 'MATCH':
+    case 'FINAL':
+      return payload ? null : {};
+    case 'DOMAIN':
+      return buildStringArrayCondition('domain', payload);
+    case 'DOMAIN-SUFFIX':
+      return buildStringArrayCondition('domain_suffix', payload);
+    case 'DOMAIN-KEYWORD':
+      return buildStringArrayCondition('domain_keyword', payload);
+    case 'DOMAIN-REGEX':
+      return buildStringArrayCondition('domain_regex', payload);
+    case 'GEOSITE':
+      return buildLowercaseStringArrayCondition('geosite', payload);
+    case 'GEOIP':
+      return buildGeoCondition('geoip', 'ip_is_private', payload);
+    case 'SRC-GEOIP':
+      return buildGeoCondition('source_geoip', 'source_ip_is_private', payload);
+    case 'IP-CIDR':
+    case 'IP-CIDR6':
+      return buildIpCidrCondition('ip_cidr', 'ip_is_private', payload);
+    case 'SRC-IP-CIDR':
+      return buildIpCidrCondition('source_ip_cidr', 'source_ip_is_private', payload);
+    case 'PORT':
+    case 'DST-PORT':
+      return buildPortCondition('port', 'port_range', payload);
+    case 'SRC-PORT':
+      return buildPortCondition('source_port', 'source_port_range', payload);
+    case 'PROCESS-NAME':
+      return buildStringArrayCondition('process_name', payload);
+    case 'PROCESS-PATH':
+      return buildStringArrayCondition('process_path', payload);
+    case 'PROCESS-PATH-REGEX':
+      return buildStringArrayCondition('process_path_regex', payload);
+    case 'PACKAGE-NAME':
+      return buildStringArrayCondition('package_name', payload);
+    case 'RULE-SET':
+      return buildStringArrayCondition('rule_set', payload);
+    case 'NETWORK':
+      return buildNetworkCondition(payload);
+    case 'PROTOCOL':
+      return buildLowercaseStringArrayCondition('protocol', payload);
+    case 'CLASH-MODE':
+      return buildClashModeCondition(payload);
+    case 'INBOUND-TAG':
+      return buildStringArrayCondition('inbound', payload);
+    default:
+      return null;
+  }
+}
+
+function parseSingboxRuleLine(line: string): Record<string, unknown> | null {
+  const tokens = line
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (tokens.length < 2) {
+    return null;
+  }
+
+  const typeToken = tokens[0];
+
+  if (!typeToken) {
+    return null;
+  }
+
+  const type = typeToken.toUpperCase();
+  let targetIndex = tokens.length - 1;
+
+  while (targetIndex > 0) {
+    const token = tokens[targetIndex];
+
+    if (!token || !singboxRuleOptionTokens.has(token.toUpperCase())) {
+      break;
+    }
+
+    targetIndex -= 1;
+  }
+
+  if (targetIndex <= 0) {
+    return null;
+  }
+
+  const targetToken = tokens[targetIndex];
+
+  if (!targetToken) {
+    return null;
+  }
+
+  const payload = tokens.slice(1, targetIndex).join(',').trim();
+  const match = buildSingboxRuleMatch(type, payload);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    ...match,
+    ...buildSingboxRuleAction(targetToken)
+  };
+}
+
 function toSingboxRuleObjects(ruleSets: SubscriptionRuleSet[]): Array<Record<string, unknown>> {
-  return ruleSets.flatMap((ruleSet) =>
-    ruleSet.content
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => ({
-        type: 'logical',
-        mode: 'default',
-        remark: ruleSet.name,
-        rule: line
-      }))
-  );
+  return collectRuleLines(ruleSets)
+    .map((line) => parseSingboxRuleLine(line))
+    .filter((rule): rule is Record<string, unknown> => rule !== null);
 }
 
 function toSingboxRuleItems(ruleSets: SubscriptionRuleSet[]): string {

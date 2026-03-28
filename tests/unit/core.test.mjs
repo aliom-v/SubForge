@@ -132,8 +132,15 @@ test('compileSubscription renders singbox output as valid JSON', () => {
   assert.equal(payload.outbounds[0].tag, 'HK Edge 01');
   assert.equal(payload.outbounds[0].server, 'hk-01.example.com');
   assert.equal(payload.route.rules.length, 2);
-  assert.equal(payload.route.rules[0].remark, 'Default Rules');
-  assert.equal(payload.route.rules[1].rule, 'MATCH,DIRECT');
+  assert.deepEqual(payload.route.rules[0], {
+    domain_suffix: ['example.com'],
+    action: 'route',
+    outbound: 'Auto'
+  });
+  assert.deepEqual(payload.route.rules[1], {
+    action: 'route',
+    outbound: 'direct'
+  });
 });
 
 test('compileSubscription returns structured validation errors', async (t) => {
