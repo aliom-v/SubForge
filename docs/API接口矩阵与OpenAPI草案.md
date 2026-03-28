@@ -89,7 +89,17 @@
 | `PATCH` | `/api/rule-sources/:id` | Bearer | 更新规则源 | 可修改 URL、格式、启用状态 |
 | `POST` | `/api/rule-sources/:id/sync` | Bearer | 立即同步规则源 | 返回结构化同步结果 |
 
-### 3.7 日志与缓存接口
+### 3.7 远程订阅源接口
+
+| 方法 | 路径 | 鉴权 | 用途 | 说明 |
+| --- | --- | --- | --- | --- |
+| `GET` | `/api/remote-subscription-sources` | Bearer | 远程订阅源列表 | 返回同步状态、失败次数与启用状态 |
+| `POST` | `/api/remote-subscription-sources` | Bearer | 创建远程订阅源 | `name` 可省略，默认取 URL hostname |
+| `PATCH` | `/api/remote-subscription-sources/:id` | Bearer | 更新远程订阅源 | 可修改 URL、名称、启用状态 |
+| `POST` | `/api/remote-subscription-sources/:id/sync` | Bearer | 立即同步远程订阅源 | 返回结构化节点同步结果，即使失败也会在 `status/details` 中给出诊断 |
+| `DELETE` | `/api/remote-subscription-sources/:id` | Bearer | 删除远程订阅源 | 会删除该来源下的远程节点，并刷新受影响用户绑定与缓存 |
+
+### 3.8 日志与缓存接口
 
 | 方法 | 路径 | 鉴权 | 用途 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -97,7 +107,7 @@
 | `GET` | `/api/audit-logs` | Bearer | 查看审计日志 | 联表带管理员用户名、资源展示名，并拆出请求上下文 |
 | `POST` | `/api/cache/rebuild` | Bearer | 手动重建订阅缓存 | 当前行为是清理缓存，不主动预热 |
 
-### 3.8 预览接口
+### 3.9 预览接口
 
 | 方法 | 路径 | 鉴权 | 用途 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -118,7 +128,7 @@
 当前 `openapi.yaml` 已覆盖：
 
 - `/health`、`/api/setup/*`、`/api/admin/*`
-- `/api/users*`、`/api/nodes*`、`/api/templates*`、`/api/rule-sources*`
+- `/api/users*`、`/api/nodes*`、`/api/templates*`、`/api/remote-subscription-sources*`、`/api/rule-sources*`
 - `/api/node-import/preview`、`/api/sync-logs`、`/api/audit-logs`、`/api/cache/rebuild`、`/api/preview/{userId}/{target}`
 - `/s/{token}/{target}` 公开订阅接口
 - 关键请求 / 成功 / 错误 examples，包括初始化、登录、用户 / 节点 / 模板 / 规则源写接口、预览与公开订阅内容

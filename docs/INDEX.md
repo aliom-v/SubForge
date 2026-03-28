@@ -27,9 +27,9 @@
 ### 2.2 部署与运行
 
 - `docs/部署指南.md`
-  - 本地运行、Cloudflare Dashboard / Git 导入、GitHub Actions、staging / production 分支策略、绑定清单、D1 备份 / 恢复 SOP、部署后验收与首轮排障
+  - 本地运行、Cloudflare Dashboard / Git 导入、GitHub Actions、staging / production 分支策略、绑定清单、D1 备份 / 恢复 SOP、自动化 D1 定期备份脚本 / 恢复演练、备份产物异地加密归档 / 对象存储同步 / 生命周期管理、部署后验收与首轮排障
 - `docs/运维Runbook与告警处理.md`
-  - `npm run ci:verify`、failure summary / webhook、发布 / 回滚 checklist、值班响应、恢复演练与告警优先级
+  - `npm run ci:verify`、failure summary / webhook、发布 / 回滚 checklist、值班响应、恢复演练、生命周期告警与告警优先级
 
 ### 2.3 API 与协议
 
