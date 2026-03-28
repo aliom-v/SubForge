@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   parseMihomoTemplateStructure,
   parseSingboxTemplateStructure,
@@ -6,10 +6,12 @@ import {
   updateSingboxTemplateStructure
 } from '@subforge/core';
 import type { SubscriptionTarget } from '@subforge/shared';
+import { buildMihomoProxyGroupTopologyRows } from './mihomo-topology';
 
 interface TemplateStructureAssistantProps {
   targetType: SubscriptionTarget;
   content: string;
+  availableNodeNames?: string[];
   onContentChange: (value: string) => void;
   onError: (message: string) => void;
   onMessage: (message: string) => void;
@@ -52,9 +54,19 @@ function MihomoTemplateStructureAssistant(props: TemplateStructureAssistantProps
   const [useDynamicProxyGroups, setUseDynamicProxyGroups] = useState(false);
   const [useDynamicRules, setUseDynamicRules] = useState(false);
   const [proxyGroups, setProxyGroups] = useState<MihomoProxyGroupDraft[]>([]);
+  const [proxyProviders, setProxyProviders] = useState<string[]>([]);
   const [rulesText, setRulesText] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
   const [parseError, setParseError] = useState('');
+  const availableNodeNames = useMemo(() => uniqueStrings(props.availableNodeNames ?? []), [props.availableNodeNames]);
+  const availableProxyGroupNames = useMemo(
+    () => uniqueStrings(proxyGroups.map((group) => group.name)),
+    [proxyGroups]
+  );
+  const proxyGroupTopologyRows = useMemo(
+    () => buildMihomoProxyGroupTopologyRows(proxyGroups.map(createMihomoTopologyGroupRecord), availableNodeNames, proxyProviders),
+    [availableNodeNames, proxyGroups, proxyProviders]
+  );
 
   useEffect(() => {
     reloadFromContent();
@@ -67,10 +79,12 @@ function MihomoTemplateStructureAssistant(props: TemplateStructureAssistantProps
       setUseDynamicProxyGroups(parsed.useDynamicProxyGroups);
       setUseDynamicRules(parsed.useDynamicRules);
       setProxyGroups(parsed.proxyGroups.map(createMihomoProxyGroupDraft));
+      setProxyProviders(parsed.proxyProviders);
       setRulesText(parsed.rules.join('\n'));
       setWarnings(parsed.warnings);
       setParseError('');
     } catch (caughtError) {
+      setProxyProviders([]);
       setWarnings([]);
       setParseError(getErrorMessage(caughtError));
     }
@@ -114,6 +128,12 @@ function MihomoTemplateStructureAssistant(props: TemplateStructureAssistantProps
       <p className="helper">
         这里专门维护 `proxy-groups` 和 `rules`，原始 YAML 里其他字段会尽量原样保留；如果你先修改了下方原始文本，可以点“从模板刷新”重新同步。
       </p>
+      {proxyProviders.length > 0 ? (
+        <div className="inline-meta">
+          <span>已识别 Providers：</span>
+          {proxyProviders.map((provider) => <span key={provider}>{provider}</span>)}
+        </div>
+      ) : null}
       {parseError ? <p className="helper">{parseError}</p> : null}
       {warnings.length > 0 ? (
         <div className="inline-meta">
@@ -220,17 +240,71 @@ function MihomoTemplateStructureAssistant(props: TemplateStructureAssistantProps
                     />
                     <span>lazy</span>
                   </label>
-                  <AssistantField label="Proxies" full>
+                  <AssistantField label="可视化 Proxies" full>
+                    <div className="reference-editor">
+                      <ReferenceChipList
+                        values={splitLines(group.proxiesText)}
+                        emptyText="当前还没有引用节点 / 代理组 / 内置出口"
+                        resolveKind={(value) => classifyProxyReferenceKind(value, availableNodeNames, availableProxyGroupNames)}
+                        onRemove={(value) => setProxyGroups((current) => removeDraftLineValue(current, index, 'proxiesText', value))}
+                      />
+                      <select
+                        defaultValue=""
+                        onChange={(event) => {
+                          const value = event.target.value.trim();
+
+                          if (value) {
+                            setProxyGroups((current) => addDraftLineValue(current, index, 'proxiesText', value));
+                          }
+
+                          event.currentTarget.value = '';
+                        }}
+                      >
+                        <option value="">添加节点 / 代理组 / 内置出口</option>
+                        {buildMihomoProxyReferenceOptions({
+                          availableNodeNames,
+                          availableProxyGroupNames,
+                          currentGroupName: group.name
+                        }).map((option) => <option key={`${option.kind}-${option.value}`} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </div>
+                  </AssistantField>
+                  <AssistantField label="Proxies 原始文本" full>
                     <textarea
-                      rows={4}
+                      rows={3}
                       value={group.proxiesText}
                       onChange={(event) => setProxyGroups((current) => updateItem(current, index, { proxiesText: event.target.value }))}
                       placeholder={'Proxy A\nProxy B'}
                     />
                   </AssistantField>
-                  <AssistantField label="Use" full>
+                  <AssistantField label="可视化 Use" full>
+                    <div className="reference-editor">
+                      <ReferenceChipList
+                        values={splitLines(group.useText)}
+                        emptyText="当前还没有引用 provider"
+                        resolveKind={() => 'provider'}
+                        onRemove={(value) => setProxyGroups((current) => removeDraftLineValue(current, index, 'useText', value))}
+                      />
+                      <select
+                        defaultValue=""
+                        onChange={(event) => {
+                          const value = event.target.value.trim();
+
+                          if (value) {
+                            setProxyGroups((current) => addDraftLineValue(current, index, 'useText', value));
+                          }
+
+                          event.currentTarget.value = '';
+                        }}
+                      >
+                        <option value="">添加 provider</option>
+                        {proxyProviders.map((provider) => <option key={`${group.name}-${provider}`} value={provider}>{provider}</option>)}
+                      </select>
+                    </div>
+                  </AssistantField>
+                  <AssistantField label="Use 原始文本" full>
                     <textarea
-                      rows={3}
+                      rows={2}
                       value={group.useText}
                       onChange={(event) => setProxyGroups((current) => updateItem(current, index, { useText: event.target.value }))}
                       placeholder={'Provider A\nProvider B'}
@@ -252,6 +326,38 @@ function MihomoTemplateStructureAssistant(props: TemplateStructureAssistantProps
       ) : (
         <p className="helper">当前会继续使用 <code>{'{{proxy_groups}}'}</code> 动态占位符生成默认代理组。</p>
       )}
+      {!useDynamicProxyGroups && proxyGroupTopologyRows.length > 0 ? (
+        <div className="template-structure-section">
+          <div className="assistant-header">
+            <strong>代理组拓扑摘要</strong>
+          </div>
+          <p className="helper">
+            这里会把单一候选的代理组继续往下展开，方便检查 group 级 `dialer-proxy` 是否最终能落到具体节点、内置出口，还是仍然停在 provider / 多候选状态。
+          </p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>代理组</th>
+                  <th>候选</th>
+                  <th>解析</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proxyGroupTopologyRows.map((row, index) => (
+                  <tr key={`${row.groupName}-${index}`}>
+                    <td>{row.groupName} / {row.groupType}</td>
+                    <td>{row.references.length > 0 ? row.references.join(' | ') : row.providers.map((provider) => `[provider] ${provider}`).join(' | ')}</td>
+                    <td>{row.resolution}</td>
+                    <td>{row.issue ?? '正常'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       {!useDynamicRules ? (
         <AssistantField label="Rules" full>
@@ -470,6 +576,33 @@ function JsonDraftCard(props: {
   );
 }
 
+function ReferenceChipList(props: {
+  values: string[];
+  emptyText: string;
+  resolveKind?: (value: string) => string;
+  onRemove: (value: string) => void;
+}): JSX.Element {
+  if (props.values.length === 0) {
+    return <p className="helper">{props.emptyText}</p>;
+  }
+
+  return (
+    <div className="reference-chip-list">
+      {props.values.map((value) => (
+        <button
+          key={value}
+          type="button"
+          className={`secondary reference-chip ${props.resolveKind?.(value) ?? classifyReferenceKind(value)}`}
+          onClick={() => props.onRemove(value)}
+          title="点击移除"
+        >
+          {value}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function AssistantField(props: { label: string; children: JSX.Element; full?: boolean }): JSX.Element {
   return (
     <label className={props.full ? 'full-span' : undefined}>
@@ -578,6 +711,50 @@ function buildMihomoProxyGroupRecord(
   };
 }
 
+function createMihomoTopologyGroupRecord(draft: MihomoProxyGroupDraft): Record<string, unknown> {
+  return {
+    name: draft.name.trim(),
+    type: draft.type.trim() || 'select',
+    proxies: splitLines(draft.proxiesText),
+    use: splitLines(draft.useText)
+  };
+}
+
+function addDraftLineValue(
+  drafts: MihomoProxyGroupDraft[],
+  index: number,
+  key: 'proxiesText' | 'useText',
+  value: string
+): MihomoProxyGroupDraft[] {
+  const currentValues = splitLines(drafts[index]?.[key] ?? '');
+  const nextValues = uniqueStrings([...currentValues, value]);
+  return updateItem(drafts, index, { [key]: nextValues.join('\n') } as Partial<MihomoProxyGroupDraft>);
+}
+
+function removeDraftLineValue(
+  drafts: MihomoProxyGroupDraft[],
+  index: number,
+  key: 'proxiesText' | 'useText',
+  value: string
+): MihomoProxyGroupDraft[] {
+  const nextValues = splitLines(drafts[index]?.[key] ?? '').filter((item) => item !== value);
+  return updateItem(drafts, index, { [key]: nextValues.join('\n') } as Partial<MihomoProxyGroupDraft>);
+}
+
+function buildMihomoProxyReferenceOptions(input: {
+  availableNodeNames: string[];
+  availableProxyGroupNames: string[];
+  currentGroupName: string;
+}): Array<{ value: string; label: string; kind: 'builtin' | 'node' | 'group' }> {
+  return [
+    ...MIHOMO_BUILTIN_REFERENCES.map((value) => ({ value, label: `${value} / 内置`, kind: 'builtin' as const })),
+    ...input.availableNodeNames.map((value) => ({ value, label: `${value} / 节点`, kind: 'node' as const })),
+    ...input.availableProxyGroupNames
+      .filter((value) => value !== input.currentGroupName.trim())
+      .map((value) => ({ value, label: `${value} / 代理组`, kind: 'group' as const }))
+  ];
+}
+
 function parseJsonObjectText(
   value: string,
   label: string
@@ -613,6 +790,38 @@ function splitLines(value: string): string[] {
     .filter(Boolean);
 }
 
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((item) => item.trim()).filter(Boolean))];
+}
+
+function classifyReferenceKind(value: string): string {
+  if (MIHOMO_BUILTIN_REFERENCES.includes(value)) {
+    return 'builtin';
+  }
+
+  return value.startsWith('[') ? 'provider' : 'node';
+}
+
+function classifyProxyReferenceKind(
+  value: string,
+  availableNodeNames: string[],
+  availableProxyGroupNames: string[]
+): string {
+  if (MIHOMO_BUILTIN_REFERENCES.includes(value)) {
+    return 'builtin';
+  }
+
+  if (availableProxyGroupNames.includes(value)) {
+    return 'group';
+  }
+
+  if (availableNodeNames.includes(value)) {
+    return 'node';
+  }
+
+  return 'node';
+}
+
 function readString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -628,6 +837,8 @@ function readScalarText(value: unknown): string {
 
   return '';
 }
+
+const MIHOMO_BUILTIN_REFERENCES = ['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'GLOBAL', 'COMPATIBLE'];
 
 function readStringList(value: unknown): string[] {
   if (Array.isArray(value)) {

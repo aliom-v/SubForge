@@ -12,6 +12,7 @@ export interface MihomoTemplateStructure {
   useDynamicProxyGroups: boolean;
   useDynamicRules: boolean;
   proxyGroups: Array<Record<string, unknown>>;
+  proxyProviders: string[];
   rules: string[];
   warnings: string[];
 }
@@ -113,8 +114,10 @@ function parseMihomoTemplateDocument(content: string): ParsedMihomoTemplateDocum
 
   const warnings: string[] = [];
   const proxyGroups: Array<Record<string, unknown>> = [];
+  const proxyProviders: string[] = [];
   const rules: string[] = [];
   const proxyGroupsValue = parsed['proxy-groups'];
+  const proxyProvidersValue = parsed['proxy-providers'];
   const rulesValue = parsed.rules;
 
   if (Array.isArray(proxyGroupsValue)) {
@@ -127,6 +130,16 @@ function parseMihomoTemplateDocument(content: string): ParsedMihomoTemplateDocum
     }
   } else if (proxyGroupsValue !== undefined && proxyGroupsValue !== MIHOMO_PROXY_GROUPS_MARKER) {
     warnings.push('当前模板的 proxy-groups 不是列表结构，结构化助手不会改写这部分内容。');
+  }
+
+  if (isObjectRecord(proxyProvidersValue)) {
+    for (const key of Object.keys(proxyProvidersValue)) {
+      if (key.trim()) {
+        proxyProviders.push(key.trim());
+      }
+    }
+  } else if (proxyProvidersValue !== undefined) {
+    warnings.push('当前模板的 proxy-providers 不是对象结构，结构化助手不会改写这部分内容。');
   }
 
   if (Array.isArray(rulesValue)) {
@@ -152,6 +165,7 @@ function parseMihomoTemplateDocument(content: string): ParsedMihomoTemplateDocum
       useDynamicProxyGroups: content.includes('{{proxy_groups}}'),
       useDynamicRules: content.includes('{{rules}}'),
       proxyGroups,
+      proxyProviders,
       rules,
       warnings
     }

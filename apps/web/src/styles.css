@@ -323,6 +323,41 @@ h2 {
   background: rgba(4, 12, 24, 0.48);
 }
 
+.reference-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.reference-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button.reference-chip {
+  padding: 8px 12px;
+  border-radius: 999px;
+}
+
+button.reference-chip.node {
+  background: rgba(47, 129, 247, 0.16);
+}
+
+button.reference-chip.group {
+  background: rgba(84, 214, 118, 0.16);
+  color: #c8f6d1;
+}
+
+button.reference-chip.provider {
+  background: rgba(255, 188, 88, 0.16);
+  color: #ffe3b0;
+}
+
+button.reference-chip.builtin {
+  background: rgba(255, 120, 120, 0.18);
+  color: #ffd7d7;
+}
+
 .import-errors {
   display: grid;
   gap: 10px;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
-  getServiceMetadata
+  getServiceMetadata,
+  parseMihomoTemplateStructure
 } from '@subforge/core';
 import {
   SUBSCRIPTION_TARGETS,
@@ -76,6 +77,7 @@ import {
   type NodeImportContentEncoding
 } from './node-import';
 import { canonicalizeNodeProtocol, validateNodeProtocolMetadata } from './node-protocol-validation';
+import { buildNodeChainSummaries, readNodeUpstreamProxyFromRecord } from './mihomo-topology';
 import { TemplateStructureAssistant } from './template-structure-assistant';
 
 const metadata = getServiceMetadata();
@@ -297,7 +299,43 @@ export function App(): JSX.Element {
     () => summarizeImportErrors(remoteNodeImportPreview?.errors ?? []),
     [remoteNodeImportPreview?.errors]
   );
-  const nodeChainSummaries = useMemo(() => buildNodeChainSummaries(resources.nodes), [resources.nodes]);
+  const preferredMihomoTemplate = useMemo(() => selectPreferredMihomoTemplate(resources.templates), [resources.templates]);
+  const mihomoTopology = useMemo(() => {
+    if (!preferredMihomoTemplate) {
+      return {
+        templateName: null,
+        proxyGroups: [],
+        proxyProviders: [],
+        error: null as string | null
+      };
+    }
+
+    try {
+      const parsed = parseMihomoTemplateStructure(preferredMihomoTemplate.content);
+
+      return {
+        templateName: preferredMihomoTemplate.name,
+        proxyGroups: parsed.proxyGroups,
+        proxyProviders: parsed.proxyProviders,
+        error: null as string | null
+      };
+    } catch (caughtError) {
+      return {
+        templateName: preferredMihomoTemplate.name,
+        proxyGroups: [],
+        proxyProviders: [],
+        error: getErrorMessage(caughtError)
+      };
+    }
+  }, [preferredMihomoTemplate]);
+  const mihomoProxyGroupNames = useMemo(
+    () => uniqueStrings(mihomoTopology.proxyGroups.map((group) => typeof group.name === 'string' ? group.name.trim() : '')),
+    [mihomoTopology.proxyGroups]
+  );
+  const nodeChainSummaries = useMemo(
+    () => buildNodeChainSummaries(resources.nodes, mihomoTopology.proxyGroups, mihomoTopology.proxyProviders),
+    [mihomoTopology.proxyGroups, mihomoTopology.proxyProviders, resources.nodes]
+  );
   const createFormUpstreamProxy = useMemo(() => readNodeUpstreamProxyFromText(nodeForm.paramsText), [nodeForm.paramsText]);
   const editFormUpstreamProxy = useMemo(() => readNodeUpstreamProxyFromText(nodeEditForm.paramsText), [nodeEditForm.paramsText]);
 
@@ -1695,9 +1733,16 @@ export function App(): JSX.Element {
               <Field label="上游代理">
                 <select value={createFormUpstreamProxy} onChange={(event) => updateCreateFormUpstreamProxy(event.target.value)}>
                   <option value="">直接连接</option>
-                  {resources.nodes
-                    .filter((node) => node.name !== nodeForm.name.trim())
-                    .map((node) => <option key={node.id} value={node.name}>{node.name} / {node.protocol}</option>)}
+                  <optgroup label="节点">
+                    {resources.nodes
+                      .filter((node) => node.name !== nodeForm.name.trim())
+                      .map((node) => <option key={node.id} value={node.name}>{node.name} / {node.protocol}</option>)}
+                  </optgroup>
+                  {mihomoProxyGroupNames.length > 0 ? (
+                    <optgroup label={mihomoTopology.templateName ? `Mihomo 代理组 / ${mihomoTopology.templateName}` : 'Mihomo 代理组'}>
+                      {mihomoProxyGroupNames.map((groupName) => <option key={`create-group-${groupName}`} value={groupName}>{groupName} / group</option>)}
+                    </optgroup>
+                  ) : null}
                 </select>
               </Field>
               <Field label="凭据 JSON" full>
@@ -1717,8 +1762,9 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                可直接手动录入，也可先用上方导入入口回填。上游代理会写入 `params.upstreamProxy`，渲染到 Mihomo 时会映射为 `dialer-proxy`，渲染到 sing-box 时会映射为 `detour`。
+                可直接手动录入，也可先用上方导入入口回填。上游代理会写入 `params.upstreamProxy`，渲染到 Mihomo 时会映射为 `dialer-proxy`，渲染到 sing-box 时会映射为 `detour`。如果这里选择了 Mihomo 代理组，当前拓扑会按默认 Mihomo 模板继续解析。
               </p>
+              {mihomoTopology.error ? <p className="helper full-span">默认 Mihomo 模板解析失败：{mihomoTopology.error}</p> : null}
               <button type="submit" disabled={loading}>创建节点</button>
             </form>
           </article>
@@ -1812,9 +1858,16 @@ export function App(): JSX.Element {
               <Field label="上游代理">
                 <select value={editFormUpstreamProxy} onChange={(event) => updateEditFormUpstreamProxy(event.target.value)}>
                   <option value="">直接连接</option>
-                  {resources.nodes
-                    .filter((node) => node.id !== nodeEditForm.id)
-                    .map((node) => <option key={node.id} value={node.name}>{node.name} / {node.protocol}</option>)}
+                  <optgroup label="节点">
+                    {resources.nodes
+                      .filter((node) => node.id !== nodeEditForm.id)
+                      .map((node) => <option key={node.id} value={node.name}>{node.name} / {node.protocol}</option>)}
+                  </optgroup>
+                  {mihomoProxyGroupNames.length > 0 ? (
+                    <optgroup label={mihomoTopology.templateName ? `Mihomo 代理组 / ${mihomoTopology.templateName}` : 'Mihomo 代理组'}>
+                      {mihomoProxyGroupNames.map((groupName) => <option key={`edit-group-${groupName}`} value={groupName}>{groupName} / group</option>)}
+                    </optgroup>
+                  ) : null}
                 </select>
               </Field>
               <Field label="凭据 JSON" full>
@@ -1835,8 +1888,9 @@ export function App(): JSX.Element {
               </Field>
               <label className="checkbox-row"><input type="checkbox" checked={nodeEditForm.enabled} onChange={(event) => setNodeEditForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用节点</span></label>
               <p className="helper full-span">
-                这里会回显当前 metadata。留空或填写 `null` 表示清空已有的 `credentials` / `params`；保存后链式代理拓扑会在下方重新计算。
+                这里会回显当前 metadata。留空或填写 `null` 表示清空已有的 `credentials` / `params`；保存后链式代理拓扑会在下方重新计算。如果这里引用了 Mihomo 代理组，当前链路会按默认 Mihomo 模板里的 `proxy-groups` 继续解析。
               </p>
+              {mihomoTopology.error ? <p className="helper full-span">默认 Mihomo 模板解析失败：{mihomoTopology.error}</p> : null}
               <button type="submit" disabled={loading || !nodeEditForm.id}>保存节点</button>
             </form>
           </article>
@@ -1844,8 +1898,18 @@ export function App(): JSX.Element {
           <article className="panel full-width">
             <h2>链式代理拓扑</h2>
             <p className="helper">
-              这里根据每个节点的 `params.upstreamProxy` 计算链路，方便检查 `dialer-proxy` / `detour` 是否连对了。如果节点名称重复、上游缺失、上游被禁用或形成环路，也会直接标出来。
+              这里根据每个节点的 `params.upstreamProxy` 计算链路，方便检查 `dialer-proxy` / `detour` 是否连对了。如果上游指向 Mihomo 代理组，系统会继续参考默认 Mihomo 模板里的 `proxy-groups` / `proxy-providers` 做链路展开。
             </p>
+            {preferredMihomoTemplate ? (
+              <div className="inline-meta">
+                <span>当前链路模板：{preferredMihomoTemplate.name}</span>
+                <span>代理组：{mihomoProxyGroupNames.length}</span>
+                <span>Providers：{mihomoTopology.proxyProviders.length}</span>
+              </div>
+            ) : (
+              <p className="helper">当前没有 Mihomo 模板，链路只会按节点间引用解析。</p>
+            )}
+            {mihomoTopology.error ? <p className="helper">默认 Mihomo 模板解析失败：{mihomoTopology.error}</p> : null}
             <ResourceTable
               columns={['节点', '上游代理', '链路', '状态']}
               rows={nodeChainSummaries.map((item) => [
@@ -1900,6 +1964,7 @@ export function App(): JSX.Element {
               <TemplateStructureAssistant
                 targetType={templateForm.targetType}
                 content={templateForm.content}
+                availableNodeNames={resources.nodes.map((node) => node.name)}
                 onContentChange={(content) => setTemplateForm((current) => ({ ...current, content }))}
                 onError={reportValidationError}
                 onMessage={(messageText) => {
@@ -1930,6 +1995,7 @@ export function App(): JSX.Element {
               <TemplateStructureAssistant
                 targetType={templateEditForm.targetType}
                 content={templateEditForm.content}
+                availableNodeNames={resources.nodes.map((node) => node.name)}
                 onContentChange={(content) => setTemplateEditForm((current) => ({ ...current, content }))}
                 onError={reportValidationError}
                 onMessage={(messageText) => {
@@ -2121,19 +2187,6 @@ export function App(): JSX.Element {
 }
 
 
-interface NodeChainSummary {
-  nodeId: string;
-  nodeName: string;
-  upstreamProxy: string | null;
-  chain: string;
-  issue: string | null;
-}
-
-function readNodeUpstreamProxyFromRecord(params?: Record<string, unknown> | null): string | null {
-  const value = params?.upstreamProxy;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
 function readNodeUpstreamProxyFromText(paramsText: string): string {
   const parsed = parseNodeMetadataText(paramsText, 'params');
   return parsed.error ? '' : readNodeUpstreamProxyFromRecord(parsed.value) ?? '';
@@ -2163,67 +2216,6 @@ function applyUpstreamProxyToParamsText(
   return {
     value: Object.keys(nextParams).length > 0 ? JSON.stringify(nextParams, null, 2) : ''
   };
-}
-
-function buildNodeChainSummaries(nodes: NodeRecord[]): NodeChainSummary[] {
-  const nodesByName = new Map<string, NodeRecord[]>();
-
-  for (const node of nodes) {
-    const items = nodesByName.get(node.name) ?? [];
-    items.push(node);
-    nodesByName.set(node.name, items);
-  }
-
-  return nodes.map((node) => {
-    const chain = [node.name];
-    const visitedIds = new Set([node.id]);
-    const upstreamProxy = readNodeUpstreamProxyFromRecord(node.params);
-    let currentUpstream = upstreamProxy;
-    let issue: string | null = null;
-
-    while (currentUpstream) {
-      chain.push(currentUpstream);
-      const matches = nodesByName.get(currentUpstream) ?? [];
-
-      if (matches.length === 0) {
-        issue = `缺少上游节点：${currentUpstream}`;
-        break;
-      }
-
-      if (matches.length > 1) {
-        issue = `上游节点名称重复：${currentUpstream}`;
-        break;
-      }
-
-      const [upstreamNode] = matches;
-
-      if (!upstreamNode) {
-        issue = `缺少上游节点：${currentUpstream}`;
-        break;
-      }
-
-      if (visitedIds.has(upstreamNode.id)) {
-        issue = `检测到循环链路：${currentUpstream}`;
-        break;
-      }
-
-      if (!upstreamNode.enabled) {
-        issue = `上游节点已禁用：${currentUpstream}`;
-        break;
-      }
-
-      visitedIds.add(upstreamNode.id);
-      currentUpstream = readNodeUpstreamProxyFromRecord(upstreamNode.params);
-    }
-
-    return {
-      nodeId: node.id,
-      nodeName: node.name,
-      upstreamProxy,
-      chain: chain.join(' -> '),
-      issue
-    };
-  });
 }
 
 function isValidHttpUrl(value: string): boolean {
@@ -2259,6 +2251,22 @@ function validateNodeDraft(input: { name: string; protocol: string; server: stri
   if (!input.server.trim()) return '节点地址不能为空';
   if (!isValidPort(input.port)) return '节点端口必须在 1-65535 之间';
   return null;
+}
+
+function selectPreferredMihomoTemplate(templates: TemplateRecord[]): TemplateRecord | null {
+  const enabledMihomoTemplates = templates.filter((template) => template.targetType === 'mihomo' && template.status === 'enabled');
+  const preferredEnabledTemplate = enabledMihomoTemplates.find((template) => template.isDefault) ?? enabledMihomoTemplates[0];
+
+  if (preferredEnabledTemplate) {
+    return preferredEnabledTemplate;
+  }
+
+  const mihomoTemplates = templates.filter((template) => template.targetType === 'mihomo');
+  return mihomoTemplates.find((template) => template.isDefault) ?? mihomoTemplates[0] ?? null;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function buildNodeMutationInput(input: NodeDraftForm): {

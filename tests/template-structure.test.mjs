@@ -16,6 +16,7 @@ test('updateMihomoTemplateStructure rewrites proxy-groups and rules while preser
   assert.equal(parsed.useDynamicProxies, true);
   assert.equal(parsed.useDynamicProxyGroups, true);
   assert.equal(parsed.useDynamicRules, true);
+  assert.deepEqual(parsed.proxyProviders, []);
 
   const next = updateMihomoTemplateStructure(template, {
     useDynamicProxies: true,
@@ -38,6 +39,30 @@ test('updateMihomoTemplateStructure rewrites proxy-groups and rules while preser
   assert.match(next, /rules:\n\s+- DOMAIN-SUFFIX,example\.com,DIRECT/);
   assert.doesNotMatch(next, /\{\{proxy_groups\}\}/);
   assert.doesNotMatch(next, /\{\{rules\}\}/);
+});
+
+test('parseMihomoTemplateStructure exposes proxy-provider names', () => {
+  const template = `proxy-providers:
+  remote-us:
+    type: http
+    url: https://example.com/us.yaml
+  remote-hk:
+    type: http
+    url: https://example.com/hk.yaml
+proxies:
+{{proxies}}
+proxy-groups:
+  - name: Auto
+    type: select
+    use:
+      - remote-us
+rules:
+{{rules}}
+`;
+  const parsed = parseMihomoTemplateStructure(template);
+
+  assert.deepEqual(parsed.proxyProviders, ['remote-us', 'remote-hk']);
+  assert.equal(parsed.proxyGroups.length, 1);
 });
 
 test('updateSingboxTemplateStructure can combine static blocks with dynamic placeholders', () => {
