@@ -78,6 +78,16 @@ export interface RuleSourceRecord extends TimestampedRecord {
   failureCount: number;
 }
 
+export interface RemoteSubscriptionSourceRecord extends TimestampedRecord {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  enabled: boolean;
+  lastSyncAt?: string | null;
+  lastSyncStatus?: SyncLogStatus | null;
+  failureCount: number;
+}
+
 export interface RuleSnapshotRecord {
   id: string;
   ruleSourceId: string;

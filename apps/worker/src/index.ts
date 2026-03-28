@@ -30,9 +30,11 @@ import { fail, json, notFound, ok, parseJsonBody, preflight, readBearerToken, te
 import {
   createAdmin,
   createNode,
+  createRemoteSubscriptionSource,
   createRuleSource,
   createTemplate,
   createUser,
+  deleteRemoteSubscriptionSource,
   deleteRuleSource,
   deleteTemplate,
   deleteUser,
@@ -42,6 +44,8 @@ import {
   getAdminLoginRowByUsername,
   getDefaultTemplateByTarget,
   getNodeById,
+  getRemoteSubscriptionSourceById,
+  getRemoteSubscriptionSourceByUrl,
   getRuleSourceById,
   getTemplateById,
   getSubscriptionCompileInputByToken,
@@ -52,6 +56,7 @@ import {
   listAuditLogs,
   listNodes,
   listNodesBySource,
+  listRemoteSubscriptionSources,
   listRuleSources,
   listSyncLogs,
   listTemplates,
@@ -64,6 +69,7 @@ import {
   resetUserToken,
   setDefaultTemplate,
   updateNode,
+  updateRemoteSubscriptionSource,
   updateRuleSource,
   updateTemplate,
   updateUser
@@ -89,6 +95,10 @@ import {
   planRemoteNodeSync,
   type ImportedNodeInput
 } from './node-source';
+import {
+  runEnabledRemoteSubscriptionSourceSync,
+  syncRemoteSubscriptionSourceNow
+} from './remote-subscription-sync';
 import { fetchText, runEnabledRuleSourceSync, syncRuleSourceNow, toFetchTextValidationError } from './sync';
 
 const NODE_IMPORT_LIMIT = 200;
@@ -251,6 +261,42 @@ function buildNodeImportPayload(input: {
 async function invalidateNodeCachesByIds(env: Env, nodeIds: string[]): Promise<void> {
   const uniqueNodeIds = [...new Set(nodeIds)];
   await Promise.all(uniqueNodeIds.map((nodeId) => invalidateNodeAffectedCaches(env, nodeId)));
+}
+
+async function listUsersByNodeIds(
+  env: Env,
+  nodeIds: string[]
+): Promise<Array<{ id: string; token: string }>> {
+  const users = await Promise.all(nodeIds.map((nodeId) => listUsersByNodeId(env.DB, nodeId)));
+  const deduped = new Map<string, { id: string; token: string }>();
+
+  for (const group of users) {
+    for (const user of group) {
+      deduped.set(user.id, user);
+    }
+  }
+
+  return [...deduped.values()];
+}
+
+async function replaceSourceBindingsForUsers(
+  env: Env,
+  users: Array<{ id: string; token: string }>,
+  sourceNodeIds: string[],
+  replacementNodeIds: string[]
+): Promise<void> {
+  const sourceNodeIdSet = new Set(sourceNodeIds);
+  const dedupedReplacementNodeIds = [...new Set(replacementNodeIds)];
+
+  for (const user of users) {
+    const bindings = await listUserNodeBindings(env.DB, user.id);
+    const nextNodeIds = [
+      ...bindings.map((binding) => binding.nodeId).filter((nodeId) => !sourceNodeIdSet.has(nodeId)),
+      ...dedupedReplacementNodeIds
+    ];
+
+    await replaceUserNodes(env.DB, user.id, [...new Set(nextNodeIds)]);
+  }
 }
 
 async function fetchRemoteNodeImportBody(
@@ -606,6 +652,18 @@ function buildRuleSourceAuditPayload(ruleSource: {
     sourceUrl: ruleSource.sourceUrl,
     format: ruleSource.format,
     ...(ruleSource.enabled !== undefined ? { enabled: ruleSource.enabled } : {})
+  };
+}
+
+function buildRemoteSubscriptionSourceAuditPayload(source: {
+  name: string;
+  sourceUrl: string;
+  enabled?: boolean;
+}): Record<string, JsonValue> {
+  return {
+    name: source.name,
+    sourceUrl: source.sourceUrl,
+    ...(source.enabled !== undefined ? { enabled: source.enabled } : {})
   };
 }
 
@@ -1683,6 +1741,183 @@ async function handleTemplateById(
   return notFound(`/api/templates/${templateId}`);
 }
 
+async function handleRemoteSubscriptionSources(request: Request, env: Env, adminId: string): Promise<Response> {
+  if (request.method === 'GET') {
+    return ok(await listRemoteSubscriptionSources(env.DB));
+  }
+
+  if (request.method === 'POST') {
+    const body = await parseJsonBody(request);
+
+    if (!isRecord(body)) {
+      return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
+    }
+
+    const sourceUrl = asString(body.sourceUrl);
+
+    if (!isValidHttpUrl(sourceUrl)) {
+      return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http/https URL'), 400);
+    }
+
+    const canonicalSourceUrl = new URL(sourceUrl).toString();
+    const name = asString(body.name) ?? new URL(canonicalSourceUrl).hostname;
+    const enabled = asBoolean(body.enabled);
+    const existing = await getRemoteSubscriptionSourceByUrl(env.DB, canonicalSourceUrl);
+
+    if (existing) {
+      return fail(createAppError('VALIDATION_FAILED', 'remote subscription source already exists'), 400);
+    }
+
+    const source = await createRemoteSubscriptionSource(env.DB, {
+      name,
+      sourceUrl: canonicalSourceUrl,
+      ...(enabled !== undefined ? { enabled } : {})
+    });
+
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'remote_subscription_source.create',
+      targetType: 'remote_subscription_source',
+      targetId: source.id,
+      payload: buildRemoteSubscriptionSourceAuditPayload(source)
+    });
+
+    return ok(source, { status: 201 });
+  }
+
+  return notFound('/api/remote-subscription-sources');
+}
+
+async function handleRemoteSubscriptionSourceById(
+  request: Request,
+  env: Env,
+  adminId: string,
+  remoteSubscriptionSourceId: string,
+  action?: string
+): Promise<Response> {
+  if (request.method === 'PATCH' && !action) {
+    const current = await getRemoteSubscriptionSourceById(env.DB, remoteSubscriptionSourceId);
+
+    if (!current) {
+      return fail(createAppError('NOT_FOUND', 'remote subscription source not found'), 404);
+    }
+
+    const body = await parseJsonBody(request);
+
+    if (!isRecord(body)) {
+      return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
+    }
+
+    const nextName = asString(body.name);
+    const sourceUrl = asString(body.sourceUrl);
+    const nextEnabled = asBoolean(body.enabled);
+
+    if (sourceUrl && !isValidHttpUrl(sourceUrl)) {
+      return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http/https URL'), 400);
+    }
+
+    const canonicalSourceUrl = sourceUrl ? new URL(sourceUrl).toString() : undefined;
+
+    if (canonicalSourceUrl && canonicalSourceUrl !== current.sourceUrl) {
+      const duplicate = await getRemoteSubscriptionSourceByUrl(env.DB, canonicalSourceUrl);
+
+      if (duplicate && duplicate.id !== current.id) {
+        return fail(createAppError('VALIDATION_FAILED', 'remote subscription source already exists'), 400);
+      }
+    }
+
+    const source = await updateRemoteSubscriptionSource(env.DB, remoteSubscriptionSourceId, {
+      ...(nextName ? { name: nextName } : {}),
+      ...(canonicalSourceUrl ? { sourceUrl: canonicalSourceUrl } : {}),
+      ...(nextEnabled !== undefined ? { enabled: nextEnabled } : {})
+    });
+
+    if (!source) {
+      return fail(createAppError('NOT_FOUND', 'remote subscription source not found'), 404);
+    }
+
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'remote_subscription_source.update',
+      targetType: 'remote_subscription_source',
+      targetId: source.id,
+      payload: buildRemoteSubscriptionSourceAuditPayload(source)
+    });
+
+    return ok(source);
+  }
+
+  if (request.method === 'POST' && action === 'sync') {
+    const current = await getRemoteSubscriptionSourceById(env.DB, remoteSubscriptionSourceId);
+
+    if (!current) {
+      return fail(createAppError('NOT_FOUND', 'remote subscription source not found'), 404);
+    }
+
+    const result = await syncRemoteSubscriptionSourceNow(env, current);
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'remote_subscription_source.sync',
+      targetType: 'remote_subscription_source',
+      targetId: current.id,
+      payload: {
+        ...buildRemoteSubscriptionSourceAuditPayload(current),
+        status: result.status,
+        changed: result.changed,
+        importedCount: result.importedCount,
+        createdCount: result.createdCount,
+        updatedCount: result.updatedCount,
+        disabledCount: result.disabledCount,
+        errorCount: result.errorCount,
+        details: result.details ?? null
+      }
+    });
+    return ok(result);
+  }
+
+  if (request.method === 'DELETE' && !action) {
+    const current = await getRemoteSubscriptionSourceById(env.DB, remoteSubscriptionSourceId);
+
+    if (!current) {
+      return fail(createAppError('NOT_FOUND', 'remote subscription source not found'), 404);
+    }
+
+    const sourceNodes = await listNodesBySource(env.DB, 'remote', current.id);
+    const sourceNodeIds = sourceNodes.map((node) => node.id);
+    const affectedUsers = await listUsersByNodeIds(env, sourceNodeIds);
+
+    await replaceSourceBindingsForUsers(env, affectedUsers, sourceNodeIds, []);
+
+    for (const node of sourceNodes) {
+      await deleteNode(env.DB, node.id);
+    }
+
+    const deleted = await deleteRemoteSubscriptionSource(env.DB, remoteSubscriptionSourceId);
+
+    if (!deleted) {
+      return fail(createAppError('NOT_FOUND', 'remote subscription source not found'), 404);
+    }
+
+    if (affectedUsers.length > 0) {
+      await invalidateUsersCaches(env, affectedUsers);
+    }
+
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'remote_subscription_source.delete',
+      targetType: 'remote_subscription_source',
+      targetId: remoteSubscriptionSourceId,
+      payload: {
+        ...buildRemoteSubscriptionSourceAuditPayload(current),
+        nodeCount: sourceNodes.length
+      }
+    });
+    return ok({ deleted: true, remoteSubscriptionSourceId });
+  }
+
+  return notFound(`/api/remote-subscription-sources/${remoteSubscriptionSourceId}`);
+}
+
 async function handleRuleSources(request: Request, env: Env, adminId: string): Promise<Response> {
   if (request.method === 'GET') {
     return ok(await listRuleSources(env.DB));
@@ -2083,6 +2318,14 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
     return handleRuleSourceById(request, env, auth.admin.id, resourceId, action);
   }
 
+  if (resource === 'remote-subscription-sources' && !resourceId) {
+    return handleRemoteSubscriptionSources(request, env, auth.admin.id);
+  }
+
+  if (resource === 'remote-subscription-sources' && resourceId) {
+    return handleRemoteSubscriptionSourceById(request, env, auth.admin.id, resourceId, action);
+  }
+
   if (resource === 'cache' && resourceId === 'rebuild' && !action) {
     return handleCacheRebuild(request, env, auth.admin.id);
   }
@@ -2146,11 +2389,13 @@ export default {
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      runEnabledRuleSourceSync(env).then((results) => {
+      Promise.all([runEnabledRuleSourceSync(env), runEnabledRemoteSubscriptionSourceSync(env)]).then(
+        ([ruleResults, remoteSubscriptionResults]) => {
         console.log(
-          `[${APP_NAME}] cron trigger fired at ${controller.scheduledTime} in ${env.APP_ENV} with ${results.length} rule source(s)`
+            `[${APP_NAME}] cron trigger fired at ${controller.scheduledTime} in ${env.APP_ENV} with ${ruleResults.length} rule source(s) and ${remoteSubscriptionResults.length} remote subscription source(s)`
         );
-      })
+        }
+      )
     );
   }
 };

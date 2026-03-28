@@ -52,6 +52,23 @@ export const WEB_API_ROUTES = Object.freeze({
     '/api/rule-sources/{ruleSourceId}/sync',
     (ruleSourceId) => `/api/rule-sources/${ruleSourceId}/sync`
   ),
+  fetchRemoteSubscriptionSources: createRoute('GET', '/api/remote-subscription-sources'),
+  createRemoteSubscriptionSource: createRoute('POST', '/api/remote-subscription-sources'),
+  updateRemoteSubscriptionSource: createRoute(
+    'PATCH',
+    '/api/remote-subscription-sources/{sourceId}',
+    (sourceId) => `/api/remote-subscription-sources/${sourceId}`
+  ),
+  deleteRemoteSubscriptionSource: createRoute(
+    'DELETE',
+    '/api/remote-subscription-sources/{sourceId}',
+    (sourceId) => `/api/remote-subscription-sources/${sourceId}`
+  ),
+  syncRemoteSubscriptionSource: createRoute(
+    'POST',
+    '/api/remote-subscription-sources/{sourceId}/sync',
+    (sourceId) => `/api/remote-subscription-sources/${sourceId}/sync`
+  ),
   fetchSyncLogs: createRoute('GET', '/api/sync-logs'),
   fetchAuditLogs: createRoute('GET', '/api/audit-logs'),
   rebuildSubscriptionCaches: createRoute('POST', '/api/cache/rebuild'),

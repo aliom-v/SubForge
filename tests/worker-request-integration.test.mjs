@@ -37,6 +37,7 @@ class MockDatabase {
     templates = [],
     nodes = [],
     userNodeMap = [],
+    remoteSubscriptionSources = [],
     ruleSources = [],
     snapshots = []
   } = {}) {
@@ -45,6 +46,7 @@ class MockDatabase {
     this.templates = new Map(templates.map((row) => [row.id, { ...row }]));
     this.nodes = new Map(nodes.map((row) => [row.id, { ...row }]));
     this.userNodeMap = userNodeMap.map((row) => ({ ...row }));
+    this.remoteSubscriptionSources = new Map(remoteSubscriptionSources.map((row) => [row.id, { ...row }]));
     this.ruleSources = new Map(ruleSources.map((row) => [row.id, { ...row }]));
     this.snapshots = snapshots.map((row) => ({ ...row }));
     this.syncLogs = [];
@@ -75,6 +77,10 @@ class MockDatabase {
       return this.users.get(bindings[0]) ?? null;
     }
 
+    if (sql.includes('SELECT * FROM nodes WHERE id = ? LIMIT 1')) {
+      return this.nodes.get(bindings[0]) ?? null;
+    }
+
     if (sql.includes('SELECT * FROM templates WHERE target_type = ? AND enabled = 1')) {
       const targetType = bindings[0];
       const candidates = [...this.templates.values()]
@@ -95,6 +101,14 @@ class MockDatabase {
 
     if (sql.includes('SELECT * FROM rule_sources WHERE id = ? LIMIT 1')) {
       return this.ruleSources.get(bindings[0]) ?? null;
+    }
+
+    if (sql.includes('SELECT * FROM remote_subscription_sources WHERE id = ? LIMIT 1')) {
+      return this.remoteSubscriptionSources.get(bindings[0]) ?? null;
+    }
+
+    if (sql.includes('SELECT * FROM remote_subscription_sources WHERE source_url = ? LIMIT 1')) {
+      return [...this.remoteSubscriptionSources.values()].find((row) => row.source_url === bindings[0]) ?? null;
     }
 
     if (sql.includes('SELECT * FROM rule_snapshots WHERE rule_source_id = ?')) {
@@ -131,8 +145,48 @@ class MockDatabase {
         .map(({ enabled, ...row }) => row);
     }
 
+    if (sql.includes('SELECT * FROM nodes WHERE source_type = ? ORDER BY created_at DESC')) {
+      const [sourceType] = bindings;
+      return [...this.nodes.values()]
+        .filter((row) => row.source_type === sourceType)
+        .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
+    }
+
+    if (sql.includes('SELECT * FROM nodes WHERE source_type = ? AND source_id = ? ORDER BY created_at DESC')) {
+      const [sourceType, sourceId] = bindings;
+      return [...this.nodes.values()]
+        .filter((row) => row.source_type === sourceType && row.source_id === sourceId)
+        .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
+    }
+
+    if (sql.includes('SELECT * FROM user_node_map WHERE user_id = ? ORDER BY created_at DESC')) {
+      return this.userNodeMap
+        .filter((row) => row.user_id === bindings[0])
+        .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
+    }
+
+    if (sql.includes('SELECT u.id, u.token') && sql.includes('INNER JOIN user_node_map unm')) {
+      const nodeId = bindings[0];
+      return this.userNodeMap
+        .filter((row) => row.node_id === nodeId && row.enabled === 1)
+        .map((row) => this.users.get(row.user_id))
+        .filter(Boolean)
+        .map((user) => ({
+          id: user.id,
+          token: user.token
+        }));
+    }
+
     if (sql.includes('SELECT * FROM rule_sources WHERE enabled = 1')) {
       return [...this.ruleSources.values()].filter((row) => row.enabled === 1);
+    }
+
+    if (sql.includes('SELECT * FROM remote_subscription_sources WHERE enabled = 1')) {
+      return [...this.remoteSubscriptionSources.values()].filter((row) => row.enabled === 1);
+    }
+
+    if (sql.includes('SELECT * FROM remote_subscription_sources ORDER BY created_at DESC')) {
+      return [...this.remoteSubscriptionSources.values()].sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
     }
 
     if (sql.includes('SELECT id, token FROM users')) {
@@ -160,6 +214,69 @@ class MockDatabase {
       return { success: true };
     }
 
+    if (sql.startsWith('DELETE FROM user_node_map WHERE user_id = ?')) {
+      this.userNodeMap = this.userNodeMap.filter((row) => row.user_id !== bindings[0]);
+      return { success: true };
+    }
+
+    if (sql.startsWith('INSERT INTO user_node_map')) {
+      const [id, userId, nodeId, enabled, createdAt] = bindings;
+      this.userNodeMap.push({
+        id,
+        user_id: userId,
+        node_id: nodeId,
+        enabled,
+        created_at: createdAt
+      });
+      return { success: true };
+    }
+
+    if (sql.startsWith('INSERT INTO nodes')) {
+      const [id, name, protocol, server, port, credentialsJson, paramsJson, sourceType, sourceId, enabled, lastSyncAt, createdAt, updatedAt] = bindings;
+      this.nodes.set(id, {
+        id,
+        name,
+        protocol,
+        server,
+        port,
+        credentials_json: credentialsJson,
+        params_json: paramsJson,
+        source_type: sourceType,
+        source_id: sourceId,
+        enabled,
+        last_sync_at: lastSyncAt,
+        created_at: createdAt,
+        updated_at: updatedAt
+      });
+      return { success: true };
+    }
+
+    if (sql.startsWith('UPDATE nodes SET name = ?, protocol = ?, server = ?, port = ?, credentials_json = ?, params_json = ?, source_type = ?, source_id = ?, enabled = ?, last_sync_at = ?, updated_at = ? WHERE id = ?')) {
+      const [name, protocol, server, port, credentialsJson, paramsJson, sourceType, sourceId, enabled, lastSyncAt, updatedAt, id] = bindings;
+      const node = this.nodes.get(id);
+
+      if (node) {
+        node.name = name;
+        node.protocol = protocol;
+        node.server = server;
+        node.port = port;
+        node.credentials_json = credentialsJson;
+        node.params_json = paramsJson;
+        node.source_type = sourceType;
+        node.source_id = sourceId;
+        node.enabled = enabled;
+        node.last_sync_at = lastSyncAt;
+        node.updated_at = updatedAt;
+      }
+
+      return { success: true };
+    }
+
+    if (sql.startsWith('DELETE FROM nodes WHERE id = ?')) {
+      this.nodes.delete(bindings[0]);
+      return { success: true };
+    }
+
     if (sql.startsWith('INSERT INTO rule_snapshots')) {
       const [id, ruleSourceId, contentHash, content, createdAt] = bindings;
       this.snapshots.push({
@@ -183,6 +300,55 @@ class MockDatabase {
         source.updated_at = updatedAt;
       }
 
+      return { success: true };
+    }
+
+    if (sql.startsWith('INSERT INTO remote_subscription_sources')) {
+      const [id, name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, failureCount, createdAt, updatedAt] = bindings;
+      this.remoteSubscriptionSources.set(id, {
+        id,
+        name,
+        source_url: sourceUrl,
+        enabled,
+        last_sync_at: lastSyncAt,
+        last_sync_status: lastSyncStatus,
+        failure_count: failureCount,
+        created_at: createdAt,
+        updated_at: updatedAt
+      });
+      return { success: true };
+    }
+
+    if (sql.startsWith('UPDATE remote_subscription_sources SET name = ?, source_url = ?, enabled = ?, updated_at = ? WHERE id = ?')) {
+      const [name, sourceUrl, enabled, updatedAt, sourceId] = bindings;
+      const source = this.remoteSubscriptionSources.get(sourceId);
+
+      if (source) {
+        source.name = name;
+        source.source_url = sourceUrl;
+        source.enabled = enabled;
+        source.updated_at = updatedAt;
+      }
+
+      return { success: true };
+    }
+
+    if (sql.startsWith('UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
+      const [lastSyncAt, status, failureCount, updatedAt, sourceId] = bindings;
+      const source = this.remoteSubscriptionSources.get(sourceId);
+
+      if (source) {
+        source.last_sync_at = lastSyncAt;
+        source.last_sync_status = status;
+        source.failure_count = failureCount;
+        source.updated_at = updatedAt;
+      }
+
+      return { success: true };
+    }
+
+    if (sql.startsWith('DELETE FROM remote_subscription_sources WHERE id = ?')) {
+      this.remoteSubscriptionSources.delete(bindings[0]);
       return { success: true };
     }
 
@@ -323,6 +489,21 @@ function createRuleSourceRow(overrides = {}) {
   };
 }
 
+function createRemoteSubscriptionSourceRow(overrides = {}) {
+  return {
+    id: 'rss_demo',
+    name: 'Default Remote Subscription',
+    source_url: 'https://example.com/subscription.txt',
+    enabled: 1,
+    last_sync_at: null,
+    last_sync_status: null,
+    failure_count: 0,
+    created_at: '2026-03-08T00:00:00.000Z',
+    updated_at: '2026-03-08T00:00:00.000Z',
+    ...overrides
+  };
+}
+
 function createSnapshotRow(overrides = {}) {
   return {
     id: 'snap_demo',
@@ -340,6 +521,7 @@ function createEnv({
   templates = [createTemplateRow()],
   nodes = [createNodeRow()],
   userNodeMap = [{ user_id: 'usr_demo', node_id: 'node_hk_01', enabled: 1 }],
+  remoteSubscriptionSources = [],
   ruleSources = [createRuleSourceRow()],
   snapshots = [createSnapshotRow()],
   cacheEntries = []
@@ -351,6 +533,7 @@ function createEnv({
     templates,
     nodes,
     userNodeMap,
+    remoteSubscriptionSources,
     ruleSources,
     snapshots
   });
@@ -628,7 +811,20 @@ test('scheduled delegates sync work to waitUntil and processes only enabled rule
     source_url: 'https://example.com/disabled.txt',
     enabled: 0
   });
+  const enabledRemoteSource = createRemoteSubscriptionSourceRow({
+    id: 'rss_enabled',
+    name: 'Enabled Remote Subscription',
+    source_url: 'https://example.com/subscription.txt',
+    enabled: 1
+  });
+  const disabledRemoteSource = createRemoteSubscriptionSourceRow({
+    id: 'rss_disabled',
+    name: 'Disabled Remote Subscription',
+    source_url: 'https://example.com/subscription-disabled.txt',
+    enabled: 0
+  });
   const { env, db, kv } = createEnv({
+    remoteSubscriptionSources: [enabledRemoteSource, disabledRemoteSource],
     ruleSources: [enabledSource, disabledSource],
     snapshots: [],
     cacheEntries: [
@@ -647,6 +843,13 @@ test('scheduled delegates sync work to waitUntil and processes only enabled rule
     await withMockFetch(
       async (input) => {
         requestedUrls.push(typeof input === 'string' ? input : input.url);
+        if ((typeof input === 'string' ? input : input.url).includes('subscription')) {
+          return new Response(
+            'vless://11111111-1111-1111-1111-111111111111@hk.example.com:443?security=tls&type=ws#HK',
+            { status: 200 }
+          );
+        }
+
         return new Response('MATCH,DIRECT', { status: 200 });
       },
       async () => {
@@ -668,11 +871,14 @@ test('scheduled delegates sync work to waitUntil and processes only enabled rule
     console.log = originalLog;
   }
 
-  assert.deepEqual(requestedUrls, ['https://example.com/enabled.txt']);
+  assert.deepEqual(requestedUrls, ['https://example.com/enabled.txt', 'https://example.com/subscription.txt']);
+  assert.equal(db.nodes.size, 2);
   assert.equal(db.snapshots.length, 1);
-  assert.equal(db.syncLogs.length, 1);
+  assert.equal(db.syncLogs.length, 2);
   assert.equal(db.ruleSources.get('rs_enabled')?.last_sync_status, 'success');
   assert.equal(db.ruleSources.get('rs_disabled')?.last_sync_status, null);
+  assert.equal(db.remoteSubscriptionSources.get('rss_enabled')?.last_sync_status, 'success');
+  assert.equal(db.remoteSubscriptionSources.get('rss_disabled')?.last_sync_status, null);
   assert.deepEqual(kv.deletedKeys, [
     'sub:mihomo:tok_demo',
     'preview:mihomo:usr_demo',

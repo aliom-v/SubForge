@@ -34,6 +34,11 @@ export declare const WEB_API_ROUTES: {
   updateRuleSource: WebApiRoute;
   deleteRuleSource: WebApiRoute;
   syncRuleSource: WebApiRoute;
+  fetchRemoteSubscriptionSources: WebApiRoute;
+  createRemoteSubscriptionSource: WebApiRoute;
+  updateRemoteSubscriptionSource: WebApiRoute;
+  deleteRemoteSubscriptionSource: WebApiRoute;
+  syncRemoteSubscriptionSource: WebApiRoute;
   fetchSyncLogs: WebApiRoute;
   fetchAuditLogs: WebApiRoute;
   rebuildSubscriptionCaches: WebApiRoute;

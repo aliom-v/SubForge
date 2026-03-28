@@ -4,6 +4,7 @@ import type {
   AppErrorShape,
   AuditLogRecord,
   NodeRecord,
+  RemoteSubscriptionSourceRecord,
   RuleSourceRecord,
   SubscriptionTarget,
   SyncLogRecord,
@@ -74,6 +75,26 @@ export interface RuleSourceSyncPayload {
   message: string;
   changed: boolean;
   ruleCount: number;
+  details?: Record<string, unknown>;
+}
+
+export interface RemoteSubscriptionSourceSyncPayload {
+  sourceId: string;
+  sourceName: string;
+  sourceUrl: string;
+  status: 'success' | 'failed' | 'skipped';
+  message: string;
+  changed: boolean;
+  importedAt: string;
+  importedCount: number;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  duplicateCount: number;
+  disabledCount: number;
+  errorCount: number;
+  lineCount: number;
+  contentEncoding?: NodeImportContentEncoding;
   details?: Record<string, unknown>;
 }
 
@@ -499,6 +520,59 @@ export async function syncRuleSource(token: string, ruleSourceId: string): Promi
   return request(
     WEB_API_ROUTES.syncRuleSource.buildPath(ruleSourceId),
     { method: WEB_API_ROUTES.syncRuleSource.method },
+    token
+  );
+}
+
+export async function fetchRemoteSubscriptionSources(token: string): Promise<RemoteSubscriptionSourceRecord[]> {
+  return request(
+    WEB_API_ROUTES.fetchRemoteSubscriptionSources.buildPath(),
+    { method: WEB_API_ROUTES.fetchRemoteSubscriptionSources.method },
+    token
+  );
+}
+
+export async function createRemoteSubscriptionSource(
+  token: string,
+  input: { name?: string; sourceUrl: string; enabled?: boolean }
+): Promise<RemoteSubscriptionSourceRecord> {
+  return request(
+    WEB_API_ROUTES.createRemoteSubscriptionSource.buildPath(),
+    { method: WEB_API_ROUTES.createRemoteSubscriptionSource.method, body: JSON.stringify(input) },
+    token
+  );
+}
+
+export async function updateRemoteSubscriptionSource(
+  token: string,
+  sourceId: string,
+  input: { name?: string; sourceUrl?: string; enabled?: boolean }
+): Promise<RemoteSubscriptionSourceRecord> {
+  return request(
+    WEB_API_ROUTES.updateRemoteSubscriptionSource.buildPath(sourceId),
+    { method: WEB_API_ROUTES.updateRemoteSubscriptionSource.method, body: JSON.stringify(input) },
+    token
+  );
+}
+
+export async function deleteRemoteSubscriptionSource(
+  token: string,
+  sourceId: string
+): Promise<{ deleted: true; remoteSubscriptionSourceId: string }> {
+  return request(
+    WEB_API_ROUTES.deleteRemoteSubscriptionSource.buildPath(sourceId),
+    { method: WEB_API_ROUTES.deleteRemoteSubscriptionSource.method },
+    token
+  );
+}
+
+export async function syncRemoteSubscriptionSource(
+  token: string,
+  sourceId: string
+): Promise<RemoteSubscriptionSourceSyncPayload> {
+  return request(
+    WEB_API_ROUTES.syncRemoteSubscriptionSource.buildPath(sourceId),
+    { method: WEB_API_ROUTES.syncRemoteSubscriptionSource.method },
     token
   );
 }

@@ -1,7 +1,7 @@
 export const APP_NAME = 'SubForge';
 export const APP_VERSION = '0.1.0';
 export const APP_DESCRIPTION =
-  'Cloudflare 上的订阅管理平台骨架，面向 Mihomo 与 sing-box 双订阅输出。';
+  'Cloudflare 上的单用户托管订阅工具，面向 Mihomo 与 sing-box URL 拉取输出。';
 
 export const API_PREFIX = '/api';
 export const HEALTH_ENDPOINT = '/health';

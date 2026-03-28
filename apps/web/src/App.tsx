@@ -7,6 +7,7 @@ import {
   SUBSCRIPTION_TARGETS,
   type AuditLogRecord,
   type NodeRecord,
+  type RemoteSubscriptionSourceRecord,
   type RuleSourceRecord,
   type SubscriptionTarget,
   type SyncLogRecord,
@@ -34,16 +35,20 @@ import {
   fetchUserNodeBindings,
   fetchUsers,
   importNodes,
-  importRemoteNodes,
   login,
   rebuildSubscriptionCaches,
   logout,
   previewNodeImportFromUrl,
+  createRemoteSubscriptionSource,
+  deleteRemoteSubscriptionSource,
+  fetchRemoteSubscriptionSources,
   replaceUserNodeBindings,
   resetUserToken,
   setDefaultTemplate,
+  syncRemoteSubscriptionSource,
   syncRuleSource,
   updateNode,
+  updateRemoteSubscriptionSource,
   updateRuleSource,
   updateTemplate,
   updateUser,
@@ -53,6 +58,7 @@ import {
   type NodeImportInput,
   type NodeImportPayload,
   type PreviewPayload,
+  type RemoteSubscriptionSourceSyncPayload,
   type RuleSourceSyncPayload,
   type SetupStatusPayload
 } from './api';
@@ -97,6 +103,7 @@ interface ResourceState {
   users: UserRecord[];
   nodes: NodeRecord[];
   templates: TemplateRecord[];
+  remoteSubscriptionSources: RemoteSubscriptionSourceRecord[];
   ruleSources: RuleSourceRecord[];
   syncLogs: SyncLogRecord[];
   auditLogs: AuditLogRecord[];
@@ -142,6 +149,11 @@ interface RuleSourceEditForm {
   enabled: boolean;
 }
 
+interface RemoteSubscriptionSourceForm {
+  name: string;
+  sourceUrl: string;
+}
+
 interface HostedSubscriptionTargetState {
   target: SubscriptionTarget;
   url: string;
@@ -162,6 +174,7 @@ const emptyResources: ResourceState = {
   users: [],
   nodes: [],
   templates: [],
+  remoteSubscriptionSources: [],
   ruleSources: [],
   syncLogs: [],
   auditLogs: []
@@ -196,6 +209,7 @@ const emptyTemplateEditForm: TemplateEditForm = {
   isDefault: false
 };
 const emptyRuleSourceEditForm: RuleSourceEditForm = { id: '', name: '', sourceUrl: '', format: 'text', enabled: true };
+const emptyRemoteSubscriptionSourceForm: RemoteSubscriptionSourceForm = { name: '', sourceUrl: '' };
 
 function formatNodeImportContentEncoding(value: NodeImportContentEncoding): string {
   return value === 'base64_text' ? 'Base64 文本' : '明文文本';
@@ -229,6 +243,16 @@ function summarizeImportErrors(errors: string[]): string[] {
   });
 }
 
+function buildRemoteSubscriptionSourceName(sourceUrl: string): string {
+  try {
+    const url = new URL(sourceUrl);
+    const pathTail = url.pathname.split('/').filter(Boolean).at(-1);
+    return pathTail ? `${url.hostname} / ${pathTail}` : url.hostname;
+  } catch {
+    return '远程订阅源';
+  }
+}
+
 const fullConfigImportPlaceholder = `# Mihomo / Clash YAML
 proxies:
   - name: HK Relay
@@ -256,8 +280,9 @@ export function App(): JSX.Element {
   const [error, setError] = useState('');
   const [preview, setPreview] = useState<PreviewPayload | null>(null);
   const [syncResult, setSyncResult] = useState<RuleSourceSyncPayload | null>(null);
+  const [remoteSubscriptionSyncResult, setRemoteSubscriptionSyncResult] =
+    useState<RemoteSubscriptionSourceSyncPayload | null>(null);
   const [cacheRebuildResult, setCacheRebuildResult] = useState<CacheRebuildPayload | null>(null);
-  const [remoteNodeImportResult, setRemoteNodeImportResult] = useState<NodeImportPayload | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatusPayload | null>(null);
   const [hostedSubscriptionResult, setHostedSubscriptionResult] = useState<HostedSubscriptionResult | null>(null);
 
@@ -269,7 +294,8 @@ export function App(): JSX.Element {
   const [configImportText, setConfigImportText] = useState('');
   const [nodeImportSourceUrl, setNodeImportSourceUrl] = useState('');
   const [remoteNodeImportPreview, setRemoteNodeImportPreview] = useState<NodeImportPreviewPayload | null>(null);
-  const [remoteNodeSourceUrl, setRemoteNodeSourceUrl] = useState('');
+  const [remoteSubscriptionSourceForm, setRemoteSubscriptionSourceForm] =
+    useState<RemoteSubscriptionSourceForm>(emptyRemoteSubscriptionSourceForm);
   const [templateForm, setTemplateForm] = useState({
     name: '',
     targetType: 'mihomo' as SubscriptionTarget,
@@ -359,8 +385,8 @@ export function App(): JSX.Element {
     setResources(emptyResources);
     setPreview(null);
     setSyncResult(null);
+    setRemoteSubscriptionSyncResult(null);
     setCacheRebuildResult(null);
-    setRemoteNodeImportResult(null);
     setRemoteNodeImportPreview(null);
     setHostedSubscriptionResult(null);
     setBindingUserId('');
@@ -497,23 +523,24 @@ export function App(): JSX.Element {
   }
 
   async function refreshResources(currentToken = token): Promise<ResourceState> {
-    const [users, nodes, templates, ruleSources, syncLogs, auditLogs] = await Promise.all([
+    const [users, nodes, templates, remoteSubscriptionSources, ruleSources, syncLogs, auditLogs] = await Promise.all([
       fetchUsers(currentToken),
       fetchNodes(currentToken),
       fetchTemplates(currentToken),
+      fetchRemoteSubscriptionSources(currentToken),
       fetchRuleSources(currentToken),
       fetchSyncLogs(currentToken),
       fetchAuditLogs(currentToken)
     ]);
     const firstUser = users[0];
 
-    setResources({ users, nodes, templates, ruleSources, syncLogs, auditLogs });
+    setResources({ users, nodes, templates, remoteSubscriptionSources, ruleSources, syncLogs, auditLogs });
     setPreviewForm((current) => ({
       ...current,
       userId: users.some((user) => user.id === current.userId) ? current.userId : firstUser?.id ?? ''
     }));
     setBindingUserId((current) => (users.some((user) => user.id === current) ? current : firstUser?.id ?? ''));
-    return { users, nodes, templates, ruleSources, syncLogs, auditLogs };
+    return { users, nodes, templates, remoteSubscriptionSources, ruleSources, syncLogs, auditLogs };
   }
 
   async function loadUserBindings(userId: string): Promise<void> {
@@ -707,7 +734,7 @@ export function App(): JSX.Element {
     await withAction(async () => {
       await createNode(token, nodePayload.payload);
       setNodeForm(emptyNodeDraftForm);
-    }, '节点已创建，请到“用户”页完成绑定并在“预览”页验证输出');
+    }, '节点已创建。若要直接给客户端使用，请回到上方导入入口生成托管 URL。');
   }
 
   function loadImportedNodeToCreateForm(importedNode: ImportedNodePayload): void {
@@ -721,18 +748,6 @@ export function App(): JSX.Element {
     });
     setError('');
     setMessage(`已将 ${importedNode.name} 载入创建表单`);
-  }
-
-  function loadImportedTemplateToCreateForm(importedConfig: ImportedConfigPayload): void {
-    setTemplateForm({
-      name: importedConfig.suggestedTemplateName,
-      targetType: importedConfig.targetType,
-      content: importedConfig.templateContent,
-      isDefault: false
-    });
-    setActiveTab('templates');
-    setError('');
-    setMessage(`已将 ${importedConfig.suggestedTemplateName} 载入模板创建表单`);
   }
 
   function updateCreateFormUpstreamProxy(upstreamProxy: string): void {
@@ -785,15 +800,18 @@ export function App(): JSX.Element {
 
   async function ensureHostedSubscriptions(input: {
     currentResources: ResourceState;
-    importedNodes: ImportedNodePayload[];
     sourceLabel: string;
+    importedNodes?: ImportedNodePayload[];
+    nodeRecords?: NodeRecord[];
     importedConfig?: ImportedConfigPayload | null;
   }): Promise<HostedSubscriptionResult> {
     if (!token) {
       throw new Error('当前未登录，无法生成托管 URL');
     }
 
-    const matchedNodes = matchImportedNodesToRecords(input.importedNodes, input.currentResources.nodes).filter((node) => node.enabled);
+    const matchedNodes = input.nodeRecords
+      ? input.nodeRecords.filter((node) => node.enabled)
+      : matchImportedNodesToRecords(input.importedNodes ?? [], input.currentResources.nodes).filter((node) => node.enabled);
 
     if (matchedNodes.length === 0) {
       throw new Error('导入完成，但没有匹配到可托管的启用节点');
@@ -864,7 +882,7 @@ export function App(): JSX.Element {
             target,
             url,
             ok: true,
-            detail: `${previewResult.metadata.nodeCount} 个节点 / 模板 ${previewResult.metadata.templateName}`
+            detail: `${previewResult.metadata.nodeCount} 个节点，托管输出检查通过`
           };
         } catch (caughtError) {
           return {
@@ -939,7 +957,7 @@ export function App(): JSX.Element {
 
       const hostedSummary = nextHostedResult
         ? `，已刷新托管 URL（${nextHostedResult.targets.filter((target) => target.ok).length}/${nextHostedResult.targets.length} 个目标已通过预览校验）`
-        : '，请到“用户”页完成绑定并在“预览”页验证输出';
+        : '，已导入到节点列表；如需客户端直接使用，请选择“导入并生成托管 URL”';
 
       setMessage(
         `已处理 ${result.importedCount} 个节点（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 去重 ${
@@ -1018,35 +1036,6 @@ export function App(): JSX.Element {
         importedConfig: parsedConfigImport
       }
     });
-  }
-
-  async function handleCreateImportedTemplate(): Promise<void> {
-    if (!token) return;
-
-    if (!parsedConfigImport) {
-      reportValidationError('请先粘贴可识别的 Mihomo / Clash YAML 或 sing-box JSON 配置');
-      return;
-    }
-
-    const validationError = validateTemplateDraft({
-      name: parsedConfigImport.suggestedTemplateName,
-      content: parsedConfigImport.templateContent,
-      version: 1
-    });
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    await withAction(async () => {
-      await createTemplate(token, {
-        name: parsedConfigImport.suggestedTemplateName,
-        targetType: parsedConfigImport.targetType,
-        content: parsedConfigImport.templateContent,
-        isDefault: false
-      });
-    }, `已根据完整配置创建模板：${parsedConfigImport.suggestedTemplateName}`);
   }
 
   async function handlePreviewNodeImportFromUrl(): Promise<void> {
@@ -1175,35 +1164,111 @@ export function App(): JSX.Element {
     }, '节点已删除');
   }
 
-  async function handleImportRemoteNodes(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  async function handleSaveRemoteSubscriptionSource(): Promise<void> {
     if (!token) return;
 
-    const sourceUrl = remoteNodeSourceUrl.trim();
+    const sourceUrl = nodeImportSourceUrl.trim();
 
     if (!isValidHttpUrl(sourceUrl)) {
-      reportValidationError('远程节点源 URL 必须是合法的 http / https 地址');
+      reportValidationError('订阅 URL 必须是合法的 http / https 地址');
       return;
     }
+
+    const sourceName = remoteSubscriptionSourceForm.name.trim() || buildRemoteSubscriptionSourceName(sourceUrl);
 
     setLoading(true);
     setError('');
     setMessage('');
 
     try {
-      const result = await importRemoteNodes(token, sourceUrl);
-      setRemoteNodeImportResult(result);
-      await refreshResources();
+      const source = await createRemoteSubscriptionSource(token, {
+        name: sourceName,
+        sourceUrl
+      });
+      const syncResult = await syncRemoteSubscriptionSource(token, source.id);
+      setRemoteSubscriptionSyncResult(syncResult);
+      const nextResources = await refreshResources();
+      const sourceNodes = nextResources.nodes.filter(
+        (node) => node.sourceType === 'remote' && node.sourceId === source.id && node.enabled
+      );
+
+      if (syncResult.status !== 'failed' && sourceNodes.length > 0) {
+        const nextHostedResult = await ensureHostedSubscriptions({
+          currentResources: nextResources,
+          sourceLabel: `自动拉取 / ${source.sourceUrl}`,
+          nodeRecords: sourceNodes
+        });
+
+        setHostedSubscriptionResult(nextHostedResult);
+        await refreshResources();
+        setRemoteSubscriptionSourceForm(emptyRemoteSubscriptionSourceForm);
+        setNodeImportSourceUrl('');
+        setRemoteNodeImportPreview(null);
+        setMessage(
+          syncResult.changed
+            ? `自动拉取任务已保存并同步（新增 ${syncResult.createdCount} / 更新 ${syncResult.updatedCount} / 禁用 ${syncResult.disabledCount}），托管 URL 已刷新`
+            : `自动拉取任务已保存，当前共 ${syncResult.importedCount} 个节点，托管 URL 已确认可用`
+        );
+        return;
+      }
+
       setMessage(
-        result.changed
-          ? `远程节点源已同步（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 禁用 ${result.disabledCount ?? 0}）`
-          : `远程节点源无变化，共 ${result.importedCount} 个节点`
+        syncResult.status === 'failed'
+          ? `自动拉取任务已保存，但首次同步失败：${syncResult.message}`
+          : `自动拉取任务已保存，共 ${syncResult.importedCount} 个节点`
       );
     } catch (caughtError) {
       await handleProtectedApiError(caughtError);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSyncSavedRemoteSubscriptionSource(source: RemoteSubscriptionSourceRecord): Promise<void> {
+    if (!token) return;
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const result = await syncRemoteSubscriptionSource(token, source.id);
+      setRemoteSubscriptionSyncResult(result);
+      await refreshResources();
+      setMessage(
+        result.status === 'failed'
+          ? `自动拉取失败：${result.message}`
+          : result.changed
+            ? `自动拉取已完成（新增 ${result.createdCount} / 更新 ${result.updatedCount} / 禁用 ${result.disabledCount}）`
+            : `自动拉取无变化，共 ${result.importedCount} 个节点`
+      );
+    } catch (caughtError) {
+      await handleProtectedApiError(caughtError);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleToggleRemoteSubscriptionSource(source: RemoteSubscriptionSourceRecord): Promise<void> {
+    if (!token) return;
+
+    await withAction(
+      () =>
+        updateRemoteSubscriptionSource(token, source.id, {
+          enabled: !source.enabled
+        }),
+      source.enabled ? '已暂停该自动拉取任务' : '已启用该自动拉取任务'
+    );
+  }
+
+  async function handleDeleteRemoteSubscriptionTask(source: RemoteSubscriptionSourceRecord): Promise<void> {
+    if (!token || !confirmDestructiveAction(`确认删除自动拉取任务“${source.name}”吗？这会移除该任务同步出的节点。`)) {
+      return;
+    }
+
+    await withAction(async () => {
+      await deleteRemoteSubscriptionSource(token, source.id);
+    }, '自动拉取任务已删除');
   }
 
   async function handleCreateTemplate(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -1379,7 +1444,7 @@ export function App(): JSX.Element {
     return (
       <main className="page auth-page">
         <section className="hero">
-          <p className="eyebrow">SubForge / Phase 5</p>
+          <p className="eyebrow">SubForge / Single-user Hosted</p>
           <h1>{metadata.name}</h1>
           <p className="lead">{metadata.description}</p>
         </section>
@@ -1465,7 +1530,7 @@ export function App(): JSX.Element {
     <main className="page">
       <section className="hero hero-row">
         <div>
-          <p className="eyebrow">SubForge / Phase 5</p>
+          <p className="eyebrow">SubForge / Single-user Hosted</p>
           <h1>{metadata.name}</h1>
           <p className="lead">{metadata.description}</p>
         </div>
@@ -1607,9 +1672,9 @@ export function App(): JSX.Element {
               这里现在只保留个人使用的三条主路径：节点文本导入、订阅 URL 解析、完整配置导入。目标就是导入后直接拿到可托管 URL。
             </p>
             <div className="inline-meta">
-              <span>一键托管模式会自动维护用户、模板和绑定</span>
+              <span>一键托管模式会自动维护底层托管对象</span>
               <span>分享链接 / Base64 / YAML / JSON 都支持</span>
-              <span>链式代理会继续映射到 `params.upstreamProxy`</span>
+              <span>订阅 URL 现在可以保存为每小时自动拉取任务</span>
             </div>
           </article>
 
@@ -1617,7 +1682,7 @@ export function App(): JSX.Element {
             <article className="panel full-width">
               <h2>当前托管 URL</h2>
               <p className="helper">
-                最近一次来源：{hostedSubscriptionResult.sourceLabel}。系统会复用同一组个人托管链接，并把这次导入匹配到的 {hostedSubscriptionResult.nodeCount} 个节点绑定进去。
+                最近一次来源：{hostedSubscriptionResult.sourceLabel}。系统会复用同一组个人托管链接，并把这次导入匹配到的 {hostedSubscriptionResult.nodeCount} 个节点收进当前托管订阅。
               </p>
               <div className="metadata-grid">
                 {hostedSubscriptionResult.targets.map((target) => (
@@ -1626,7 +1691,7 @@ export function App(): JSX.Element {
                     <a className="result-link" href={target.url} target="_blank" rel="noreferrer">
                       {target.url}
                     </a>
-                    <span>{target.ok ? '预览校验通过' : '预览校验失败'}</span>
+                    <span>{target.ok ? '输出检查通过' : '输出检查失败'}</span>
                     <span>{target.detail}</span>
                     <div className="inline-actions">
                       <button type="button" className="secondary" onClick={() => void copyHostedUrl(target.url, target.target)}>
@@ -1662,7 +1727,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                适合直接粘贴节点文本。这里会优先识别分享链接、Base64 订阅文本和 JSON 节点清单；如果是 provider 骨架型 Mihomo 配置，更适合放到右侧“完整配置导入”。
+                适合直接粘贴节点文本。这里会优先识别分享链接、Base64 订阅文本和 JSON 节点清单；如果是完整 Mihomo / sing-box 配置，更适合放到右侧“导入完整配置”。
               </p>
               {parsedNodeImport.lineCount > 0 ? (
                 <p className="helper full-span">
@@ -1727,8 +1792,20 @@ export function App(): JSX.Element {
                   placeholder="https://example.com/subscription.txt"
                 />
               </Field>
+              <Field label="自动拉取任务名（可选）">
+                <input
+                  value={remoteSubscriptionSourceForm.name}
+                  onChange={(event) =>
+                    setRemoteSubscriptionSourceForm((current) => ({
+                      ...current,
+                      name: event.target.value
+                    }))
+                  }
+                  placeholder="默认使用域名 / 路径生成"
+                />
+              </Field>
               <p className="helper full-span">
-                Worker 会远程抓取并做一次性解析预览。你可以先确认 URL 里到底是分享链接订阅、YAML、JSON 还是节点数组，也可以直接导入并生成托管 URL；不会自动保存成定时任务。
+                Worker 会远程抓取并解析这个 URL。你可以先做一次性预览，也可以直接导入托管；如果点“保存并立即同步”，系统会把这个上游链接存成自动拉取任务，并按当前 `wrangler.toml` 的 Cron 配置每小时同步一次。
               </p>
               <div className="inline-actions full-span">
                 <button
@@ -1745,6 +1822,14 @@ export function App(): JSX.Element {
                   onClick={() => void handlePreviewNodeImportFromUrl()}
                 >
                   抓取并预览
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={loading || !nodeImportSourceUrl.trim()}
+                  onClick={() => void handleSaveRemoteSubscriptionSource()}
+                >
+                  保存并立即同步
                 </button>
                 {remoteNodeImportPreview ? (
                   <button
@@ -1800,6 +1885,48 @@ export function App(): JSX.Element {
                   )}
                 </>
               ) : null}
+              {remoteSubscriptionSyncResult ? (
+                <div className="metadata-grid full-span">
+                  <div className="result-card">
+                    <strong>最近一次自动拉取</strong>
+                    <span>{remoteSubscriptionSyncResult.sourceName}</span>
+                    <span>状态 {remoteSubscriptionSyncResult.status}</span>
+                    <span>节点 {remoteSubscriptionSyncResult.importedCount}</span>
+                    <span>
+                      变更 {remoteSubscriptionSyncResult.createdCount} / {remoteSubscriptionSyncResult.updatedCount} /{' '}
+                      {remoteSubscriptionSyncResult.disabledCount}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+              <div className="full-span">
+                <strong>已保存的自动拉取任务</strong>
+              </div>
+              {resources.remoteSubscriptionSources.length > 0 ? (
+                <ResourceTable
+                  columns={['任务', '上游 URL', '状态', '最近同步', '失败次数', '操作']}
+                  rows={resources.remoteSubscriptionSources.map((source) => [
+                    source.name,
+                    source.sourceUrl,
+                    `${source.enabled ? 'enabled' : 'paused'} / ${source.lastSyncStatus ?? 'never'}`,
+                    source.lastSyncAt ?? 'never',
+                    source.failureCount,
+                    <div className="inline-actions" key={source.id}>
+                      <button type="button" className="secondary" onClick={() => void handleSyncSavedRemoteSubscriptionSource(source)}>
+                        立即同步
+                      </button>
+                      <button type="button" className="secondary" onClick={() => void handleToggleRemoteSubscriptionSource(source)}>
+                        {source.enabled ? '暂停' : '启用'}
+                      </button>
+                      <button type="button" className="danger" onClick={() => void handleDeleteRemoteSubscriptionTask(source)}>
+                        删除
+                      </button>
+                    </div>
+                  ])}
+                />
+              ) : (
+                <p className="helper full-span">当前还没有自动拉取任务。保存后，后续 Cron 会继续拉取并更新这组节点。</p>
+              )}
             </div>
           </article>
 
@@ -1815,7 +1942,7 @@ export function App(): JSX.Element {
                 />
               </Field>
               <p className="helper full-span">
-                这里会提取节点，并保留完整配置里的关键结构用于自动托管。Mihomo 的 `proxy-groups` / `rules` / `proxy-providers`，以及 sing-box 的静态 `outbounds` / `route.rules` 都会继续参与输出。
+                这里会提取节点，并尽量把配置里的关键结构一起带进自动托管输出。你不需要手动维护模板或规则集，也不用先创建额外用户。
               </p>
               {configImportText.trim() && !parsedConfigImport ? (
                 <p className="helper full-span">
@@ -1896,18 +2023,18 @@ export function App(): JSX.Element {
           <article className="panel full-width">
             <h2>链式代理拓扑</h2>
             <p className="helper">
-              这里根据每个节点的 `params.upstreamProxy` 计算链路，方便检查 `dialer-proxy` / `detour` 是否连对了。如果上游指向 Mihomo 代理组，系统会继续参考默认 Mihomo 模板里的 `proxy-groups` / `proxy-providers` 做链路展开。
+              这里根据每个节点的 `params.upstreamProxy` 计算链路，方便检查 `dialer-proxy` / `detour` 是否连对了。如果上游引用的是组名，系统会结合当前托管的 Mihomo 输出结构继续展开。
             </p>
             {preferredMihomoTemplate ? (
               <div className="inline-meta">
-                <span>当前链路模板：{preferredMihomoTemplate.name}</span>
+                <span>当前托管 Mihomo 骨架：{preferredMihomoTemplate.name}</span>
                 <span>代理组：{mihomoProxyGroupNames.length}</span>
                 <span>Providers：{mihomoTopology.proxyProviders.length}</span>
               </div>
             ) : (
-              <p className="helper">当前没有 Mihomo 模板，链路只会按节点间引用解析。</p>
+              <p className="helper">当前还没有托管 Mihomo 骨架，链路只会按节点间引用解析。</p>
             )}
-            {mihomoTopology.error ? <p className="helper">默认 Mihomo 模板解析失败：{mihomoTopology.error}</p> : null}
+            {mihomoTopology.error ? <p className="helper">当前托管 Mihomo 骨架解析失败：{mihomoTopology.error}</p> : null}
             <ResourceTable
               columns={['节点', '上游代理', '链路', '状态']}
               rows={nodeChainSummaries.map((item) => [

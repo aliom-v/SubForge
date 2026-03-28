@@ -1,5 +1,6 @@
 import type {
   NodeSourceType,
+  RemoteSubscriptionSourceRecord,
   RuleSourceFormat,
   RuleSourceRecord,
   SubscriptionTarget,
@@ -197,6 +198,25 @@ function mapRuleSet(row: Row): SubscriptionRuleSet {
     format: asString(row.format) as RuleSourceFormat,
     content: asString(row.content),
     sourceId: asString(row.rule_source_id)
+  };
+}
+
+function mapRemoteSubscriptionSource(row: Row): RemoteSubscriptionSourceRecord {
+  const lastSyncAt = asNullableString(row.last_sync_at);
+  const lastSyncStatus = asNullableString(row.last_sync_status);
+
+  return {
+    id: asString(row.id),
+    name: asString(row.name),
+    sourceUrl: asString(row.source_url),
+    enabled: asBoolean(row.enabled),
+    failureCount: asNumber(row.failure_count),
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+    ...(lastSyncAt !== null ? { lastSyncAt } : {}),
+    ...(lastSyncStatus !== null
+      ? { lastSyncStatus: lastSyncStatus as Exclude<RemoteSubscriptionSourceRecord['lastSyncStatus'], null | undefined> }
+      : {})
   };
 }
 
@@ -756,6 +776,98 @@ export async function deleteRuleSource(db: D1Database, id: string): Promise<bool
   return true;
 }
 
+export async function listRemoteSubscriptionSources(db: D1Database): Promise<RemoteSubscriptionSourceRecord[]> {
+  const rows = await all(db, 'SELECT * FROM remote_subscription_sources ORDER BY created_at DESC');
+  return rows.map(mapRemoteSubscriptionSource);
+}
+
+export async function listEnabledRemoteSubscriptionSources(db: D1Database): Promise<RemoteSubscriptionSourceRecord[]> {
+  const rows = await all(
+    db,
+    'SELECT * FROM remote_subscription_sources WHERE enabled = 1 ORDER BY created_at DESC'
+  );
+  return rows.map(mapRemoteSubscriptionSource);
+}
+
+export async function getRemoteSubscriptionSourceById(
+  db: D1Database,
+  id: string
+): Promise<RemoteSubscriptionSourceRecord | null> {
+  const row = await first(db, 'SELECT * FROM remote_subscription_sources WHERE id = ? LIMIT 1', [id]);
+  return row ? mapRemoteSubscriptionSource(row) : null;
+}
+
+export async function getRemoteSubscriptionSourceByUrl(
+  db: D1Database,
+  sourceUrl: string
+): Promise<RemoteSubscriptionSourceRecord | null> {
+  const row = await first(db, 'SELECT * FROM remote_subscription_sources WHERE source_url = ? LIMIT 1', [sourceUrl]);
+  return row ? mapRemoteSubscriptionSource(row) : null;
+}
+
+export async function createRemoteSubscriptionSource(
+  db: D1Database,
+  input: {
+    name: string;
+    sourceUrl: string;
+    enabled?: boolean | undefined;
+  }
+): Promise<RemoteSubscriptionSourceRecord> {
+  const id = createId('rss');
+  const now = new Date().toISOString();
+
+  await db
+    .prepare(
+      'INSERT INTO remote_subscription_sources (id, name, source_url, enabled, last_sync_at, last_sync_status, failure_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .bind(id, input.name, input.sourceUrl, input.enabled === false ? 0 : 1, null, null, 0, now, now)
+    .run();
+
+  return (await getRemoteSubscriptionSourceById(db, id)) as RemoteSubscriptionSourceRecord;
+}
+
+export async function updateRemoteSubscriptionSource(
+  db: D1Database,
+  id: string,
+  input: {
+    name?: string | undefined;
+    sourceUrl?: string | undefined;
+    enabled?: boolean | undefined;
+  }
+): Promise<RemoteSubscriptionSourceRecord | null> {
+  const current = await getRemoteSubscriptionSourceById(db, id);
+
+  if (!current) {
+    return null;
+  }
+
+  await db
+    .prepare(
+      'UPDATE remote_subscription_sources SET name = ?, source_url = ?, enabled = ?, updated_at = ? WHERE id = ?'
+    )
+    .bind(
+      input.name ?? current.name,
+      input.sourceUrl ?? current.sourceUrl,
+      input.enabled === undefined ? (current.enabled ? 1 : 0) : input.enabled ? 1 : 0,
+      new Date().toISOString(),
+      id
+    )
+    .run();
+
+  return getRemoteSubscriptionSourceById(db, id);
+}
+
+export async function deleteRemoteSubscriptionSource(db: D1Database, id: string): Promise<boolean> {
+  const current = await getRemoteSubscriptionSourceById(db, id);
+
+  if (!current) {
+    return false;
+  }
+
+  await db.prepare('DELETE FROM remote_subscription_sources WHERE id = ?').bind(id).run();
+  return true;
+}
+
 export async function recordRuleSourceSync(
   db: D1Database,
   sourceId: string,
@@ -793,6 +905,45 @@ export async function recordRuleSourceSync(
     .run();
 
   return getRuleSourceById(db, sourceId);
+}
+
+export async function recordRemoteSubscriptionSourceSync(
+  db: D1Database,
+  sourceId: string,
+  status: SyncLogRecord['status'],
+  message: string,
+  details?: Record<string, unknown> | null
+): Promise<RemoteSubscriptionSourceRecord | null> {
+  const now = new Date().toISOString();
+  const current = await getRemoteSubscriptionSourceById(db, sourceId);
+
+  if (!current) {
+    return null;
+  }
+
+  await db
+    .prepare(
+      'UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?'
+    )
+    .bind(now, status, status === 'failed' ? current.failureCount + 1 : 0, now, sourceId)
+    .run();
+
+  await db
+    .prepare(
+      'INSERT INTO sync_logs (id, source_type, source_id, status, message, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    )
+    .bind(
+      createId('sync'),
+      'remote_subscription_source',
+      sourceId,
+      status,
+      message,
+      details ? JSON.stringify(details) : null,
+      now
+    )
+    .run();
+
+  return getRemoteSubscriptionSourceById(db, sourceId);
 }
 
 export async function recordNodeSourceSync(
@@ -1033,6 +1184,7 @@ export async function listAuditLogs(db: D1Database, limit = 50): Promise<AuditLo
          WHEN audit_logs.target_type = 'node' THEN nodes.name
          WHEN audit_logs.target_type = 'template' THEN templates.name
          WHEN audit_logs.target_type = 'rule_source' THEN rule_sources.name
+         WHEN audit_logs.target_type = 'remote_subscription_source' THEN remote_subscription_sources.name
          ELSE NULL
        END AS target_display_name
      FROM audit_logs
@@ -1041,6 +1193,9 @@ export async function listAuditLogs(db: D1Database, limit = 50): Promise<AuditLo
      LEFT JOIN nodes ON audit_logs.target_type = 'node' AND nodes.id = audit_logs.target_id
      LEFT JOIN templates ON audit_logs.target_type = 'template' AND templates.id = audit_logs.target_id
      LEFT JOIN rule_sources ON audit_logs.target_type = 'rule_source' AND rule_sources.id = audit_logs.target_id
+     LEFT JOIN remote_subscription_sources
+       ON audit_logs.target_type = 'remote_subscription_source'
+      AND remote_subscription_sources.id = audit_logs.target_id
      ORDER BY audit_logs.created_at DESC
      LIMIT ?`,
     [limit]
