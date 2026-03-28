@@ -264,8 +264,8 @@ function toSingboxOutbounds(nodes: SubscriptionNode[]): string {
   return JSON.stringify(outbounds, null, 2);
 }
 
-function toSingboxRules(ruleSets: SubscriptionRuleSet[]): string {
-  const rules = ruleSets.flatMap((ruleSet) =>
+function toSingboxRuleObjects(ruleSets: SubscriptionRuleSet[]): Array<Record<string, unknown>> {
+  return ruleSets.flatMap((ruleSet) =>
     ruleSet.content
       .split('\n')
       .map((line) => line.trim())
@@ -277,6 +277,16 @@ function toSingboxRules(ruleSets: SubscriptionRuleSet[]): string {
         rule: line
       }))
   );
+}
+
+function toSingboxRuleItems(ruleSets: SubscriptionRuleSet[]): string {
+  return toSingboxRuleObjects(ruleSets)
+    .map((rule) => indentBlock(JSON.stringify(rule, null, 2), 8))
+    .join(',\n');
+}
+
+function toSingboxRules(ruleSets: SubscriptionRuleSet[]): string {
+  const rules = toSingboxRuleObjects(ruleSets);
 
   return JSON.stringify(rules, null, 2);
 }
@@ -305,11 +315,13 @@ export const singboxRenderer: SubscriptionRenderer = {
   mimeType: 'application/json; charset=utf-8',
   render(context): string {
     const outboundItems = toSingboxOutboundItems(context.nodes);
+    const ruleItems = toSingboxRuleItems(context.ruleSets);
     return replaceTemplateSlots(context.template.content, {
       outbounds: indentBlock(toSingboxOutbounds(context.nodes), 2).trimStart(),
       outbound_items: outboundItems,
       outbound_items_with_leading_comma: outboundItems ? `,\n${outboundItems}` : '',
-      rules: indentBlock(toSingboxRules(context.ruleSets), 6).trimStart()
+      rules: indentBlock(toSingboxRules(context.ruleSets), 6).trimStart(),
+      rules_with_leading_comma: ruleItems ? `,\n${ruleItems}` : ''
     });
   }
 };

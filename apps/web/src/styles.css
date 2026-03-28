@@ -304,6 +304,25 @@ h2 {
   padding: 0 4px;
 }
 
+.template-structure-section {
+  display: grid;
+  gap: 12px;
+}
+
+.template-structure-list {
+  display: grid;
+  gap: 12px;
+}
+
+.template-structure-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(124, 184, 255, 0.12);
+  background: rgba(4, 12, 24, 0.48);
+}
+
 .import-errors {
   display: grid;
   gap: 10px;

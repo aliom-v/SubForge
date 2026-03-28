@@ -221,7 +221,7 @@ npm run build:worker
 - `docs/排障与常见问题.md`：症状驱动 FAQ 与高频报错排查
 - `docs/数据模型与表结构说明.md`：当前 D1 表结构、索引、关系、共享类型映射
 - `docs/架构图与ER图.md`：运行时拓扑、关键数据流、Mermaid 架构图与 D1 实体关系图
-- `docs/完整配置导入与链式代理说明.md`：完整配置导入、`ssr/tuic`、链式代理、`upstreamProxy -> dialer-proxy/detour` 映射与当前边界
+- `docs/完整配置导入与链式代理说明.md`：完整配置导入、模板结构助手、`ssr/tuic`、链式代理、`upstreamProxy -> dialer-proxy/detour` 映射与当前边界
 - `docs/实施方案.md`：长期设计基线、模块边界与架构原则
 - `CHANGELOG.md`：版本变更与已完成项记录
 - `.omx/plans/2026-03-07-subforge-roadmap.md`：当前实现进度与阶段拆分

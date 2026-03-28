@@ -76,6 +76,7 @@ import {
   type NodeImportContentEncoding
 } from './node-import';
 import { canonicalizeNodeProtocol, validateNodeProtocolMetadata } from './node-protocol-validation';
+import { TemplateStructureAssistant } from './template-structure-assistant';
 
 const metadata = getServiceMetadata();
 const sessionStorageKey = 'subforge.admin.token';
@@ -124,6 +125,7 @@ interface NodeEditForm extends NodeDraftForm {
 interface TemplateEditForm {
   id: string;
   name: string;
+  targetType: SubscriptionTarget;
   content: string;
   version: number;
   enabled: boolean;
@@ -157,7 +159,15 @@ const emptyNodeDraftForm: NodeDraftForm = {
   paramsText: ''
 };
 const emptyNodeEditForm: NodeEditForm = { id: '', ...emptyNodeDraftForm, enabled: true };
-const emptyTemplateEditForm: TemplateEditForm = { id: '', name: '', content: '', version: 1, enabled: true, isDefault: false };
+const emptyTemplateEditForm: TemplateEditForm = {
+  id: '',
+  name: '',
+  targetType: 'mihomo',
+  content: '',
+  version: 1,
+  enabled: true,
+  isDefault: false
+};
 const emptyRuleSourceEditForm: RuleSourceEditForm = { id: '', name: '', sourceUrl: '', format: 'text', enabled: true };
 
 function formatNodeImportContentEncoding(value: NodeImportContentEncoding): string {
@@ -391,6 +401,7 @@ export function App(): JSX.Element {
     setTemplateEditForm({
       id: template.id,
       name: template.name,
+      targetType: template.targetType,
       content: template.content,
       version: template.version,
       enabled: template.status === 'enabled',
@@ -1886,6 +1897,16 @@ export function App(): JSX.Element {
               <Field label="内容" full>
                 <textarea value={templateForm.content} onChange={(event) => setTemplateForm((current) => ({ ...current, content: event.target.value }))} rows={10} />
               </Field>
+              <TemplateStructureAssistant
+                targetType={templateForm.targetType}
+                content={templateForm.content}
+                onContentChange={(content) => setTemplateForm((current) => ({ ...current, content }))}
+                onError={reportValidationError}
+                onMessage={(messageText) => {
+                  setError('');
+                  setMessage(messageText);
+                }}
+              />
               <label className="checkbox-row"><input type="checkbox" checked={templateForm.isDefault} onChange={(event) => setTemplateForm((current) => ({ ...current, isDefault: event.target.checked }))} /><span>设为默认模板</span></label>
               <button type="submit" disabled={loading}>创建模板</button>
             </form>
@@ -1901,10 +1922,21 @@ export function App(): JSX.Element {
                 </select>
               </Field>
               <Field label="名称"><input value={templateEditForm.name} onChange={(event) => setTemplateEditForm((current) => ({ ...current, name: event.target.value }))} /></Field>
+              <Field label="目标"><input value={templateEditForm.targetType} readOnly /></Field>
               <Field label="版本"><input type="number" value={templateEditForm.version} onChange={(event) => setTemplateEditForm((current) => ({ ...current, version: Number(event.target.value) }))} /></Field>
               <Field label="内容" full>
                 <textarea value={templateEditForm.content} onChange={(event) => setTemplateEditForm((current) => ({ ...current, content: event.target.value }))} rows={10} />
               </Field>
+              <TemplateStructureAssistant
+                targetType={templateEditForm.targetType}
+                content={templateEditForm.content}
+                onContentChange={(content) => setTemplateEditForm((current) => ({ ...current, content }))}
+                onError={reportValidationError}
+                onMessage={(messageText) => {
+                  setError('');
+                  setMessage(messageText);
+                }}
+              />
               <label className="checkbox-row"><input type="checkbox" checked={templateEditForm.enabled} onChange={(event) => setTemplateEditForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用模板</span></label>
               <label className="checkbox-row"><input type="checkbox" checked={templateEditForm.isDefault} onChange={(event) => setTemplateEditForm((current) => ({ ...current, isDefault: event.target.checked }))} /><span>作为默认模板</span></label>
               <button type="submit" disabled={loading || !templateEditForm.id}>保存模板</button>

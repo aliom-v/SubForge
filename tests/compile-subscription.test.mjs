@@ -280,3 +280,49 @@ test('compileSubscription maps detour and transport fields for sing-box template
   assert.equal(parsed.outbounds[0].request_timeout, 8000);
   assert.equal(parsed.outbounds[0].zero_rtt_handshake, true);
 });
+
+test('compileSubscription appends dynamic sing-box rules and outbounds after static entries', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      target: 'singbox',
+      nodes: [
+        {
+          id: 'node_static_append',
+          name: 'HK VLESS',
+          protocol: 'vless',
+          server: 'hk.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          },
+          params: {
+            tls: true
+          }
+        }
+      ],
+      template: {
+        id: 'tpl_singbox_append',
+        name: 'Sing-box Static Append',
+        target: 'singbox',
+        content: '{\n  "outbounds": [\n    {\n      "tag": "direct",\n      "type": "direct"\n    }{{outbound_items_with_leading_comma}}\n  ],\n  "route": {\n    "rules": [\n      {\n        "outbound": "direct",\n        "ip_is_private": true\n      }{{rules_with_leading_comma}}\n    ]\n  }\n}',
+        version: 1,
+        isDefault: true
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  const parsed = JSON.parse(result.data.content);
+
+  assert.equal(parsed.outbounds[0].tag, 'direct');
+  assert.equal(parsed.outbounds[1].tag, 'HK VLESS');
+  assert.equal(parsed.route.rules[0].outbound, 'direct');
+  assert.equal(parsed.route.rules[1].remark, 'Default Rules');
+  assert.equal(parsed.route.rules[1].rule, 'DOMAIN-SUFFIX,example.com,DIRECT');
+});
