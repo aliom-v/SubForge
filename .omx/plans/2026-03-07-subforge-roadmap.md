@@ -2,7 +2,7 @@
 
 ## 目标
 
-基于 `项目介绍.md` 与 `docs/实施方案.md`，按阶段把 SubForge 从空仓库逐步实现为可部署的 Cloudflare 订阅管理平台。
+基于 `docs/单用户托管模式需求.md` 与 `docs/实施方案.md`，按阶段把 SubForge 从空仓库逐步实现为可部署的 Cloudflare 单用户订阅托管工具。
 
 ## 决策
 
