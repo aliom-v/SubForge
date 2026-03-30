@@ -21,6 +21,7 @@ export const SUPPORTED_HYSTERIA2_SHARE_LINK_QUERY_KEYS = [
 
 const ssComplexParamKeys = ['plugin-opts', 'pluginOpts', 'plugins'] as const;
 const supportedHysteria2ObfsValues = new Set(['salamander']);
+const supportedHysteria2NetworkValues = new Set(['tcp', 'udp']);
 const supportedHysteria2ShareLinkQueryKeySet = new Set<string>(SUPPORTED_HYSTERIA2_SHARE_LINK_QUERY_KEYS);
 
 function hasOwn(record: Record<string, unknown> | null | undefined, key: string): boolean {
@@ -33,6 +34,14 @@ function readNonEmptyString(value: unknown): string {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string' && item.trim().length > 0);
+}
+
+function isNonEmptyStringOrNumber(value: unknown): boolean {
+  if (typeof value === 'number') {
+    return Number.isFinite(value);
+  }
+
+  return readNonEmptyString(value).length > 0;
 }
 
 export function canonicalizeNodeProtocol(protocol: string): string {
@@ -144,6 +153,40 @@ export function validateNodeProtocolMetadata(input: NodeProtocolMetadataValidati
       }
     }
 
+    if (hasOwn(params, 'network') && !readNonEmptyString(params?.network)) {
+      return 'hysteria2 节点的 params.network 必须是非空字符串';
+    }
+
+    const network = readNonEmptyString(params?.network).toLowerCase();
+
+    if (network && !supportedHysteria2NetworkValues.has(network)) {
+      return 'hysteria2 节点的 params.network 当前仅支持 "tcp" 或 "udp"';
+    }
+
+    if (hasOwn(params, 'mport') && !readNonEmptyString(params?.mport)) {
+      return 'hysteria2 节点的 params.mport 必须是非空字符串';
+    }
+
+    if (hasOwn(params, 'hop-interval') && !readNonEmptyString(params?.['hop-interval'])) {
+      return 'hysteria2 节点的 params["hop-interval"] 必须是非空字符串';
+    }
+
+    if (hasOwn(params, 'up') && !isNonEmptyStringOrNumber(params?.up)) {
+      return 'hysteria2 节点的 params.up 必须是非空字符串或数字';
+    }
+
+    if (hasOwn(params, 'down') && !isNonEmptyStringOrNumber(params?.down)) {
+      return 'hysteria2 节点的 params.down 必须是非空字符串或数字';
+    }
+
+    if (hasOwn(params, 'upmbps') && !isNonEmptyStringOrNumber(params?.upmbps)) {
+      return 'hysteria2 节点的 params.upmbps 必须是非空字符串或数字';
+    }
+
+    if (hasOwn(params, 'downmbps') && !isNonEmptyStringOrNumber(params?.downmbps)) {
+      return 'hysteria2 节点的 params.downmbps 必须是非空字符串或数字';
+    }
+
     return null;
   }
 
@@ -198,6 +241,10 @@ export function validateNodeProtocolMetadata(input: NodeProtocolMetadataValidati
 
     if (hasOwn(params, 'disable-sni') && typeof params?.['disable-sni'] !== 'boolean') {
       return 'tuic 节点的 params["disable-sni"] 必须是布尔值';
+    }
+
+    if (hasOwn(params, 'insecure') && typeof params?.insecure !== 'boolean') {
+      return 'tuic 节点的 params.insecure 必须是布尔值';
     }
 
     if (hasOwn(params, 'heartbeat') && !readNonEmptyString(params?.heartbeat)) {

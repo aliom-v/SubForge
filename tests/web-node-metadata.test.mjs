@@ -358,9 +358,66 @@ test('validateNodeProtocolMetadata validates ss, ssr, tuic and hysteria2 common 
 
   assert.equal(
     validateNodeProtocolMetadata({
+      protocol: 'tuic',
+      credentials: { uuid: 'uuid-1', password: 'replace-me' },
+      params: { insecure: 'true' }
+    }),
+    'tuic 节点的 params.insecure 必须是布尔值'
+  );
+
+  assert.equal(
+    validateNodeProtocolMetadata({
+      protocol: 'hysteria2',
+      credentials: { password: 'replace-me' },
+      params: { network: 'ws' }
+    }),
+    'hysteria2 节点的 params.network 当前仅支持 "tcp" 或 "udp"'
+  );
+
+  assert.equal(
+    validateNodeProtocolMetadata({
+      protocol: 'hysteria2',
+      credentials: { password: 'replace-me' },
+      params: { mport: '' }
+    }),
+    'hysteria2 节点的 params.mport 必须是非空字符串'
+  );
+
+  assert.equal(
+    validateNodeProtocolMetadata({
+      protocol: 'hysteria2',
+      credentials: { password: 'replace-me' },
+      params: { upmbps: false }
+    }),
+    'hysteria2 节点的 params.upmbps 必须是非空字符串或数字'
+  );
+
+  assert.equal(
+    validateNodeProtocolMetadata({
       protocol: 'hysteria2',
       credentials: { password: 'replace-me' },
       params: { sni: 'sub.example.com', obfs: 'salamander', 'obfs-password': 'secret', insecure: true }
+    }),
+    null
+  );
+
+  assert.equal(
+    validateNodeProtocolMetadata({
+      protocol: 'hysteria2',
+      credentials: { password: 'replace-me' },
+      params: {
+        sni: 'sub.example.com',
+        obfs: 'salamander',
+        'obfs-password': 'secret',
+        insecure: true,
+        network: 'tcp',
+        mport: '8443,9443',
+        'hop-interval': '30s',
+        up: 80,
+        down: '160',
+        upmbps: '100',
+        downmbps: 200
+      }
     }),
     null
   );

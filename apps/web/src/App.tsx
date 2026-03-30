@@ -55,7 +55,6 @@ import {
   type AdminSession,
   type NodeImportPreviewPayload,
   type CacheRebuildPayload,
-  type NodeImportInput,
   type NodeImportPayload,
   type PreviewPayload,
   type RemoteSubscriptionSourceSyncPayload,
@@ -63,6 +62,30 @@ import {
   type SetupStatusPayload
 } from './api';
 import { getErrorMessage, shouldClearProtectedSession } from './error-handling';
+import {
+  AUTO_HOSTED_TEMPLATE_NAMES,
+  AUTO_HOSTED_USER_NAME,
+  AUTO_HOSTED_USER_REMARK,
+  buildHostedSubscriptionUrl,
+  findAutoHostedTemplate,
+  findAutoHostedUser,
+  getHostedSubscriptionSyncStatus,
+  resolveCurrentHostedSubscriptionResult,
+  type HostedSubscriptionTargetState,
+  type HostedSubscriptionResult
+} from './hosted-state';
+import {
+  buildRemotePreviewMessage,
+  buildRemoteSubscriptionSourceSyncMessage,
+  getHostedSyncStatusLabel
+} from './workflow-feedback';
+import {
+  runConfigImportWorkflow,
+  runHostedGenerationWorkflow,
+  runNodeImportWorkflow,
+  runRemoteSubscriptionSourceSaveWorkflow
+} from './workflow-orchestration';
+import { buildSingleUserWorkflowSteps, getWorkflowStepStatusLabel } from './workflow-progress';
 import {
   COMMON_NODE_PROTOCOLS,
   createNodeProtocolGuideState,
@@ -154,22 +177,6 @@ interface RemoteSubscriptionSourceForm {
   sourceUrl: string;
 }
 
-interface HostedSubscriptionTargetState {
-  target: SubscriptionTarget;
-  url: string;
-  ok: boolean;
-  detail: string;
-}
-
-interface HostedSubscriptionResult {
-  userId: string;
-  userName: string;
-  token: string;
-  sourceLabel: string;
-  nodeCount: number;
-  targets: HostedSubscriptionTargetState[];
-}
-
 const emptyResources: ResourceState = {
   users: [],
   nodes: [],
@@ -180,12 +187,6 @@ const emptyResources: ResourceState = {
   auditLogs: []
 };
 
-const AUTO_HOSTED_USER_NAME = '个人托管订阅';
-const AUTO_HOSTED_USER_REMARK = 'subforge:auto-hosted';
-const AUTO_HOSTED_TEMPLATE_NAMES: Record<SubscriptionTarget, string> = {
-  mihomo: 'Auto Hosted Mihomo',
-  singbox: 'Auto Hosted Sing-box'
-};
 const AUTO_HOSTED_MIHOMO_TEMPLATE = ['mixed-port: 7890', 'mode: rule', 'proxies:', '{{proxies}}', 'proxy-groups:', '{{proxy_groups}}', 'rules:', '{{rules}}'].join('\n');
 const AUTO_HOSTED_SINGBOX_TEMPLATE = ['{', '  "outbounds": {{outbounds}},', '  "route": {', '    "rules": {{rules}}', '  }', '}'].join('\n');
 
@@ -317,13 +318,26 @@ export function App(): JSX.Element {
     () => [
       { label: 'Nodes', value: resources.nodes.length },
       { label: 'Hosted URLs', value: hostedSubscriptionResult?.targets.length ?? SUBSCRIPTION_TARGETS.length },
-      { label: 'Latest Import', value: hostedSubscriptionResult?.nodeCount ?? 0 }
+      { label: 'Hosted Nodes', value: hostedSubscriptionResult?.nodeCount ?? 0 }
     ],
     [hostedSubscriptionResult, resources.nodes.length]
   );
   const enabledNodeCount = useMemo(
     () => resources.nodes.filter((node) => node.enabled).length,
     [resources.nodes]
+  );
+  const hostedSubscriptionSyncStatus = useMemo(
+    () => getHostedSubscriptionSyncStatus(hostedSubscriptionResult, resources.nodes),
+    [hostedSubscriptionResult, resources.nodes]
+  );
+  const singleUserWorkflowSteps = useMemo(
+    () =>
+      buildSingleUserWorkflowSteps({
+        nodes: resources.nodes,
+        hostedSubscriptionSyncStatus,
+        hostedSubscriptionResult
+      }),
+    [hostedSubscriptionResult, hostedSubscriptionSyncStatus, resources.nodes]
   );
   const nodeCreateExamples = useMemo(() => getNodeMetadataExamples(nodeForm.protocol), [nodeForm.protocol]);
   const nodeEditExamples = useMemo(() => getNodeMetadataExamples(nodeEditForm.protocol), [nodeEditForm.protocol]);
@@ -536,14 +550,22 @@ export function App(): JSX.Element {
       fetchAuditLogs(currentToken)
     ]);
     const firstUser = users[0];
+    const nextResources = { users, nodes, templates, remoteSubscriptionSources, ruleSources, syncLogs, auditLogs };
+    const nextHostedSubscriptionResult = await resolveCurrentHostedSubscriptionResult({
+      resources: nextResources,
+      fetchUserNodeBindings: (userId) => fetchUserNodeBindings(currentToken, userId),
+      fetchPreview: (userId, target) => fetchPreview(currentToken, userId, target),
+      formatErrorMessage: getErrorMessage
+    });
 
-    setResources({ users, nodes, templates, remoteSubscriptionSources, ruleSources, syncLogs, auditLogs });
+    setResources(nextResources);
+    setHostedSubscriptionResult(nextHostedSubscriptionResult);
     setPreviewForm((current) => ({
       ...current,
       userId: users.some((user) => user.id === current.userId) ? current.userId : firstUser?.id ?? ''
     }));
     setBindingUserId((current) => (users.some((user) => user.id === current) ? current : firstUser?.id ?? ''));
-    return { users, nodes, templates, remoteSubscriptionSources, ruleSources, syncLogs, auditLogs };
+    return nextResources;
   }
 
   async function loadUserBindings(userId: string): Promise<void> {
@@ -915,6 +937,7 @@ export function App(): JSX.Element {
       token: managedUser.token,
       sourceLabel: input.sourceLabel,
       nodeCount: boundNodeIds.length,
+      boundNodeIds,
       targets
     };
   }
@@ -935,27 +958,14 @@ export function App(): JSX.Element {
     setError('');
 
     try {
-      const result = await importNodes(
-        token,
-        input.importedNodes.map((importedNode): NodeImportInput => ({
-          name: importedNode.name,
-          protocol: importedNode.protocol,
-          server: importedNode.server,
-          port: importedNode.port,
-          ...(importedNode.credentials ? { credentials: importedNode.credentials } : {}),
-          ...(importedNode.params ? { params: importedNode.params } : {})
-        }))
-      );
-      await refreshResources();
-      input.onSuccess?.();
-
-      setMessage(
-        `已处理 ${result.importedCount} 个节点（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 去重 ${
-          result.duplicateCount ?? 0
-        }）${
-          input.errorCount > 0 ? `，另有 ${input.errorCount} 条解析失败未导入` : ''
-        }，已导入到节点列表；如需客户端直接使用，请先调整节点，再点击“使用当前启用节点生成托管 URL”`
-      );
+      const { message } = await runNodeImportWorkflow({
+        importedNodes: input.importedNodes,
+        errorCount: input.errorCount,
+        importNodes: (nodes) => importNodes(token, nodes),
+        refreshResources: () => refreshResources(),
+        onImported: input.onSuccess
+      });
+      setMessage(message);
     } catch (caughtError) {
       await handleProtectedApiError(caughtError);
     } finally {
@@ -990,28 +1000,13 @@ export function App(): JSX.Element {
     setError('');
 
     try {
-      const result = await importNodes(
-        token,
-        parsedConfigImport.nodes.map((importedNode): NodeImportInput => ({
-          name: importedNode.name,
-          protocol: importedNode.protocol,
-          server: importedNode.server,
-          port: importedNode.port,
-          ...(importedNode.credentials ? { credentials: importedNode.credentials } : {}),
-          ...(importedNode.params ? { params: importedNode.params } : {})
-        }))
-      );
-      const nextResources = await refreshResources();
-      await ensureAutoHostedTemplates(nextResources.templates, parsedConfigImport);
-      await refreshResources();
-
-      setMessage(
-        `已处理 ${result.importedCount} 个节点（新增 ${result.createdCount ?? 0} / 更新 ${result.updatedCount ?? 0} / 去重 ${
-          result.duplicateCount ?? 0
-        }）${
-          parsedConfigImport.errors.length > 0 ? `，另有 ${parsedConfigImport.errors.length} 条解析失败未导入` : ''
-        }，并已更新自动托管模板骨架；如需客户端直接使用，请先调整节点，再点击“使用当前启用节点生成托管 URL”`
-      );
+      const { message } = await runConfigImportWorkflow({
+        parsedConfigImport,
+        importNodes: (nodes) => importNodes(token, nodes),
+        refreshResources: () => refreshResources(),
+        ensureAutoHostedTemplates
+      });
+      setMessage(message);
     } catch (caughtError) {
       await handleProtectedApiError(caughtError);
     } finally {
@@ -1037,13 +1032,7 @@ export function App(): JSX.Element {
     try {
       previewResult = await fetchRemoteNodeImportPreviewData(sourceUrl);
       setRemoteNodeImportPreview(previewResult);
-      setMessage(
-        previewResult.nodes.length > 0
-          ? `远程订阅已抓取，可导入 ${previewResult.nodes.length} 个节点${
-              previewResult.errors.length > 0 ? `，另有 ${previewResult.errors.length} 条解析失败` : ''
-            }`
-          : '远程订阅已抓取，但当前没有解析出可导入节点'
-      );
+      setMessage(buildRemotePreviewMessage(previewResult));
     } catch (caughtError) {
       await handleProtectedApiError(caughtError);
       return;
@@ -1115,23 +1104,18 @@ export function App(): JSX.Element {
     setMessage('');
 
     try {
-      const source = await createRemoteSubscriptionSource(token, {
-        name: sourceName,
-        sourceUrl
+      const { syncResult, message } = await runRemoteSubscriptionSourceSaveWorkflow({
+        sourceName,
+        sourceUrl,
+        createRemoteSubscriptionSource: (payload) => createRemoteSubscriptionSource(token, payload),
+        syncRemoteSubscriptionSource: (sourceId) => syncRemoteSubscriptionSource(token, sourceId),
+        refreshResources: () => refreshResources()
       });
-      const syncResult = await syncRemoteSubscriptionSource(token, source.id);
       setRemoteSubscriptionSyncResult(syncResult);
-      await refreshResources();
       setRemoteSubscriptionSourceForm(emptyRemoteSubscriptionSourceForm);
       setNodeImportSourceUrl('');
       setRemoteNodeImportPreview(null);
-      setMessage(
-        syncResult.status === 'failed'
-          ? `自动同步源已保存，但首次同步失败：${syncResult.message}`
-          : syncResult.changed
-            ? `自动同步源已保存并完成首次同步（新增 ${syncResult.createdCount} / 更新 ${syncResult.updatedCount} / 禁用 ${syncResult.disabledCount}）。如需客户端直接使用，请再执行“使用当前启用节点生成托管 URL”`
-            : `自动同步源已保存，当前共 ${syncResult.importedCount} 个节点。如需客户端直接使用，请再执行“使用当前启用节点生成托管 URL”`
-      );
+      setMessage(message);
     } catch (caughtError) {
       await handleProtectedApiError(caughtError);
     } finally {
@@ -1142,28 +1126,18 @@ export function App(): JSX.Element {
   async function handleGenerateHostedFromEnabledNodes(): Promise<void> {
     if (!token) return;
 
-    const enabledNodes = resources.nodes.filter((node) => node.enabled);
-
-    if (enabledNodes.length === 0) {
-      reportValidationError('当前没有启用节点，无法生成托管订阅');
-      return;
-    }
-
     setLoading(true);
     setError('');
 
     try {
-      const nextHostedResult = await ensureHostedSubscriptions({
+      const { hostedResult, message } = await runHostedGenerationWorkflow({
         currentResources: resources,
-        sourceLabel: '当前启用节点',
-        nodeRecords: enabledNodes
+        nodeRecords: resources.nodes,
+        ensureHostedSubscriptions,
+        refreshResources: () => refreshResources()
       });
-
-      setHostedSubscriptionResult(nextHostedResult);
-      await refreshResources();
-      setMessage(
-        `已按当前启用节点刷新托管 URL（${nextHostedResult.nodeCount} 个节点，${nextHostedResult.targets.filter((target) => target.ok).length}/${nextHostedResult.targets.length} 个目标已通过预览校验）`
-      );
+      setHostedSubscriptionResult(hostedResult);
+      setMessage(message);
     } catch (caughtError) {
       await handleProtectedApiError(caughtError);
     } finally {
@@ -1182,13 +1156,7 @@ export function App(): JSX.Element {
       const result = await syncRemoteSubscriptionSource(token, source.id);
       setRemoteSubscriptionSyncResult(result);
       await refreshResources();
-      setMessage(
-        result.status === 'failed'
-          ? `自动同步失败：${result.message}`
-          : result.changed
-            ? `自动同步已完成（新增 ${result.createdCount} / 更新 ${result.updatedCount} / 禁用 ${result.disabledCount}）`
-            : `自动同步无变化，共 ${result.importedCount} 个节点`
-      );
+      setMessage(buildRemoteSubscriptionSourceSyncMessage(result));
     } catch (caughtError) {
       await handleProtectedApiError(caughtError);
     } finally {
@@ -1625,6 +1593,15 @@ export function App(): JSX.Element {
               <span>分享链接 / Base64 / YAML / JSON 都支持</span>
               <span>订阅 URL 可保存为自动同步源</span>
             </div>
+            <div className="metadata-grid">
+              {singleUserWorkflowSteps.map((step) => (
+                <div className="result-card" key={step.id}>
+                  <strong>{step.title}</strong>
+                  <span>当前状态：{getWorkflowStepStatusLabel(step.status)}</span>
+                  <span>{step.detail}</span>
+                </div>
+              ))}
+            </div>
           </article>
 
           <article className="panel full-width">
@@ -1632,11 +1609,14 @@ export function App(): JSX.Element {
             <p className="helper">
               这是唯一的生成出口。当你已经导入并调整完节点后，使用这里按当前启用节点整体刷新托管 URL。
             </p>
+            <p className="helper">{hostedSubscriptionSyncStatus.detail}</p>
             <div className="inline-actions">
               <button type="button" disabled={loading || enabledNodeCount === 0} onClick={() => void handleGenerateHostedFromEnabledNodes()}>
                 使用当前启用节点生成托管 URL
               </button>
               <span>当前启用节点：{enabledNodeCount}</span>
+              <span>托管状态：{getHostedSyncStatusLabel(hostedSubscriptionSyncStatus)}</span>
+              {hostedSubscriptionResult ? <span>当前托管绑定：{hostedSubscriptionResult.nodeCount}</span> : null}
             </div>
           </article>
 
@@ -1644,7 +1624,7 @@ export function App(): JSX.Element {
             <article className="panel full-width">
               <h2>当前托管 URL</h2>
               <p className="helper">
-                最近一次来源：{hostedSubscriptionResult.sourceLabel}。系统会复用同一组个人托管链接，当前这组托管订阅已绑定 {hostedSubscriptionResult.nodeCount} 个节点。
+                当前状态：{hostedSubscriptionResult.sourceLabel}。系统会复用同一组个人托管链接，当前这组托管订阅已绑定 {hostedSubscriptionResult.nodeCount} 个节点。
               </p>
               <div className="metadata-grid">
                 {hostedSubscriptionResult.targets.map((target) => (
@@ -2317,20 +2297,6 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
-function findAutoHostedUser(users: UserRecord[]): UserRecord | null {
-  return (
-    users.find((user) => user.remark === AUTO_HOSTED_USER_REMARK) ??
-    users.find((user) => user.name === AUTO_HOSTED_USER_NAME) ??
-    null
-  );
-}
-
-function findAutoHostedTemplate(templates: TemplateRecord[], target: SubscriptionTarget): TemplateRecord | null {
-  return (
-    templates.find((template) => template.targetType === target && template.name === AUTO_HOSTED_TEMPLATE_NAMES[target]) ?? null
-  );
-}
-
 function buildAutoHostedTemplateContent(
   target: SubscriptionTarget,
   existingTemplate?: TemplateRecord | null,
@@ -2345,12 +2311,6 @@ function buildAutoHostedTemplateContent(
   }
 
   return target === 'mihomo' ? AUTO_HOSTED_MIHOMO_TEMPLATE : AUTO_HOSTED_SINGBOX_TEMPLATE;
-}
-
-function buildHostedSubscriptionUrl(token: string, target: SubscriptionTarget): string {
-  const origin =
-    typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'http://127.0.0.1:8787';
-  return `${origin}/s/${encodeURIComponent(token)}/${target}`;
 }
 
 function buildNodeMutationInput(input: NodeDraftForm): {
@@ -2861,7 +2821,8 @@ function NodeProtocolAssistant(props: {
       </p>
       {preset === 'hysteria2' ? (
         <p className="helper">
-          `hysteria2` 向导当前优先覆盖 `password`、`sni`、`obfs`、`obfs-password`、`alpn`、`insecure`；多端口和更复杂组合仍请直接核对 JSON。
+          `hysteria2` 向导当前优先覆盖 `password`、`sni`、`obfs`、`obfs-password`、`alpn`、`insecure`；authority 多端口会在导入时自动收敛为
+          `port + params.mport`，更复杂组合仍请直接核对 JSON。
         </p>
       ) : null}
       {preset === 'ssr' ? (

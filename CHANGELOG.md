@@ -17,9 +17,9 @@ All notable changes to this project are documented in this file.
 - 新增 `scripts/d1-backup.mjs`、`scripts/d1-restore-drill.mjs` 与 `.github/workflows/d1-backup.yml`，把 D1 定期备份、artifact 留存与本地恢复演练命令收敛为仓库原生命令
 - 新增 `scripts/d1-backup-crypto.mjs`、`scripts/d1-backup-decrypt.mjs` 与 `D1_BACKUP_ARCHIVE_PASSPHRASE` 加密归档链路，支持加密 artifact、`.sha256` 校验与加密备份恢复演练
 - 同步 `README.md`、`docs/部署指南.md`、`docs/运维Runbook与告警处理.md`、`docs/INDEX.md` 的对象存储 / KMS 归档说明，补齐 `D1_BACKUP_ARCHIVE_S3_URI`、S3 兼容 endpoint、SSE / KMS 约束与 bucket lifecycle 提示
-- 新增 `openapi.yaml` 作为正式 API 契约入口，并同步 `README.md`、`docs/INDEX.md`、`docs/API接口矩阵与OpenAPI草案.md` 的 OpenAPI 导航说明
+- 新增 `openapi.yaml` 作为正式 API 契约入口，并同步 `README.md`、`docs/INDEX.md`、`docs/API参考与接口约定.md` 的 OpenAPI 导航说明
 - 新增 `docs/架构图与ER图.md`，沉淀运行时拓扑、关键数据流、Mermaid 架构图与 D1 实体关系图
-- 新增 `docs/API错误响应示例库.md`，补常见 `400` / `401` / `403` / `404` / `429` 示例，并说明当前 5xx 现状；同步 `openapi.yaml` 响应 examples
+- 把常见 `400` / `401` / `403` / `404` / `429` 与 `5xx` 说明收敛进 `docs/API错误码与响应头说明.md`，并同步 `openapi.yaml` 响应 examples
 - 细化 `openapi.yaml` 的关键 request / success examples，补公开订阅内容示例，并将 `PreviewMetadata` 从泛型对象收紧为显式 schema
 - 新增 `scripts/openapi-contract-check.mjs` 与 `npm run test:contract`，对 `openapi.yaml`、公开鉴权边界与 `apps/web/src/api.ts` 调用路径做零依赖契约校验
 - 同步 `README.md`、`docs/部署指南.md`、`docs/排障与常见问题.md` 的运行时说明，明确当前支持 `Node.js >=20 <25` 并写清 `Node.js 25+` 的安装拦截语义

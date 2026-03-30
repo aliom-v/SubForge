@@ -3,6 +3,20 @@ import test from 'node:test';
 import { loadTsModule } from './helpers/load-ts-module.mjs';
 
 const { default: worker } = await loadTsModule('apps/worker/src/index.ts');
+const { buildSubscriptionCacheKey } = await loadTsModule('packages/shared/src/cache.ts');
+
+const publicSubscriptionCases = [
+  {
+    target: 'mihomo',
+    cacheContent: 'cached-mihomo-subscription',
+    contentType: 'text/yaml; charset=utf-8'
+  },
+  {
+    target: 'singbox',
+    cacheContent: '{"tag":"cached-singbox-subscription"}',
+    contentType: 'application/json; charset=utf-8'
+  }
+];
 
 class MockPreparedStatement {
   constructor(db, sql) {
@@ -85,8 +99,8 @@ function createUserRow(token, overrides = {}) {
   };
 }
 
-function createEnv({ token, userRow, cachedContent = 'cached-subscription' }) {
-  const cacheKey = `sub:mihomo:${token}`;
+function createEnv({ token, target, userRow, cachedContent }) {
+  const cacheKey = buildSubscriptionCacheKey(target, token);
   const db = new MockDatabase(new Map(userRow ? [[token, userRow]] : []));
   const kv = new MockKvNamespace([[cacheKey, cachedContent]]);
 
@@ -110,80 +124,92 @@ function createEnv({ token, userRow, cachedContent = 'cached-subscription' }) {
   };
 }
 
-async function requestPublicSubscription(env, token) {
-  return worker.fetch(new Request(`http://127.0.0.1:8787/s/${token}/mihomo`), env);
+async function requestPublicSubscription(env, token, target) {
+  return worker.fetch(new Request(`http://127.0.0.1:8787/s/${token}/${target}`), env);
 }
 
-test('public subscription returns cached content for active users', async () => {
-  const token = 'active-token';
-  const { env, kv, cacheKey } = createEnv({
-    token,
-    userRow: createUserRow(token)
+for (const { target, cacheContent, contentType } of publicSubscriptionCases) {
+  test(`public subscription returns cached content for active ${target} users`, async () => {
+    const token = `active-token-${target}`;
+    const { env, kv, cacheKey } = createEnv({
+      token,
+      target,
+      userRow: createUserRow(token),
+      cachedContent: cacheContent
+    });
+
+    const response = await requestPublicSubscription(env, token, target);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), contentType);
+    assert.equal(response.headers.get('x-subforge-cache'), 'hit');
+    assert.equal(response.headers.get('x-subforge-cache-key'), cacheKey);
+    assert.equal(response.headers.get('x-subforge-cache-scope'), 'subscription');
+    assert.equal(await response.text(), cacheContent);
+    assert.deepEqual(kv.deletedKeys, []);
   });
 
-  const response = await requestPublicSubscription(env, token);
+  test(`public subscription clears ${target} cache and returns 404 when token is missing`, async () => {
+    const token = `missing-token-${target}`;
+    const { env, kv, cacheKey } = createEnv({
+      token,
+      target,
+      userRow: null,
+      cachedContent: cacheContent
+    });
 
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('x-subforge-cache'), 'hit');
-  assert.equal(response.headers.get('x-subforge-cache-key'), cacheKey);
-  assert.equal(await response.text(), 'cached-subscription');
-  assert.deepEqual(kv.deletedKeys, []);
-});
+    const response = await requestPublicSubscription(env, token, target);
+    const payload = await response.json();
 
-test('public subscription clears cache and returns 404 when token is missing', async () => {
-  const token = 'missing-token';
-  const { env, kv, cacheKey } = createEnv({
-    token,
-    userRow: null
+    assert.equal(response.status, 404);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'SUBSCRIPTION_USER_NOT_FOUND');
+    assert.deepEqual(kv.deletedKeys, [cacheKey]);
+    assert.equal(await kv.get(cacheKey), null);
   });
 
-  const response = await requestPublicSubscription(env, token);
-  const payload = await response.json();
+  test(`public subscription clears ${target} cache and rejects disabled users on cache hit`, async () => {
+    const token = `disabled-token-${target}`;
+    const { env, kv, cacheKey } = createEnv({
+      token,
+      target,
+      userRow: createUserRow(token, {
+        status: 'disabled'
+      }),
+      cachedContent: cacheContent
+    });
 
-  assert.equal(response.status, 404);
-  assert.equal(payload.ok, false);
-  assert.equal(payload.error.code, 'SUBSCRIPTION_USER_NOT_FOUND');
-  assert.deepEqual(kv.deletedKeys, [cacheKey]);
-  assert.equal(await kv.get(cacheKey), null);
-});
+    const response = await requestPublicSubscription(env, token, target);
+    const payload = await response.json();
 
-test('public subscription clears cache and rejects disabled users on cache hit', async () => {
-  const token = 'disabled-token';
-  const { env, kv, cacheKey } = createEnv({
-    token,
-    userRow: createUserRow(token, {
-      status: 'disabled'
-    })
+    assert.equal(response.status, 400);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'USER_DISABLED');
+    assert.deepEqual(payload.error.details, { userId: 'usr_demo' });
+    assert.deepEqual(kv.deletedKeys, [cacheKey]);
+    assert.equal(await kv.get(cacheKey), null);
   });
 
-  const response = await requestPublicSubscription(env, token);
-  const payload = await response.json();
+  test(`public subscription clears ${target} cache and rejects expired users on cache hit`, async () => {
+    const token = `expired-token-${target}`;
+    const { env, kv, cacheKey } = createEnv({
+      token,
+      target,
+      userRow: createUserRow(token, {
+        expires_at: '2000-01-01T00:00:00.000Z'
+      }),
+      cachedContent: cacheContent
+    });
 
-  assert.equal(response.status, 400);
-  assert.equal(payload.ok, false);
-  assert.equal(payload.error.code, 'USER_DISABLED');
-  assert.deepEqual(payload.error.details, { userId: 'usr_demo' });
-  assert.deepEqual(kv.deletedKeys, [cacheKey]);
-  assert.equal(await kv.get(cacheKey), null);
-});
+    const response = await requestPublicSubscription(env, token, target);
+    const payload = await response.json();
 
-test('public subscription clears cache and rejects expired users on cache hit', async () => {
-  const token = 'expired-token';
-  const { env, kv, cacheKey } = createEnv({
-    token,
-    userRow: createUserRow(token, {
-      expires_at: '2000-01-01T00:00:00.000Z'
-    })
+    assert.equal(response.status, 400);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'USER_EXPIRED');
+    assert.equal(payload.error.details.userId, 'usr_demo');
+    assert.equal(payload.error.details.expiresAt, '2000-01-01T00:00:00.000Z');
+    assert.deepEqual(kv.deletedKeys, [cacheKey]);
+    assert.equal(await kv.get(cacheKey), null);
   });
-
-  const response = await requestPublicSubscription(env, token);
-  const payload = await response.json();
-
-  assert.equal(response.status, 400);
-  assert.equal(payload.ok, false);
-  assert.equal(payload.error.code, 'USER_EXPIRED');
-  assert.equal(payload.error.details.userId, 'usr_demo');
-  assert.equal(payload.error.details.expiresAt, '2000-01-01T00:00:00.000Z');
-  assert.deepEqual(kv.deletedKeys, [cacheKey]);
-  assert.equal(await kv.get(cacheKey), null);
-});
+}

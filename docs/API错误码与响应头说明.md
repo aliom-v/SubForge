@@ -6,13 +6,12 @@
 
 - JSON API 的成功 / 失败包裹结构是什么
 - `Authorization: Bearer <admin-session-token>` 的边界是什么
-- 常见错误码、状态码、缓存头、限流头分别表示什么
+- 常见错误码、状态码、缓存头、限流头和容易被误解的成功语义分别表示什么
 - 联调或排障时应该先看哪些字段
 
 不在这里重复展开的内容：
 
-- 可直接复制到 Postman / 测试断言 / Mock Server 的错误样例：看 `docs/API错误响应示例库.md`
-- 路由清单、哪些接口需要 Bearer、OpenAPI 入口：看 `docs/API接口矩阵与OpenAPI草案.md`
+- 按资源分组的路由清单、请求示例与 OpenAPI 入口：看 `docs/API参考与接口约定.md`
 - 限流统计维度、默认阈值和调参建议：看 `docs/限流与安全策略.md`
 
 ## 2. 响应形状
@@ -147,7 +146,248 @@ Authorization: Bearer <admin-session-token>
 | 公开订阅问题 | `x-subforge-cache`、`x-subforge-cache-key`、`x-subforge-rate-limit-remaining`、`x-subforge-rate-limit-reset`、`retry-after` |
 | 登录问题 | HTTP 状态码是 `401` 还是 `429`、`error.code`、`x-subforge-rate-limit-remaining`、`retry-after` |
 
-## 7. 当前边界
+### 6.3 碰到问题先去看哪份文档
+
+| 你遇到的问题 | 优先去看 | 原因 |
+| --- | --- | --- |
+| 首次部署后卡在 setup / 登录前就报错 | `docs/部署指南.md` | 这类问题大多是 migration、绑定或部署入口不对 |
+| 不确定某个接口该怎么请求、成功返回长什么样 | `docs/API参考与接口约定.md` | 这里统一写了路由、包络和示例 |
+| `ss` / `hysteria2` 字段校验失败 | `docs/节点字段字典.md` | 这里直接写了字段该落到 `credentials` 还是 `params` |
+| “导入成功但托管订阅没变化” | `docs/节点管理与订阅使用说明.md` | 这里已经收进当前单用户模式的主路径与高频排查项 |
+| 发布前想做一次最小验收 | `docs/发布前检查清单.md` | 这里按环境、绑定、预览、公开订阅和缓存顺序检查 |
+
+## 7. 高频错误响应示例
+
+下面保留最常见、最适合直接复制到联调或测试断言里的代表性示例。
+
+### 7.1 请求体不是合法 JSON
+
+适用接口：绝大多数 `POST` / `PATCH` JSON API
+
+```http
+HTTP/1.1 400 Bad Request
+content-type: application/json; charset=utf-8
+
+{
+  "ok": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "request body must be valid JSON"
+  }
+}
+```
+
+### 7.2 缺少 Bearer token
+
+适用接口：除初始化 / 登录 / 公开订阅外的大多数 `/api/*`
+
+```http
+HTTP/1.1 401 Unauthorized
+content-type: application/json; charset=utf-8
+
+{
+  "ok": false,
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "missing bearer token"
+  }
+}
+```
+
+### 7.3 公开订阅 token 或模板上下文不存在
+
+适用接口：`GET /s/:token/:target`
+
+```http
+HTTP/1.1 404 Not Found
+content-type: application/json; charset=utf-8
+x-subforge-rate-limit-scope: subscription
+x-subforge-rate-limit-limit: 60
+x-subforge-rate-limit-remaining: 59
+x-subforge-rate-limit-reset: 2026-03-09T12:35:00.000Z
+
+{
+  "ok": false,
+  "error": {
+    "code": "SUBSCRIPTION_USER_NOT_FOUND",
+    "message": "subscription token or template not found"
+  }
+}
+```
+
+### 7.4 公开订阅请求超限
+
+```http
+HTTP/1.1 429 Too Many Requests
+content-type: application/json; charset=utf-8
+x-subforge-rate-limit-scope: subscription
+x-subforge-rate-limit-limit: 60
+x-subforge-rate-limit-remaining: 0
+x-subforge-rate-limit-reset: 2026-03-09T12:35:00.000Z
+retry-after: 60
+
+{
+  "ok": false,
+  "error": {
+    "code": "TOO_MANY_REQUESTS",
+    "message": "subscription request rate limit exceeded",
+    "details": {
+      "scope": "subscription",
+      "limit": 60,
+      "remaining": 0,
+      "retryAfterSec": 60,
+      "resetAt": "2026-03-09T12:35:00.000Z",
+      "current": 61
+    }
+  }
+}
+```
+
+### 7.5 Worker 内部未归类异常
+
+```http
+HTTP/1.1 500 Internal Server Error
+content-type: application/json; charset=utf-8
+
+{
+  "ok": false,
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "internal server error"
+  }
+}
+```
+
+### 7.6 仍然可能看到的其他 `5xx`
+
+- `500 + INTERNAL_ERROR` 更接近 SubForge Worker 自身未归类异常
+- `502` / `503` / `504` 更常见于 Cloudflare 平台层、网关或上游网络问题
+- 这类平台层 `5xx` 不保证走统一 JSON 包裹，也不保证 `content-type` 为 `application/json`
+
+## 8. 高频报错速查
+
+### 8.1 请求体与鉴权类
+
+- `request body must be valid JSON`
+  - 请求体不是合法 JSON
+- `request body must be a JSON object`
+  - JSON 解析成功了，但顶层不是对象
+- `missing bearer token`
+  - 请求头里没有 `Authorization: Bearer ...`
+- `invalid admin session token`
+  - token 格式或签名不对
+- `admin session has been revoked`
+  - 已执行过 `POST /api/admin/logout`
+- `admin account is unavailable`
+  - 管理员被禁用，或后台账号当前不可用
+
+### 8.2 用户、节点与协议字段类
+
+- `name is required`
+  - 创建用户时没传 `name`
+- `status must be active or disabled`
+  - 用户状态值不在允许枚举里
+- `expiresAt must be a valid datetime string`
+  - 时间格式非法
+- `nodeIds must be an array`
+  - 绑定节点接口没有传数组
+- `nodeIds must reference existing nodes: ...`
+  - 绑定里包含不存在的节点 ID
+- `name, protocol, server and port are required`
+  - 创建节点缺少核心字段
+- `port must be an integer between 1 and 65535`
+  - 端口非法
+- `sourceType must be manual or remote`
+  - 来源类型不在允许枚举里
+- `remote sourceType is not supported yet`
+  - 普通节点创建 / 更新接口不允许手工把单条节点写成 `remote` 来源
+- `sourceId is not supported for manual nodes`
+  - 手动节点不接受来源 ID
+- `credentials must be a JSON object or null`
+- `params must be a JSON object or null`
+  - metadata 结构不合法
+
+### 8.3 协议字段与编译链路类
+
+- `ss 节点需要 credentials.cipher 和 credentials.password`
+- `ss 节点的 params.plugin 必须是非空字符串`
+- `ss 节点暂不支持 params.plugin-opts / params.pluginOpts / params.plugins 这类复杂 plugin 字段，请继续直接核对原始 JSON`
+- `hysteria2 节点需要 credentials.password`
+- `hysteria2 节点的 params.sni 必须是非空字符串`
+- `hysteria2 节点的 params.obfs 必须是非空字符串`
+- `hysteria2 节点当前仅支持 params.obfs = "salamander"`
+- `hysteria2 节点的 params["obfs-password"] 必须是非空字符串`
+- `hysteria2 节点提供 params["obfs-password"] 时必须同时提供 params.obfs`
+- `hysteria2 节点的 params.insecure 必须是布尔值`
+- `hysteria2 节点的 params.pinSHA256 必须是字符串或非空字符串数组`
+- `hysteria2 节点的 params.alpn 必须是字符串或非空字符串数组`
+- `hysteria2 节点的 params.network 必须是非空字符串`
+- `hysteria2 节点的 params.network 当前仅支持 "tcp" 或 "udp"`
+- `hysteria2 节点的 params.mport 必须是非空字符串`
+- `hysteria2 节点的 params["hop-interval"] 必须是非空字符串`
+- `hysteria2 节点的 params.up / params.down / params.upmbps / params.downmbps 必须是非空字符串或数字`
+- `targetType must be mihomo or singbox`
+- `version must be a positive integer`
+- `default template must be enabled`
+- `template not found`
+- `name, sourceUrl and format are required`
+- `format must be text, yaml or json`
+- `sourceUrl must be a valid http/https URL`
+- `rule source not found`
+- `unsupported subscription target`
+- `preview data not found`
+- `subscription token or template not found`
+- `user is disabled`
+- `user has expired`
+- `no nodes available`
+
+## 9. 容易误解的成功语义
+
+### 9.1 `POST /api/node-import/preview`
+
+成功只表示：
+
+- 上游抓到了内容
+- 解析器给出了候选节点和错误列表
+
+它不表示：
+
+- 节点已经创建
+- 节点已经绑定
+- 订阅一定会变化
+
+### 9.2 `POST /api/users/:id/nodes`
+
+成功表示绑定集合已被替换。
+
+如果你预期的是“把一个新节点追加进去”，需要自己把旧节点 ID 一起传回去。
+
+### 9.3 `POST /api/admin/logout`
+
+成功后旧 token 会被服务端撤销。
+
+因此“退出成功但本地还留着 token”不影响后续鉴权失败。
+
+### 9.4 `GET /api/preview/:userId/:target`
+
+这是后台预览接口，会返回 JSON，并带：
+
+- `x-subforge-preview-cache: hit | miss`
+
+### 9.5 `GET /s/:token/:target`
+
+这是公开订阅接口，会返回订阅文本，并带：
+
+- `x-subforge-cache: hit | miss`
+
+如果客户端说“订阅没变化”，不要只看节点创建是否成功，还要继续排查：
+
+1. 是否绑定到正确用户
+2. 是否使用了当前 token
+3. 是否命中了旧缓存
+4. 是否访问了正确 target
+
+## 10. 当前边界
 
 当前文档只覆盖协议层约定，因此：
 
@@ -162,10 +402,12 @@ Authorization: Bearer <admin-session-token>
 - 更完整的请求 / 响应 JSON 示例
 - 错误码与业务场景的矩阵表
 
-## 8. 相关文档
+## 11. 相关文档
 
-- `docs/API错误响应示例库.md`
-- `docs/API接口矩阵与OpenAPI草案.md`
+- `docs/API参考与接口约定.md`
+- `docs/节点字段字典.md`
+- `docs/节点协议示例库.md`
+- `docs/节点管理与订阅使用说明.md`
 - `docs/限流与安全策略.md`
 - `docs/排障与常见问题.md`
 - `docs/部署指南.md`

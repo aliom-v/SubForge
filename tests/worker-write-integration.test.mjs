@@ -90,6 +90,13 @@ class MockDatabase {
       return this.ruleSources.get(bindings[0]) ?? null;
     }
 
+    if (sql.includes('SELECT * FROM rule_snapshots WHERE rule_source_id = ? ORDER BY created_at DESC LIMIT 1')) {
+      const rows = this.snapshots
+        .filter((row) => row.rule_source_id === bindings[0])
+        .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
+      return rows[0] ?? null;
+    }
+
     if (sql.includes('SELECT * FROM remote_subscription_sources WHERE id = ? LIMIT 1')) {
       return this.remoteSubscriptionSources.get(bindings[0]) ?? null;
     }
@@ -346,6 +353,47 @@ class MockDatabase {
       return { success: true };
     }
 
+    if (sql.startsWith('UPDATE rule_sources SET name = ?, source_url = ?, format = ?, enabled = ?, updated_at = ? WHERE id = ?')) {
+      const [name, sourceUrl, format, enabled, updatedAt, id] = bindings;
+      const ruleSource = this.ruleSources.get(id);
+
+      if (ruleSource) {
+        ruleSource.name = name;
+        ruleSource.source_url = sourceUrl;
+        ruleSource.format = format;
+        ruleSource.enabled = enabled;
+        ruleSource.updated_at = updatedAt;
+      }
+
+      return { success: true };
+    }
+
+    if (sql.startsWith('UPDATE rule_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
+      const [lastSyncAt, status, failureCount, updatedAt, id] = bindings;
+      const ruleSource = this.ruleSources.get(id);
+
+      if (ruleSource) {
+        ruleSource.last_sync_at = lastSyncAt;
+        ruleSource.last_sync_status = status;
+        ruleSource.failure_count = failureCount;
+        ruleSource.updated_at = updatedAt;
+      }
+
+      return { success: true };
+    }
+
+    if (sql.startsWith('INSERT INTO rule_snapshots')) {
+      const [id, ruleSourceId, contentHash, content, createdAt] = bindings;
+      this.snapshots.push({
+        id,
+        rule_source_id: ruleSourceId,
+        content_hash: contentHash,
+        content,
+        created_at: createdAt
+      });
+      return { success: true };
+    }
+
     if (sql.startsWith('INSERT INTO remote_subscription_sources')) {
       const [id, name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, failureCount, createdAt, updatedAt] = bindings;
       this.remoteSubscriptionSources.set(id, {
@@ -480,11 +528,17 @@ function createNodeRow(id, overrides = {}) {
 }
 
 function createTemplateRow(id, overrides = {}) {
+  const targetType = overrides.target_type ?? 'mihomo';
+  const defaultContent =
+    targetType === 'singbox'
+      ? '{\n  "outbounds": [\n{{outbound_items}}\n  ],\n  "route": {\n    "rules": {{rules}}\n  }\n}'
+      : 'proxies:\n{{proxies}}\nproxy-groups:\n{{proxy_groups}}\nrules:\n{{rules}}';
+
   return {
     id,
     name: id,
-    target_type: 'mihomo',
-    content: 'proxies:\n{{proxies}}\nproxy-groups:\n{{proxy_groups}}\nrules:\n{{rules}}',
+    target_type: targetType,
+    content: defaultContent,
     version: 1,
     is_default: 0,
     enabled: 1,
@@ -594,13 +648,13 @@ async function requestJson(url, init, env) {
   };
 }
 
-async function requestSubscription(env, token) {
-  return worker.fetch(new Request(`http://127.0.0.1:8787/s/${token}/mihomo`), env);
+async function requestSubscription(env, token, target = 'mihomo') {
+  return worker.fetch(new Request(`http://127.0.0.1:8787/s/${token}/${target}`), env);
 }
 
-async function requestPreview(env, adminToken, userId = 'usr_demo') {
+async function requestPreview(env, adminToken, userId = 'usr_demo', target = 'mihomo') {
   return requestJson(
-    `http://127.0.0.1:8787/api/preview/${userId}/mihomo`,
+    `http://127.0.0.1:8787/api/preview/${userId}/${target}`,
     {
       method: 'GET',
       headers: {
@@ -610,6 +664,9 @@ async function requestPreview(env, adminToken, userId = 'usr_demo') {
     env
   );
 }
+
+const singboxExampleRulePattern = /"domain_suffix": \[\s*"example\.com"\s*\]/;
+const singboxUpdatedExampleRulePattern = /"domain_suffix": \[\s*"updated\.example\.com"\s*\]/;
 
 async function createNodeFromShareLink(env, adminToken, shareLink) {
   const importedNode = parseNodeShareLink(shareLink);
@@ -858,15 +915,20 @@ test('syncing a saved remote subscription source rewires bound users to the late
     userNodeMap: [
       { id: 'unm_manual', user_id: 'usr_demo', node_id: 'node_manual_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' },
       { id: 'unm_remote_old', user_id: 'usr_demo', node_id: 'node_remote_old', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }
-    ],
-    cacheEntries: [
-      ['sub:mihomo:tok_demo', '{"cached":true}'],
-      ['preview:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:singbox:tok_demo', '{"cached":true}'],
-      ['preview:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
+  const initialPreview = await requestPreview(env, adminToken);
+  const initialSubscription = await requestSubscription(env, 'tok_demo');
+  const initialSubscriptionBody = await initialSubscription.text();
+
+  assert.equal(initialPreview.response.status, 200);
+  assert.equal(initialPreview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(initialSubscription.status, 200);
+  assert.equal(initialSubscription.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(initialPreview.payload.data.content, initialSubscriptionBody);
+  assert.match(initialSubscriptionBody, /Remote Old/);
+  assert.doesNotMatch(initialSubscriptionBody, /Remote New/);
 
   await withMockFetch(
     async () =>
@@ -914,6 +976,18 @@ test('syncing a saved remote subscription source rewires bound users to the late
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'remote_subscription_source.sync');
+
+  const nextPreview = await requestPreview(env, adminToken);
+  const nextSubscription = await requestSubscription(env, 'tok_demo');
+  const nextSubscriptionBody = await nextSubscription.text();
+
+  assert.equal(nextPreview.response.status, 200);
+  assert.equal(nextPreview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(nextSubscription.status, 200);
+  assert.equal(nextSubscription.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(nextPreview.payload.data.content, nextSubscriptionBody);
+  assert.match(nextSubscriptionBody, /Remote New/);
+  assert.doesNotMatch(nextSubscriptionBody, /Remote Old/);
 });
 
 test('creating a user rejects missing names', async () => {
@@ -1275,6 +1349,43 @@ test('creating a node rejects hysteria2 metadata with unsupported obfs values', 
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'VALIDATION_FAILED');
   assert.equal(payload.error.message, 'hysteria2 节点当前仅支持 params.obfs = "salamander"');
+  assert.deepEqual(captureWriteState(db), initialState);
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
+test('creating a node rejects hysteria2 metadata with invalid bandwidth fields', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'Broken HY2 Bandwidth Node',
+        protocol: 'hysteria2',
+        server: 'hy2.example.com',
+        port: 443,
+        credentials: {
+          password: 'replace-me'
+        },
+        params: {
+          upmbps: false
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'hysteria2 节点的 params.upmbps 必须是非空字符串或数字');
   assert.deepEqual(captureWriteState(db), initialState);
   assert.deepEqual(kv.deletedKeys, []);
 });
@@ -1781,6 +1892,62 @@ test('binding new nodes invalidates caches, writes audit log, and changes subseq
   assert.doesNotMatch(preview.payload.data.content, /HK Edge 01/);
 });
 
+test('binding changes keep preview and public subscription aligned for the same user and target', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+
+  const initialPreview = await requestPreview(env, adminToken);
+  const initialSubscription = await requestSubscription(env, 'tok_demo');
+  const initialSubscriptionBody = await initialSubscription.text();
+
+  assert.equal(initialPreview.response.status, 200);
+  assert.equal(initialPreview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(initialSubscription.status, 200);
+  assert.equal(initialSubscription.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(initialPreview.payload.data.content, initialSubscriptionBody);
+  assert.match(initialSubscriptionBody, /HK Edge 01/);
+  assert.doesNotMatch(initialSubscriptionBody, /SG Edge 01/);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/users/usr_demo/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        nodeIds: ['node_sg_01']
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.data.nodeIds, ['node_sg_01']);
+  assert.deepEqual(kv.deletedKeys, [
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo',
+    'sub:singbox:tok_demo',
+    'preview:singbox:usr_demo'
+  ]);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'user.bind_nodes');
+
+  const nextPreview = await requestPreview(env, adminToken);
+  const nextSubscription = await requestSubscription(env, 'tok_demo');
+  const nextSubscriptionBody = await nextSubscription.text();
+
+  assert.equal(nextPreview.response.status, 200);
+  assert.equal(nextPreview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(nextSubscription.status, 200);
+  assert.equal(nextSubscription.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(nextPreview.payload.data.content, nextSubscriptionBody);
+  assert.match(nextSubscriptionBody, /SG Edge 01/);
+  assert.doesNotMatch(nextSubscriptionBody, /HK Edge 01/);
+});
+
 test('share-link import -> create -> bind -> preview works for ss and hysteria2 nodes', async () => {
   const { env, kv, db } = createEnv({
     userNodeMap: [],
@@ -1843,6 +2010,97 @@ test('share-link import -> create -> bind -> preview works for ss and hysteria2 
   assert.match(preview.payload.data.content, /HY2 Imported/);
   assert.match(preview.payload.data.content, /type: ss/);
   assert.match(preview.payload.data.content, /type: hysteria2/);
+  assert.equal(db.userNodeMap.length, 2);
+});
+
+test('share-link import -> create -> bind -> preview/public work for ssr and tuic nodes', async () => {
+  const { env, kv, db } = createEnv({
+    userNodeMap: [],
+    cacheEntries: [
+      ['sub:mihomo:tok_demo', 'cached'],
+      ['preview:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:singbox:tok_demo', 'cached'],
+      ['preview:singbox:usr_demo', '{"cached":true}']
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+  const ssrPassword = Buffer.from('passw0rd', 'utf8').toString('base64');
+  const ssrName = Buffer.from('SSR Imported', 'utf8').toString('base64');
+  const ssrProtocolParam = Buffer.from('100:replace-me', 'utf8').toString('base64');
+  const ssrObfsParam = Buffer.from('sub.example.com', 'utf8').toString('base64');
+  const ssrShareLink = `ssr://${Buffer.from(
+    `ssr.example.com:443:auth_aes128_md5:aes-256-cfb:tls1.2_ticket_auth:${ssrPassword}/?remarks=${ssrName}&protoparam=${ssrProtocolParam}&obfsparam=${ssrObfsParam}`,
+    'utf8'
+  ).toString('base64')}`;
+
+  const ssrCreate = await createNodeFromShareLink(
+    env,
+    adminToken,
+    ssrShareLink
+  );
+  const tuicCreate = await createNodeFromShareLink(
+    env,
+    adminToken,
+    'tuic://11111111-1111-1111-1111-111111111111:replace-me@tuic-01.example.com:443?sni=sub.example.com&alpn=h3&congestion_control=bbr&udp_relay_mode=native&zero_rtt_handshake=1#TUIC%20Imported'
+  );
+
+  assert.equal(ssrCreate.response.status, 201);
+  assert.equal(ssrCreate.payload.ok, true);
+  assert.equal(ssrCreate.payload.data.protocol, 'ssr');
+  assert.equal(tuicCreate.response.status, 201);
+  assert.equal(tuicCreate.payload.ok, true);
+  assert.equal(tuicCreate.payload.data.protocol, 'tuic');
+
+  const bindResult = await requestJson(
+    'http://127.0.0.1:8787/api/users/usr_demo/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        nodeIds: [ssrCreate.payload.data.id, tuicCreate.payload.data.id]
+      })
+    },
+    env
+  );
+
+  assert.equal(bindResult.response.status, 200);
+  assert.equal(bindResult.payload.ok, true);
+  assert.deepEqual(bindResult.payload.data.nodeIds, [ssrCreate.payload.data.id, tuicCreate.payload.data.id]);
+  assert.deepEqual(kv.deletedKeys, [
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo',
+    'sub:singbox:tok_demo',
+    'preview:singbox:usr_demo'
+  ]);
+
+  const preview = await requestPreview(env, adminToken);
+  const subscription = await requestSubscription(env, 'tok_demo');
+  const subscriptionBody = await subscription.text();
+  const singboxPreview = await requestPreview(env, adminToken, 'usr_demo', 'singbox');
+  const singboxSubscription = await requestSubscription(env, 'tok_demo', 'singbox');
+  const singboxSubscriptionBody = await singboxSubscription.text();
+
+  assert.equal(preview.response.status, 200);
+  assert.equal(preview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(subscription.status, 200);
+  assert.equal(subscription.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(preview.payload.data.content, subscriptionBody);
+  assert.match(subscriptionBody, /SSR Imported/);
+  assert.match(subscriptionBody, /TUIC Imported/);
+  assert.match(subscriptionBody, /type: ssr/);
+  assert.match(subscriptionBody, /type: tuic/);
+  assert.equal(singboxPreview.response.status, 200);
+  assert.equal(singboxPreview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(singboxSubscription.status, 200);
+  assert.equal(singboxSubscription.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(singboxPreview.payload.data.content, singboxSubscriptionBody);
+  assert.match(singboxSubscriptionBody, /"tag": "SSR Imported"/);
+  assert.match(singboxSubscriptionBody, /"tag": "TUIC Imported"/);
+  assert.match(singboxSubscriptionBody, /"type": "ssr"/);
+  assert.match(singboxSubscriptionBody, /"type": "tuic"/);
   assert.equal(db.userNodeMap.length, 2);
 });
 
@@ -1970,6 +2228,132 @@ test('updating a node rejects invalid hysteria2 metadata', async () => {
   assert.equal(db.auditLogs.length, 0);
 });
 
+test('updating a node rejects invalid hysteria2 mport metadata', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_hy2_02', {
+        name: 'HY2 Edge 02',
+        protocol: 'hysteria2',
+        server: 'hy2-02.example.com',
+        credentials_json: JSON.stringify({ password: 'replace-me' }),
+        params_json: JSON.stringify({ sni: 'sub.example.com' })
+      })
+    ],
+    userNodeMap: [{ id: 'unm_2', user_id: 'usr_demo', node_id: 'node_hy2_02', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/node_hy2_02',
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        params: {
+          mport: ''
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'hysteria2 节点的 params.mport 必须是非空字符串');
+  assert.equal(db.nodes.get('node_hy2_02').params_json, JSON.stringify({ sni: 'sub.example.com' }));
+  assert.deepEqual(kv.deletedKeys, []);
+  assert.equal(db.auditLogs.length, 0);
+});
+
+test('updating a node rejects invalid hysteria2 network metadata', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_hy2_03', {
+        name: 'HY2 Edge 03',
+        protocol: 'hysteria2',
+        server: 'hy2-03.example.com',
+        credentials_json: JSON.stringify({ password: 'replace-me' }),
+        params_json: JSON.stringify({ sni: 'sub.example.com' })
+      })
+    ],
+    userNodeMap: [{ id: 'unm_3', user_id: 'usr_demo', node_id: 'node_hy2_03', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/node_hy2_03',
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        params: {
+          network: 'ws'
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'hysteria2 节点的 params.network 当前仅支持 "tcp" 或 "udp"');
+  assert.equal(db.nodes.get('node_hy2_03').params_json, JSON.stringify({ sni: 'sub.example.com' }));
+  assert.deepEqual(kv.deletedKeys, []);
+  assert.equal(db.auditLogs.length, 0);
+});
+
+test('updating a node rejects invalid tuic metadata', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_tuic_01', {
+        name: 'TUIC Edge 01',
+        protocol: 'tuic',
+        server: 'tuic-01.example.com',
+        credentials_json: JSON.stringify({
+          uuid: '11111111-1111-1111-1111-111111111111',
+          password: 'replace-me'
+        }),
+        params_json: JSON.stringify({ sni: 'sub.example.com' })
+      })
+    ],
+    userNodeMap: [{ id: 'unm_1', user_id: 'usr_demo', node_id: 'node_tuic_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/node_tuic_01',
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        params: {
+          insecure: 'true'
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'tuic 节点的 params.insecure 必须是布尔值');
+  assert.equal(db.nodes.get('node_tuic_01').params_json, JSON.stringify({ sni: 'sub.example.com' }));
+  assert.deepEqual(kv.deletedKeys, []);
+  assert.equal(db.auditLogs.length, 0);
+});
+
 test('updating a missing node returns 404 without writing audit logs', async () => {
   const { env, kv, db } = createEnv();
   const adminToken = await createAdminToken(env);
@@ -2041,7 +2425,7 @@ test('updating a node accepts null credentials and params to clear stored metada
   assert.equal(auditAction(db.auditLogs[0]), 'node.update');
 });
 
-test('updating a node invalidates affected caches, writes audit log, and changes subsequent subscription output', async () => {
+test('updating a node invalidates affected caches, writes audit log, and changes subsequent preview and subscription output', async () => {
   const { env, kv, db } = createEnv({
     cacheEntries: [
       ['sub:mihomo:tok_demo', 'cached'],
@@ -2081,10 +2465,17 @@ test('updating a node invalidates affected caches, writes audit log, and changes
   assert.equal(auditAction(db.auditLogs[0]), 'node.update');
   assert.equal(parseAuditPayload(db.auditLogs[0]).name, 'HK Edge Updated');
 
+  const preview = await requestPreview(env, adminToken);
+  assert.equal(preview.response.status, 200);
+  assert.equal(preview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.match(preview.payload.data.content, /HK Edge Updated/);
+  assert.doesNotMatch(preview.payload.data.content, /HK Edge 01/);
+
   const subscription = await requestSubscription(env, 'tok_demo');
   const content = await subscription.text();
   assert.equal(subscription.status, 200);
   assert.match(content, /HK Edge Updated/);
+  assert.doesNotMatch(content, /HK Edge 01/);
 });
 
 test('deleting a node invalidates affected caches, writes audit log, and leaves the user without available nodes', async () => {
@@ -2178,6 +2569,66 @@ test('creating a new default template invalidates target caches, writes audit lo
   assert.match(nextBody, /NEW DEFAULT TEMPLATE/);
 });
 
+test('setting a different default template changes subsequent preview and public subscription output', async () => {
+  const { env, kv, db } = createEnv({
+    templates: [
+      createTemplateRow('tpl_default', { is_default: 1, name: 'Mihomo Default' }),
+      createTemplateRow('tpl_alt', {
+        is_default: 0,
+        version: 2,
+        name: 'Alt Template',
+        content: '# ALT TEMPLATE\nproxies:\n{{proxies}}\nproxy-groups:\n{{proxy_groups}}\nrules:\n{{rules}}'
+      }),
+      createTemplateRow('tpl_singbox', { target_type: 'singbox', is_default: 1, name: 'Singbox Default' })
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const initialPreview = await requestPreview(env, adminToken);
+  const initialSubscription = await requestSubscription(env, 'tok_demo');
+  const initialSubscriptionBody = await initialSubscription.text();
+
+  assert.equal(initialPreview.response.status, 200);
+  assert.equal(initialPreview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(initialSubscription.status, 200);
+  assert.equal(initialSubscription.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(initialPreview.payload.data.content, initialSubscriptionBody);
+  assert.doesNotMatch(initialSubscriptionBody, /ALT TEMPLATE/);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/templates/tpl_alt/set-default',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    },
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.id, 'tpl_alt');
+  assert.deepEqual(kv.deletedKeys, [
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo'
+  ]);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'template.set_default');
+  assert.equal(parseAuditPayload(db.auditLogs[0]).previousTemplateId, 'tpl_default');
+
+  const nextPreview = await requestPreview(env, adminToken);
+  const nextSubscription = await requestSubscription(env, 'tok_demo');
+  const nextSubscriptionBody = await nextSubscription.text();
+
+  assert.equal(nextPreview.response.status, 200);
+  assert.equal(nextPreview.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(nextSubscription.status, 200);
+  assert.equal(nextSubscription.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(nextPreview.payload.data.content, nextSubscriptionBody);
+  assert.match(nextSubscriptionBody, /ALT TEMPLATE/);
+});
+
 test('deleting the effective template invalidates target caches, writes audit log, and changes subsequent subscription output', async () => {
   const { env, kv, db } = createEnv({
     templates: [
@@ -2267,4 +2718,128 @@ test('deleting a rule source invalidates caches, writes audit log, and removes i
   assert.equal(nextResponse.status, 200);
   assert.doesNotMatch(nextBody, /DOMAIN-SUFFIX,example\.com,DIRECT/);
   assert.match(nextBody, /MATCH,DIRECT/);
+
+  const nextSingboxSubscription = await requestSubscription(env, 'tok_demo', 'singbox');
+  const nextSingboxBody = await nextSingboxSubscription.text();
+  assert.equal(nextSingboxSubscription.status, 200);
+  assert.doesNotMatch(nextSingboxBody, singboxExampleRulePattern);
+});
+
+test('changing rule source enabled status invalidates caches, writes audit log, and changes subsequent subscription output', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+
+  const initialSubscription = await requestSubscription(env, 'tok_demo');
+  const initialBody = await initialSubscription.text();
+  assert.equal(initialSubscription.status, 200);
+  assert.match(initialBody, /DOMAIN-SUFFIX,example\.com,DIRECT/);
+  const initialSingboxSubscription = await requestSubscription(env, 'tok_demo', 'singbox');
+  const initialSingboxBody = await initialSingboxSubscription.text();
+  assert.equal(initialSingboxSubscription.status, 200);
+  assert.match(initialSingboxBody, singboxExampleRulePattern);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/rule-sources/rs_demo',
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        enabled: false
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.enabled, false);
+  assert.deepEqual(kv.deletedKeys, [
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo',
+    'sub:singbox:tok_demo',
+    'preview:singbox:usr_demo'
+  ]);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'rule_source.update');
+  assert.equal(parseAuditPayload(db.auditLogs[0]).enabled, false);
+
+  const nextSubscription = await requestSubscription(env, 'tok_demo');
+  const nextBody = await nextSubscription.text();
+  assert.equal(nextSubscription.status, 200);
+  assert.doesNotMatch(nextBody, /DOMAIN-SUFFIX,example\.com,DIRECT/);
+  assert.match(nextBody, /MATCH,DIRECT/);
+
+  const nextSingboxSubscription = await requestSubscription(env, 'tok_demo', 'singbox');
+  const nextSingboxBody = await nextSingboxSubscription.text();
+  assert.equal(nextSingboxSubscription.status, 200);
+  assert.doesNotMatch(nextSingboxBody, singboxExampleRulePattern);
+});
+
+test('syncing a rule source invalidates caches, writes audit log, and changes subsequent subscription output', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+
+  const initialSubscription = await requestSubscription(env, 'tok_demo');
+  const initialBody = await initialSubscription.text();
+  assert.equal(initialSubscription.status, 200);
+  assert.match(initialBody, /DOMAIN-SUFFIX,example\.com,DIRECT/);
+  assert.doesNotMatch(initialBody, /DOMAIN-SUFFIX,updated\.example\.com,DIRECT/);
+  const initialSingboxSubscription = await requestSubscription(env, 'tok_demo', 'singbox');
+  const initialSingboxBody = await initialSingboxSubscription.text();
+  assert.equal(initialSingboxSubscription.status, 200);
+  assert.match(initialSingboxBody, singboxExampleRulePattern);
+  assert.doesNotMatch(initialSingboxBody, singboxUpdatedExampleRulePattern);
+
+  await withMockFetch(
+    async () =>
+      new Response('DOMAIN-SUFFIX,updated.example.com,DIRECT\nMATCH,DIRECT', {
+        status: 200
+      }),
+    async () => {
+      const { response, payload } = await requestJson(
+        'http://127.0.0.1:8787/api/rule-sources/rs_demo/sync',
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${adminToken}`
+          }
+        },
+        env
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.status, 'success');
+      assert.equal(payload.data.changed, true);
+      assert.equal(payload.data.ruleCount, 2);
+    }
+  );
+
+  assert.deepEqual(kv.deletedKeys, [
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo',
+    'sub:singbox:tok_demo',
+    'preview:singbox:usr_demo'
+  ]);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'rule_source.sync');
+  assert.equal(parseAuditPayload(db.auditLogs[0]).status, 'success');
+  assert.equal(parseAuditPayload(db.auditLogs[0]).changed, true);
+  assert.equal(db.ruleSources.get('rs_demo')?.last_sync_status, 'success');
+  assert.equal(db.snapshots.length, 2);
+
+  const nextSubscription = await requestSubscription(env, 'tok_demo');
+  const nextBody = await nextSubscription.text();
+  assert.equal(nextSubscription.status, 200);
+  assert.doesNotMatch(nextBody, /DOMAIN-SUFFIX,example\.com,DIRECT/);
+  assert.match(nextBody, /DOMAIN-SUFFIX,updated\.example\.com,DIRECT/);
+
+  const nextSingboxSubscription = await requestSubscription(env, 'tok_demo', 'singbox');
+  const nextSingboxBody = await nextSingboxSubscription.text();
+  assert.equal(nextSingboxSubscription.status, 200);
+  assert.doesNotMatch(nextSingboxBody, singboxExampleRulePattern);
+  assert.match(nextSingboxBody, singboxUpdatedExampleRulePattern);
 });

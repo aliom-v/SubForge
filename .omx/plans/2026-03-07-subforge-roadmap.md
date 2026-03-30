@@ -106,10 +106,15 @@
 - 增加 D1 备份 artifact 可选对象存储同步，支持 `D1_BACKUP_ARCHIVE_S3_URI`、S3 兼容 endpoint、SSE / KMS 约束校验与 lifecycle summary
 - 增加 `openapi.yaml` 作为正式 API 契约，覆盖 `/health`、`/api/*`、`/s/{token}/{target}`、统一错误包裹与关键响应头
 - 增加 `docs/架构图与ER图.md`，补运行时拓扑、关键数据流、Mermaid 架构图与 D1 实体关系图
-- 增加 `docs/API错误响应示例库.md`，补常见 `400` / `401` / `403` / `404` / `429` 示例，并说明当前 5xx 现状；同步 `openapi.yaml` 响应 examples
+- 把常见 `400` / `401` / `403` / `404` / `429` 与 `5xx` 说明收敛进 API 专题文档，并同步 `openapi.yaml` 响应 examples
 - 细化 `openapi.yaml` 的关键 request / success examples，补公开订阅内容示例，并将 `PreviewMetadata` 从泛型对象收紧为显式 schema
 - 增加 `scripts/openapi-contract-check.mjs` 与 `npm run test:contract`，校验公开鉴权边界、关键 schema 与 `apps/web/src/api.ts` 路径是否与 `openapi.yaml` 保持一致
+- 已补 `ssr` / `tuic` / `hysteria2` 的 share-link import、完整配置提取与订阅编译协议矩阵回归
+- 已补自动同步源重连绑定、节点更新、模板切换、规则源启停 / 同步后的 preview/public 一致性长链路回归
+- 已把 README、实施方案、数据模型、API 草案、发布前检查清单统一收敛到当前单用户主路径和自动同步源边界
 
 ## 当前推荐执行项
 
-1. 基于 `openapi.yaml` 继续收敛前端 API client / 共享类型
+1. 继续保持单用户主路径边界稳定：长期自动同步只走 `remote_subscription_sources`，不要再把更通用远程节点源扩写成新的 Cron / 持久化对象
+2. 如果继续增强实现，优先围绕真实输入样本补解析鲁棒性与回归测试，而不是先扩故事线
+3. 每次发布前固定执行 `XDG_CONFIG_HOME=/tmp WRANGLER_OUTPUT_FILE_DIRECTORY=/tmp npm run ci:verify`，并按 `docs/发布前检查清单.md` 完成最小人工验收

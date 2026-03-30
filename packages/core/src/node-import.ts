@@ -571,29 +571,108 @@ function combineUrlUserInfo(url: URL): string {
   return username || password;
 }
 
-function looksLikeHysteria2MultiPortShareLink(raw: string): boolean {
-  const match = raw.match(/^(?:hysteria2|hy2):\/\/([^/?#]+)/i);
-
-  if (!match) {
-    return false;
-  }
-
-  const authority = match[1] ?? '';
-
+function splitShareLinkAuthority(authority: string): {
+  userInfoPrefix: string;
+  host: string;
+  portText: string | null;
+} | null {
   if (!authority) {
-    return false;
+    return null;
   }
 
   const atIndex = authority.lastIndexOf('@');
+  const userInfoPrefix = atIndex >= 0 ? authority.slice(0, atIndex + 1) : '';
   const hostPort = atIndex >= 0 ? authority.slice(atIndex + 1) : authority;
+
+  if (!hostPort) {
+    return null;
+  }
+
+  if (hostPort.startsWith('[')) {
+    const closingBracketIndex = hostPort.indexOf(']');
+
+    if (closingBracketIndex < 0) {
+      return null;
+    }
+
+    const host = hostPort.slice(0, closingBracketIndex + 1);
+    const remainder = hostPort.slice(closingBracketIndex + 1);
+
+    if (!remainder) {
+      return { userInfoPrefix, host, portText: null };
+    }
+
+    if (!remainder.startsWith(':')) {
+      return null;
+    }
+
+    return {
+      userInfoPrefix,
+      host,
+      portText: remainder.slice(1) || null
+    };
+  }
+
   const colonIndex = hostPort.lastIndexOf(':');
 
   if (colonIndex < 0) {
-    return false;
+    return { userInfoPrefix, host: hostPort, portText: null };
   }
 
+  const host = hostPort.slice(0, colonIndex);
   const portText = hostPort.slice(colonIndex + 1);
-  return portText.includes(',') || portText.includes('-');
+
+  if (!host) {
+    return null;
+  }
+
+  return {
+    userInfoPrefix,
+    host,
+    portText: portText || null
+  };
+}
+
+function normalizeHysteria2AuthorityMultiPortShareLink(raw: string): {
+  normalizedRaw: string;
+  authorityMultiPort: string;
+} | null {
+  const match = raw.match(/^((?:hysteria2|hy2):\/\/)([^/?#]+)(.*)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const scheme = match[1] ?? '';
+  const authority = match[2] ?? '';
+  const suffix = match[3] ?? '';
+
+  if (!authority) {
+    return null;
+  }
+
+  const parsedAuthority = splitShareLinkAuthority(authority);
+
+  if (!parsedAuthority?.portText) {
+    return null;
+  }
+
+  const authorityMultiPort = parsedAuthority.portText;
+
+  if (!authorityMultiPort.includes(',') && !authorityMultiPort.includes('-')) {
+    return null;
+  }
+
+  const primaryPortMatch = authorityMultiPort.match(/^\d+/);
+
+  if (!primaryPortMatch) {
+    return null;
+  }
+
+  return {
+    normalizedRaw: `${scheme}${parsedAuthority.userInfoPrefix}${parsedAuthority.host}:${primaryPortMatch[0]}${suffix}`,
+    authorityMultiPort
+  };
 }
 
 function validateImportedNodePayload(node: ImportedNodePayload): ImportedNodePayload {
@@ -680,8 +759,8 @@ function buildCommonClashParams(record: Record<string, unknown>): Record<string,
   setOptionalValue(params, 'upstreamProxy', readRecordString(record, ['dialer-proxy', 'dialerProxy']));
   setOptionalValue(
     params,
-    'skip-cert-verify',
-    readRecordBoolean(record, ['skip-cert-verify', 'skipCertVerify'])
+    'insecure',
+    readRecordBoolean(record, ['skip-cert-verify', 'skipCertVerify', 'insecure'])
   );
 
   return params;
@@ -785,8 +864,14 @@ function parseClashProxyRecord(record: Record<string, unknown>): ImportedNodePay
     setOptionalValue(params, 'obfs', readRecordString(record, ['obfs']));
     setOptionalValue(params, 'obfs-password', readRecordString(record, ['obfs-password', 'obfsPassword']));
     setOptionalValue(params, 'insecure', readRecordBoolean(record, ['insecure']));
-    setOptionalValue(params, 'pinSHA256', readRecordStringArray(record, ['pinSHA256']));
+    setOptionalValue(params, 'pinSHA256', readRecordStringArray(record, ['pinSHA256']) ?? readRecordString(record, ['pinSHA256']));
     setOptionalValue(params, 'alpn', readRecordStringArray(record, ['alpn']) ?? readRecordString(record, ['alpn']));
+    setOptionalValue(params, 'mport', readRecordString(record, ['mport']));
+    setOptionalValue(params, 'hop-interval', readRecordString(record, ['hop-interval', 'hopInterval']));
+    setOptionalValue(params, 'up', readRecordStringish(record, ['up']));
+    setOptionalValue(params, 'down', readRecordStringish(record, ['down']));
+    setOptionalValue(params, 'upmbps', readRecordStringish(record, ['upmbps']));
+    setOptionalValue(params, 'downmbps', readRecordStringish(record, ['downmbps']));
   }
 
   return buildImportedNodePayload({
@@ -837,6 +922,37 @@ function readSingboxTransportHost(transport: Record<string, unknown>): string | 
     readRecordString(transport, ['host']) ??
     (headers ? readRecordString(headers, ['Host', 'host']) : null)
   );
+}
+
+function readRecordStringish(record: Record<string, unknown>, keys: string[]): string | null {
+  const stringValue = readRecordString(record, keys);
+
+  if (stringValue) {
+    return stringValue;
+  }
+
+  const numericValue = readRecordNumber(record, keys);
+
+  if (numericValue !== null) {
+    return String(numericValue);
+  }
+
+  return null;
+}
+
+function readSingboxHysteria2ServerPorts(record: Record<string, unknown>): string | null {
+  const ports = readRecordStringArray(record, ['server_ports', 'serverPorts']);
+
+  if (!ports) {
+    return null;
+  }
+
+  const normalized = ports
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => value.replace(/^(\d+)\s*:\s*(\d+)$/, '$1-$2'));
+
+  return normalized.length > 0 ? normalized.join(',') : null;
 }
 
 function buildCommonSingboxParams(record: Record<string, unknown>): Record<string, unknown> {
@@ -948,6 +1064,7 @@ function parseSingboxOutboundRecord(record: Record<string, unknown>): ImportedNo
     setOptionalValue(params, 'udp-relay-mode', readRecordString(record, ['udp_relay_mode', 'udpRelayMode']));
     setOptionalValue(params, 'disable-sni', readRecordBoolean(record, ['disable_sni', 'disableSni']));
     setOptionalValue(params, 'heartbeat', readRecordString(record, ['heartbeat']));
+    setOptionalValue(params, 'request-timeout', readRecordNumber(record, ['request_timeout', 'requestTimeout']));
     setOptionalValue(params, 'reduce-rtt', readRecordBoolean(record, ['zero_rtt_handshake', 'zeroRttHandshake']));
   } else if (type === 'hysteria2') {
     const password = readRecordString(record, ['password']);
@@ -958,10 +1075,23 @@ function parseSingboxOutboundRecord(record: Record<string, unknown>): ImportedNo
 
     credentials = { password };
     const obfs = readRecordObject(record, ['obfs']);
+    const tls = readRecordObject(record, ['tls']);
     if (obfs) {
       setOptionalValue(params, 'obfs', readRecordString(obfs, ['type']));
       setOptionalValue(params, 'obfs-password', readRecordString(obfs, ['password']));
     }
+    if (tls) {
+      setOptionalValue(
+        params,
+        'pinSHA256',
+        readRecordStringArray(tls, ['certificate_public_key_sha256', 'certificatePublicKeySha256'])
+      );
+    }
+    setOptionalValue(params, 'network', readRecordString(record, ['network']));
+    setOptionalValue(params, 'mport', readSingboxHysteria2ServerPorts(record));
+    setOptionalValue(params, 'hop-interval', readRecordString(record, ['hop_interval', 'hopInterval']));
+    setOptionalValue(params, 'upmbps', readRecordStringish(record, ['up_mbps', 'upMbps']));
+    setOptionalValue(params, 'downmbps', readRecordStringish(record, ['down_mbps', 'downMbps']));
   }
 
   return buildImportedNodePayload({
@@ -1347,15 +1477,12 @@ function parseTuicShareLink(raw: string): ImportedNodePayload {
 }
 
 function parseHysteria2ShareLink(raw: string): ImportedNodePayload {
+  const normalizedMultiPortShareLink = normalizeHysteria2AuthorityMultiPortShareLink(raw);
   let url: URL;
 
   try {
-    url = new URL(raw);
+    url = new URL(normalizedMultiPortShareLink?.normalizedRaw ?? raw);
   } catch {
-    if (looksLikeHysteria2MultiPortShareLink(raw)) {
-      throw new Error('hysteria2 分享链接暂不支持多端口');
-    }
-
     throw new Error('hysteria2 分享链接格式不合法');
   }
 
@@ -1376,8 +1503,8 @@ function parseHysteria2ShareLink(raw: string): ImportedNodePayload {
   setQueryString(params, 'obfs-password', url.searchParams.get('obfs-password'));
   setQueryString(params, 'sni', url.searchParams.get('sni'));
   setQueryStrings(params, 'pinSHA256', url.searchParams.getAll('pinSHA256'));
-  setQueryString(params, 'alpn', url.searchParams.get('alpn'));
-  setQueryString(params, 'mport', url.searchParams.get('mport'));
+  setQueryStrings(params, 'alpn', url.searchParams.getAll('alpn'));
+  setQueryString(params, 'mport', url.searchParams.get('mport') || normalizedMultiPortShareLink?.authorityMultiPort || null);
   setQueryString(params, 'hop-interval', url.searchParams.get('hop-interval'));
   setQueryString(params, 'up', url.searchParams.get('up'));
   setQueryString(params, 'down', url.searchParams.get('down'));

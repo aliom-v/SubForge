@@ -49,13 +49,65 @@ function readNodeParamNumber(params: SubscriptionNode['params'], key: string): n
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function readNodeParamNumberish(params: SubscriptionNode['params'], key: string): number | string | null {
+  const numericValue = readNodeParamNumber(params, key);
+
+  if (numericValue !== null) {
+    return numericValue;
+  }
+
+  const stringValue = readNodeParamString(params, key);
+
+  if (!stringValue) {
+    return null;
+  }
+
+  const parsed = Number(stringValue);
+  return Number.isFinite(parsed) ? parsed : stringValue;
+}
+
 function readNodeParamBoolean(params: SubscriptionNode['params'], key: string): boolean | null {
   const value = params?.[key];
   return typeof value === 'boolean' ? value : null;
 }
 
+function readNodeParamStringList(
+  params: SubscriptionNode['params'],
+  key: string
+): string | string[] | null {
+  const value = params?.[key];
+
+  if (Array.isArray(value)) {
+    const strings = value.flatMap((item) => {
+      return typeof item === 'string' && item.trim() ? [item.trim()] : [];
+    });
+
+    if (strings.length === 0) {
+      return null;
+    }
+
+    const firstString = strings[0];
+
+    if (!firstString) {
+      return null;
+    }
+
+    return strings.length === 1 ? firstString : strings;
+  }
+
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
 function hasNodeParam(params: SubscriptionNode['params'], key: string): boolean {
   return Boolean(params) && Object.prototype.hasOwnProperty.call(params, key);
+}
+
+function normalizeHysteria2Mport(value: string): string[] {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => item.replace(/^(\d+)\s*-\s*(\d+)$/, '$1:$2'));
 }
 
 function collectRuleLines(ruleSets: SubscriptionRuleSet[]): string[] {
@@ -80,6 +132,15 @@ function toMihomoProxy(node: SubscriptionNode): string {
   if (fingerprint) {
     handledKeys.add('fp');
     entries.push(`client-fingerprint: ${JSON.stringify(fingerprint)}`);
+  }
+
+  if (hasNodeParam(params, 'insecure') || hasNodeParam(params, 'skip-cert-verify')) {
+    handledKeys.add('insecure');
+    handledKeys.add('skip-cert-verify');
+    const insecure = readNodeParamBoolean(params, 'insecure') ?? readNodeParamBoolean(params, 'skip-cert-verify');
+    if (insecure !== null) {
+      entries.push(`skip-cert-verify: ${JSON.stringify(insecure)}`);
+    }
   }
 
   const publicKey = readNodeParamString(params, 'pbk');
@@ -159,9 +220,10 @@ function toSingboxOutbound(node: SubscriptionNode): Record<string, unknown> {
     tls.alpn = params.alpn;
   }
 
-  if (hasNodeParam(params, 'insecure')) {
+  if (hasNodeParam(params, 'insecure') || hasNodeParam(params, 'skip-cert-verify')) {
     handledKeys.add('insecure');
-    const insecure = readNodeParamBoolean(params, 'insecure');
+    handledKeys.add('skip-cert-verify');
+    const insecure = readNodeParamBoolean(params, 'insecure') ?? readNodeParamBoolean(params, 'skip-cert-verify');
     if (insecure !== null) {
       tls.insecure = insecure;
     }
@@ -191,7 +253,11 @@ function toSingboxOutbound(node: SubscriptionNode): Record<string, unknown> {
 
   if (network) {
     handledKeys.add('network');
-    transport.type = network;
+    if (node.protocol === 'hysteria2') {
+      outbound.network = network;
+    } else {
+      transport.type = network;
+    }
   }
 
   if (path) {
@@ -272,6 +338,44 @@ function toSingboxOutbound(node: SubscriptionNode): Record<string, unknown> {
       ...(obfs ? { type: obfs } : {}),
       ...(obfsPassword ? { password: obfsPassword } : {})
     };
+  }
+
+  if (node.protocol === 'hysteria2') {
+    const pinSha256 = readNodeParamStringList(params, 'pinSHA256');
+    if (pinSha256) {
+      handledKeys.add('pinSHA256');
+      tls.certificate_public_key_sha256 = pinSha256;
+    }
+
+    const mport = readNodeParamString(params, 'mport');
+    if (mport) {
+      handledKeys.add('mport');
+      const serverPorts = normalizeHysteria2Mport(mport);
+
+      if (serverPorts.length > 0) {
+        outbound.server_ports = serverPorts;
+      }
+    }
+
+    const hopInterval = readNodeParamString(params, 'hop-interval');
+    if (hopInterval) {
+      handledKeys.add('hop-interval');
+      outbound.hop_interval = hopInterval;
+    }
+
+    const upMbps = readNodeParamNumberish(params, 'upmbps') ?? readNodeParamNumberish(params, 'up');
+    if (upMbps !== null) {
+      handledKeys.add('upmbps');
+      handledKeys.add('up');
+      outbound.up_mbps = upMbps;
+    }
+
+    const downMbps = readNodeParamNumberish(params, 'downmbps') ?? readNodeParamNumberish(params, 'down');
+    if (downMbps !== null) {
+      handledKeys.add('downmbps');
+      handledKeys.add('down');
+      outbound.down_mbps = downMbps;
+    }
   }
 
   if (Object.keys(tls).length > 0) {

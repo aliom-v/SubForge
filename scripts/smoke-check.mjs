@@ -182,7 +182,8 @@ assertIncludes(readme, 'aws s3 cp', 'README backup object storage command docs')
 assertIncludes(readme, 'bucket lifecycle', 'README backup lifecycle docs');
 assertIncludes(readme, 'npm run backup:d1:decrypt', 'README backup decrypt docs');
 assertIncludes(readme, '节点页支持 JSON 批量导入', 'README node import docs');
-assertIncludes(readme, '远程节点源', 'README remote node sync docs');
+assertIncludes(readme, '自动同步源', 'README auto sync docs');
+assertIncludes(readme, '高级接口', 'README advanced remote node sync docs');
 assertIncludes(readme, '>=20 <25', 'README runtime range docs');
 assertIncludes(readme, 'Node.js 25+', 'README unsupported runtime docs');
 assertIncludes(readme, 'libvips', 'README sharp libvips docs');
@@ -208,7 +209,7 @@ assertIncludes(deployGuide, 'Dashboard 首次部署前确认清单', 'deploy gui
 assertIncludes(deployGuide, '绑定 / Secret / 调度对照', 'deploy guide binding matrix docs');
 assertIncludes(deployGuide, '部署后首轮排障观察点', 'deploy guide first-troubleshooting docs');
 assertIncludes(deployGuide, '节点 JSON 批量导入', 'deploy guide node import docs');
-assertIncludes(deployGuide, '远程节点源', 'deploy guide remote node sync docs');
+assertIncludes(deployGuide, '自动同步源', 'deploy guide remote sync docs');
 assertIncludes(deployGuide, 'Node.js `20`', 'deploy guide pinned node docs');
 assertIncludes(deployGuide, 'Node.js 25+', 'deploy guide unsupported runtime docs');
 assertIncludes(deployGuide, '阶段、错误码', 'deploy guide sync error details docs');
@@ -254,18 +255,13 @@ assertIncludes(securityGuide, 'TOO_MANY_REQUESTS', 'security guide too many requ
 const apiGuide = readFileSync('docs/API错误码与响应头说明.md', 'utf8');
 assertIncludes(apiGuide, 'Authorization: Bearer', 'api guide bearer auth docs');
 assertIncludes(apiGuide, 'x-subforge-cache-key', 'api guide cache header docs');
-assertIncludes(apiGuide, 'docs/API错误响应示例库.md', 'api guide example library entry');
 assertIncludes(apiGuide, '当前 Worker 对未识别异常已提供稳定的结构化 `500` JSON：`INTERNAL_ERROR`', 'api guide 5xx note');
 assertIncludes(apiGuide, 'TOO_MANY_REQUESTS', 'api guide error code docs');
 assertIncludes(apiGuide, 'x-subforge-asset-cache: html-no-store', 'api guide html asset cache marker docs');
 assertIncludes(apiGuide, 'cache-control: no-store, max-age=0, must-revalidate', 'api guide html no-store header docs');
-
-const apiErrorExamplesGuide = readFileSync('docs/API错误响应示例库.md', 'utf8');
-assertIncludes(apiErrorExamplesGuide, '400 Bad Request', 'api error examples bad request docs');
-assertIncludes(apiErrorExamplesGuide, 'missing bearer token', 'api error examples unauthorized docs');
-assertIncludes(apiErrorExamplesGuide, 'subscription token or template not found', 'api error examples subscription not found docs');
-assertIncludes(apiErrorExamplesGuide, 'too many login attempts, please retry later', 'api error examples login rate limit docs');
-assertIncludes(apiErrorExamplesGuide, '当前仓库现在已经承诺一个最小应用层 JSON 5xx 契约', 'api error examples 5xx note');
+assertIncludes(apiGuide, 'HTTP/1.1 429 Too Many Requests', 'api guide 429 response example');
+assertIncludes(apiGuide, 'missing bearer token', 'api guide unauthorized example');
+assertIncludes(apiGuide, 'subscription token or template not found', 'api guide subscription not found example');
 
 const troubleshootingGuide = readFileSync('docs/排障与常见问题.md', 'utf8');
 assertIncludes(troubleshootingGuide, 'Unexpected token', 'troubleshooting guide html-response docs');
@@ -276,13 +272,13 @@ assertIncludes(troubleshootingGuide, 'libvips', 'troubleshooting guide sharp lib
 assertIncludes(troubleshootingGuide, '页面还是旧后台', 'troubleshooting guide stale admin ui docs');
 assertIncludes(troubleshootingGuide, 'x-subforge-asset-cache', 'troubleshooting guide asset cache marker docs');
 
-const apiMatrixGuide = readFileSync('docs/API接口矩阵与OpenAPI草案.md', 'utf8');
-assertIncludes(apiMatrixGuide, '/api/users', 'api matrix users route docs');
-assertIncludes(apiMatrixGuide, '/api/nodes/import/remote', 'api matrix remote node route docs');
-assertIncludes(apiMatrixGuide, 'openapi.yaml', 'api matrix formal openapi docs');
-assertIncludes(apiMatrixGuide, 'docs/API错误响应示例库.md', 'api matrix error example docs');
-assertIncludes(apiMatrixGuide, '关键请求 / 成功 / 错误 examples', 'api matrix example coverage docs');
-assertIncludes(apiMatrixGuide, 'OpenAPI', 'api matrix openapi draft docs');
+const apiReferenceGuide = readFileSync('docs/API参考与接口约定.md', 'utf8');
+assertIncludes(apiReferenceGuide, '/api/users', 'api reference users route docs');
+assertIncludes(apiReferenceGuide, '/api/node-import/preview', 'api reference remote preview route docs');
+assertIncludes(apiReferenceGuide, 'openapi.yaml', 'api reference formal openapi docs');
+assertIncludes(apiReferenceGuide, 'npm run test:contract', 'api reference contract check docs');
+assertIncludes(apiReferenceGuide, '完整请求 / 响应示例', 'api reference example coverage docs');
+assertIncludes(apiReferenceGuide, 'Authorization: Bearer', 'api reference bearer docs');
 
 assert.ok(existsSync('openapi.yaml'), 'openapi.yaml should exist');
 assert.ok(existsSync('scripts/openapi-contract-check.mjs'), 'openapi contract check script should exist');
@@ -319,11 +315,6 @@ assertIncludes(openapiSpec, 'mihomoSubscription', 'openapi public yaml example')
 assertIncludes(openapiSpec, 'PreviewMetadata:', 'openapi preview metadata schema');
 assertIncludes(openapiSpec, 'TOO_MANY_REQUESTS', 'openapi error codes');
 
-const dataModelGuide = readFileSync('docs/数据模型与表结构说明.md', 'utf8');
-assertIncludes(dataModelGuide, 'rule_snapshots', 'data model rule snapshots docs');
-assertIncludes(dataModelGuide, 'idx_rule_snapshots_hash', 'data model index docs');
-assertIncludes(dataModelGuide, 'docs/架构图与ER图.md', 'data model architecture guide entry');
-
 const architectureGuide = readFileSync('docs/架构图与ER图.md', 'utf8');
 assertIncludes(architectureGuide, 'Mermaid', 'architecture guide mermaid docs');
 assertIncludes(architectureGuide, 'apps/web', 'architecture guide web layer');
@@ -331,6 +322,8 @@ assertIncludes(architectureGuide, 'apps/worker', 'architecture guide worker laye
 assertIncludes(architectureGuide, 'SUB_CACHE', 'architecture guide kv cache');
 assertIncludes(architectureGuide, 'GitHub Actions', 'architecture guide backup plane');
 assertIncludes(architectureGuide, 'rule_snapshots', 'architecture guide rule snapshots entity');
+assertIncludes(architectureGuide, 'remote_subscription_sources', 'architecture guide remote subscription sources entity');
+assertIncludes(architectureGuide, 'idx_rule_snapshots_hash', 'architecture guide rule snapshot index docs');
 assertIncludes(architectureGuide, 'user_node_map', 'architecture guide user node mapping');
 assertIncludes(architectureGuide, 'erDiagram', 'architecture guide er diagram');
 assertIncludes(architectureGuide, 'flowchart LR', 'architecture guide runtime diagram');
@@ -368,7 +361,7 @@ const changelog = readFileSync('CHANGELOG.md', 'utf8');
 assertIncludes(changelog, '[0.1.0]', 'changelog initial release entry');
 assertIncludes(changelog, '管理员登录失败限流', 'changelog security docs');
 assertIncludes(changelog, 'openapi.yaml', 'changelog openapi docs');
-assertIncludes(changelog, 'docs/API错误响应示例库.md', 'changelog api error examples docs');
+assertIncludes(changelog, 'docs/API错误码与响应头说明.md', 'changelog api error docs');
 assertIncludes(changelog, 'docs/架构图与ER图.md', 'changelog architecture docs');
 assertIncludes(changelog, 'D1_BACKUP_ARCHIVE_S3_URI', 'changelog backup object storage docs');
 assertIncludes(changelog, 'bucket lifecycle', 'changelog backup lifecycle docs');
@@ -381,8 +374,8 @@ assertIncludes(docsIndex, 'docs/单用户托管模式需求.md', 'docs index sin
 assertIncludes(docsIndex, 'docs/节点管理与订阅使用说明.md', 'docs index single-user usage entry');
 assertIncludes(docsIndex, 'docs/部署指南.md', 'docs index deploy entry');
 assertIncludes(docsIndex, '内部参考', 'docs index internal docs demotion');
-assertIncludes(docsIndex, 'docs/API接口矩阵与OpenAPI草案.md', 'docs index api matrix entry');
-assertIncludes(docsIndex, 'docs/API错误响应示例库.md', 'docs index api error examples entry');
+assertIncludes(docsIndex, 'docs/API参考与接口约定.md', 'docs index api reference entry');
+assertIncludes(docsIndex, 'docs/API错误码与响应头说明.md', 'docs index api error guide entry');
 assertIncludes(docsIndex, 'openapi.yaml', 'docs index openapi entry');
 assertIncludes(docsIndex, 'docs/架构图与ER图.md', 'docs index architecture entry');
 assertIncludes(docsIndex, 'docs/archive/README.md', 'docs index archive entry');

@@ -450,6 +450,16 @@ function createTemplateRow(overrides = {}) {
   };
 }
 
+function createSingboxTemplateRow(overrides = {}) {
+  return createTemplateRow({
+    id: 'tpl_singbox',
+    name: 'Singbox Default',
+    target_type: 'singbox',
+    content: '{\n  "outbounds": [\n{{outbound_items}}\n  ],\n  "route": {\n    "rules": {{rules}}\n  }\n}',
+    ...overrides
+  });
+}
+
 function createNodeRow(overrides = {}) {
   return {
     id: 'node_hk_01',
@@ -723,6 +733,51 @@ test('preview request compiles on miss, writes cache, and returns hit on the sec
   assert.equal(kv.putCalls.length, 1);
 });
 
+test('singbox preview request compiles on miss, writes cache, and returns hit on the second request', async () => {
+  const { env, kv } = createEnv({
+    templates: [createTemplateRow(), createSingboxTemplateRow()]
+  });
+  const token = await signAdminToken(env);
+
+  const first = await requestJson(
+    'http://127.0.0.1:8787/api/preview/usr_demo/singbox',
+    {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    },
+    env
+  );
+
+  assert.equal(first.response.status, 200);
+  assert.equal(first.response.headers.get('x-subforge-preview-cache'), 'miss');
+  assert.equal(first.response.headers.get('x-subforge-cache-scope'), 'preview');
+  assert.equal(first.payload.data.cacheKey, 'preview:singbox:usr_demo');
+  assert.equal(first.payload.data.mimeType, 'application/json; charset=utf-8');
+  assert.match(first.payload.data.content, /"tag": "HK Edge 01"/);
+  assert.match(first.payload.data.content, /"domain_suffix": \[/);
+  assert.equal(kv.putCalls.length, 1);
+  assert.equal(kv.putCalls[0].key, 'preview:singbox:usr_demo');
+
+  const second = await requestJson(
+    'http://127.0.0.1:8787/api/preview/usr_demo/singbox',
+    {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    },
+    env
+  );
+
+  assert.equal(second.response.status, 200);
+  assert.equal(second.response.headers.get('x-subforge-preview-cache'), 'hit');
+  assert.equal(second.payload.data.cacheKey, 'preview:singbox:usr_demo');
+  assert.equal(second.payload.data.content, first.payload.data.content);
+  assert.equal(kv.putCalls.length, 1);
+});
+
 test('public subscription request compiles on miss, writes cache, and returns hit on the second request', async () => {
   const { env, kv } = createEnv();
   const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:mihomo:tok_demo');
@@ -738,6 +793,31 @@ test('public subscription request compiles on miss, writes cache, and returns hi
   assert.equal(subscriptionCacheWrites().length, 1);
 
   const second = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/mihomo'), env);
+  const secondBody = await second.text();
+
+  assert.equal(second.status, 200);
+  assert.equal(second.headers.get('x-subforge-cache'), 'hit');
+  assert.equal(secondBody, firstBody);
+  assert.equal(subscriptionCacheWrites().length, 1);
+});
+
+test('singbox public subscription request compiles on miss, writes cache, and returns hit on the second request', async () => {
+  const { env, kv } = createEnv({
+    templates: [createTemplateRow(), createSingboxTemplateRow()]
+  });
+  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:singbox:tok_demo');
+
+  const first = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/singbox'), env);
+  const firstBody = await first.text();
+
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(first.headers.get('x-subforge-cache-scope'), 'subscription');
+  assert.match(firstBody, /"tag": "HK Edge 01"/);
+  assert.match(firstBody, /"domain_suffix": \[/);
+  assert.equal(subscriptionCacheWrites().length, 1);
+
+  const second = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/singbox'), env);
   const secondBody = await second.text();
 
   assert.equal(second.status, 200);

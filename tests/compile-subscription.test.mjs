@@ -262,6 +262,58 @@ test('compileSubscription maps reality metadata to mihomo-specific fields', () =
   assert.doesNotMatch(result.data.content, /\n\s+sid: "demo-short-id"/);
 });
 
+test('compileSubscription maps insecure metadata to mihomo skip-cert-verify fields', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      target: 'mihomo',
+      nodes: [
+        {
+          id: 'node_tuic_modern',
+          name: 'TUIC Modern',
+          protocol: 'tuic',
+          server: 'tuic-modern.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111',
+            password: 'replace-me'
+          },
+          params: {
+            insecure: true
+          }
+        },
+        {
+          id: 'node_tuic_legacy',
+          name: 'TUIC Legacy',
+          protocol: 'tuic',
+          server: 'tuic-legacy.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '22222222-2222-2222-2222-222222222222',
+            password: 'replace-me'
+          },
+          params: {
+            'skip-cert-verify': true
+          }
+        }
+      ],
+      ruleSets: []
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /name: "TUIC Modern"/);
+  assert.match(result.data.content, /name: "TUIC Legacy"/);
+  assert.match(result.data.content, /skip-cert-verify: true/);
+  assert.doesNotMatch(result.data.content, /\n\s+insecure: true/);
+});
+
 test('compileSubscription maps detour and transport fields for sing-box templates', () => {
   const result = compileSubscription(
     createCompileInput({
@@ -281,6 +333,7 @@ test('compileSubscription maps detour and transport fields for sing-box template
           params: {
             sni: 'sub.example.com',
             alpn: ['h3'],
+            'skip-cert-verify': true,
             'congestion-controller': 'bbr',
             'udp-relay-mode': 'native',
             'disable-sni': true,
@@ -313,11 +366,165 @@ test('compileSubscription maps detour and transport fields for sing-box template
   assert.equal(parsed.outbounds[0].detour, 'Transit');
   assert.equal(parsed.outbounds[0].tls.server_name, 'sub.example.com');
   assert.deepEqual(parsed.outbounds[0].tls.alpn, ['h3']);
+  assert.equal(parsed.outbounds[0].tls.insecure, true);
   assert.equal(parsed.outbounds[0].congestion_control, 'bbr');
   assert.equal(parsed.outbounds[0].udp_relay_mode, 'native');
   assert.equal(parsed.outbounds[0].disable_sni, true);
   assert.equal(parsed.outbounds[0].request_timeout, 8000);
   assert.equal(parsed.outbounds[0].zero_rtt_handshake, true);
+});
+
+test('compileSubscription preserves ssr and hysteria2 metadata in mihomo output', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      target: 'mihomo',
+      nodes: [
+        {
+          id: 'node_ssr',
+          name: 'SSR Edge',
+          protocol: 'ssr',
+          server: 'ssr.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            cipher: 'aes-256-cfb',
+            password: 'replace-me',
+            protocol: 'auth_aes128_md5',
+            obfs: 'tls1.2_ticket_auth'
+          },
+          params: {
+            'protocol-param': '100:replace-me',
+            'obfs-param': 'sub.example.com'
+          }
+        },
+        {
+          id: 'node_hy2',
+          name: 'HY2 Edge',
+          protocol: 'hysteria2',
+          server: 'hy2.example.com',
+          port: 8443,
+          enabled: true,
+          credentials: {
+            password: 'replace-me'
+          },
+          params: {
+            sni: 'sub.example.com',
+            obfs: 'salamander',
+            'obfs-password': 'secret',
+            pinSHA256: 'abc',
+            mport: '8443,9443',
+            'hop-interval': '30s',
+            up: '80',
+            down: '160',
+            upmbps: '100',
+            downmbps: '200'
+          }
+        }
+      ],
+      ruleSets: [],
+      template: {
+        id: 'tpl_mihomo_matrix',
+        name: 'Mihomo Matrix',
+        target: 'mihomo',
+        content: 'proxies:\n{{proxies}}\nproxy-groups:\n{{proxy_groups}}\nrules:\n{{rules}}',
+        version: 1,
+        isDefault: true
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /name: "SSR Edge"/);
+  assert.match(result.data.content, /type: ssr/);
+  assert.match(result.data.content, /protocol-param: "100:replace-me"/);
+  assert.match(result.data.content, /obfs-param: "sub.example.com"/);
+  assert.match(result.data.content, /name: "HY2 Edge"/);
+  assert.match(result.data.content, /type: hysteria2/);
+  assert.match(result.data.content, /obfs-password: "secret"/);
+  assert.match(result.data.content, /pinSHA256: "abc"/);
+  assert.match(result.data.content, /mport: "8443,9443"/);
+  assert.match(result.data.content, /hop-interval: "30s"/);
+  assert.match(result.data.content, /\n\s+up: "80"/);
+  assert.match(result.data.content, /\n\s+down: "160"/);
+  assert.match(result.data.content, /upmbps: "100"/);
+  assert.match(result.data.content, /downmbps: "200"/);
+});
+
+test('compileSubscription maps hysteria2 tls and obfs fields for sing-box templates', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      target: 'singbox',
+      nodes: [
+        {
+          id: 'node_hy2_singbox',
+          name: 'HY2 Singbox',
+          protocol: 'hysteria2',
+          server: 'hy2.example.com',
+          port: 8443,
+          enabled: true,
+          credentials: {
+            password: 'replace-me'
+          },
+          params: {
+            sni: 'sub.example.com',
+            network: 'udp',
+            insecure: true,
+            obfs: 'salamander',
+            'obfs-password': 'secret',
+            pinSHA256: ['abc', 'def'],
+            mport: '8443,9443',
+            'hop-interval': '30s',
+            up: '80',
+            down: '160',
+            upmbps: '100',
+            downmbps: '200'
+          }
+        }
+      ],
+      ruleSets: [],
+      template: {
+        id: 'tpl_singbox_hy2',
+        name: 'Imported HY2 Sing-box',
+        target: 'singbox',
+        content: '{\n  "outbounds": [\n{{outbound_items}}\n  ],\n  "route": {\n      "rules": {{rules}}\n  }\n}',
+        version: 1,
+        isDefault: true
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  const parsed = JSON.parse(result.data.content);
+
+  assert.equal(parsed.outbounds[0].type, 'hysteria2');
+  assert.equal(parsed.outbounds[0].tls.server_name, 'sub.example.com');
+  assert.equal(parsed.outbounds[0].tls.insecure, true);
+  assert.equal(parsed.outbounds[0].network, 'udp');
+  assert.deepEqual(parsed.outbounds[0].tls.certificate_public_key_sha256, ['abc', 'def']);
+  assert.equal(parsed.outbounds[0].obfs.type, 'salamander');
+  assert.equal(parsed.outbounds[0].obfs.password, 'secret');
+  assert.deepEqual(parsed.outbounds[0].server_ports, ['8443', '9443']);
+  assert.equal(parsed.outbounds[0].hop_interval, '30s');
+  assert.equal(parsed.outbounds[0].up_mbps, 100);
+  assert.equal(parsed.outbounds[0].down_mbps, 200);
+  assert.equal(parsed.outbounds[0].pinSHA256, undefined);
+  assert.equal(parsed.outbounds[0].mport, undefined);
+  assert.equal(parsed.outbounds[0].transport, undefined);
+  assert.equal(parsed.outbounds[0]['hop-interval'], undefined);
+  assert.equal(parsed.outbounds[0].up, undefined);
+  assert.equal(parsed.outbounds[0].down, undefined);
+  assert.equal(parsed.outbounds[0].upmbps, undefined);
+  assert.equal(parsed.outbounds[0].downmbps, undefined);
 });
 
 test('compileSubscription appends dynamic sing-box rules and outbounds after static entries', () => {

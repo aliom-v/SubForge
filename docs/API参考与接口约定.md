@@ -20,7 +20,7 @@
 
 如果你主要在排查错误码和状态码，再看：
 
-- `docs/常见错误与返回语义.md`
+- `docs/API错误码与响应头说明.md`
 
 ---
 
@@ -89,6 +89,12 @@ Authorization: Bearer <token>
 | `templates` | `200` / `201` / `400` / `404` | 默认模板必须启用、模板不存在 |
 | `rule-sources` | `200` / `201` / `400` / `404` | URL/format 非法、规则源不存在 |
 | `preview` / `subscription` | `200` / `400` / `404` | target 非法、用户禁用/过期、模板或 token 缺失 |
+
+### 2.6 正式 OpenAPI 与契约入口
+
+- `openapi.yaml`：机器可读的正式契约，适合 Swagger / Redoc / 代码生成
+- `npm run test:contract`：检查 `openapi.yaml`、公开鉴权边界与前端 API 路由清单是否仍一致
+- 本文档：保留给人直接阅读的稳定接口参考，不再额外拆一份“接口矩阵”说明
 
 ---
 
@@ -594,10 +600,18 @@ proxies:
 
 ---
 
-## 8. 配套文档
+## 8. OpenAPI 与契约入口
+
+- `openapi.yaml`：正式 OpenAPI 规范，覆盖 `/health`、`/api/*`、`/s/{token}/{target}` 与关键 request / response examples
+- `npm run test:contract`：纯 Node.js 的契约漂移检查，校验公开接口鉴权边界、关键 schema 与前端 API 路径
+- `docs/API错误码与响应头说明.md`：查 Bearer、错误码、缓存头、限流头、高频报错和成功语义误区
+
+---
+
+## 9. 配套文档
 
 - `docs/节点字段字典.md`：查节点字段、metadata 和协议映射
-- `docs/常见错误与返回语义.md`：查状态码、错误码和高频报错
+- `docs/API错误码与响应头说明.md`：查状态码、错误码、高频报错和成功语义误区
 - `docs/节点协议示例库.md`：查可复制样例
 - `docs/节点管理与订阅使用说明.md`：查导入到托管输出的主链路和排障
 - `docs/发布前检查清单.md`：查部署完成后的最小验收顺序

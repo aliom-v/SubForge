@@ -190,7 +190,7 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
   - 在待发布 commit 上执行 `npm run ci:verify`；如需额外确认预发布配置，可补执行 `npm run build:worker:staging`
   - 如涉及 D1 migration、批量导入、手工 SQL 或人工修数，先按第 9 节导出 D1 备份
   - 确认 GitHub Secrets / Cloudflare 绑定齐全：`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`、`ADMIN_JWT_SECRET`，以及目标环境对应的 D1 / KV；如接了外部通知，再确认 `FAILURE_WEBHOOK_URL`
-  - 准备好验收样本：`/health`、`/api/setup/status`、管理员账号、可用订阅 token、至少一个可手动同步的规则源或远程节点源
+  - 准备好验收样本：`/health`、`/api/setup/status`、管理员账号、可用订阅 token、至少一个可手动同步的规则源或自动同步源
 
 - **staging 发布**
   - 常规路径：合入 `release/*` 分支，等待 Deploy workflow 自动执行 `npm run deploy:staging`
