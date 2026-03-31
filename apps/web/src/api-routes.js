@@ -17,6 +17,7 @@ export const WEB_API_ROUTES = Object.freeze({
   updateUser: createRoute('PATCH', '/api/users/{userId}', (userId) => `/api/users/${userId}`),
   deleteUser: createRoute('DELETE', '/api/users/{userId}', (userId) => `/api/users/${userId}`),
   resetUserToken: createRoute('POST', '/api/users/{userId}/reset-token', (userId) => `/api/users/${userId}/reset-token`),
+  resetHostedSubscriptionToken: createRoute('POST', '/api/hosted-subscription/reset-token'),
   fetchUserNodeBindings: createRoute('GET', '/api/users/{userId}/nodes', (userId) => `/api/users/${userId}/nodes`),
   replaceUserNodeBindings: createRoute('POST', '/api/users/{userId}/nodes', (userId) => `/api/users/${userId}/nodes`),
   previewNodeImport: createRoute('POST', '/api/node-import/preview'),

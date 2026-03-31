@@ -5,6 +5,8 @@ import {
   validateNodeProtocolMetadata
 } from '@subforge/core';
 import {
+  AUTO_HOSTED_USER_NAME,
+  AUTO_HOSTED_USER_REMARK,
   API_PREFIX,
   APP_ERROR_CODES,
   APP_NAME,
@@ -22,6 +24,7 @@ import {
   type NodeSourceType,
   type RuleSourceFormat,
   type SubscriptionTarget,
+  type UserRecord,
   type UserStatus
 } from '@subforge/shared';
 import { sanitizeAuditPayload } from './audit';
@@ -109,6 +112,10 @@ function isSubscriptionTarget(value: string): value is SubscriptionTarget {
 
 function getContentTypeByTarget(target: SubscriptionTarget): string {
   return target === 'singbox' ? 'application/json; charset=utf-8' : 'text/yaml; charset=utf-8';
+}
+
+function isAutoHostedUserRecord(user: Pick<UserRecord, 'name' | 'remark'>): boolean {
+  return user.remark === AUTO_HOSTED_USER_REMARK || user.name === AUTO_HOSTED_USER_NAME;
 }
 
 function asString(value: unknown): string | undefined {
@@ -1083,6 +1090,45 @@ async function handleUserById(request: Request, env: Env, adminId: string, userI
   }
 
   return notFound(`/api/users/${userId}`);
+}
+
+async function findAutoHostedUserRecord(env: Env): Promise<UserRecord | null> {
+  const users = await listUsers(env.DB);
+  return users.find((user) => isAutoHostedUserRecord(user)) ?? null;
+}
+
+async function handleHostedSubscription(request: Request, env: Env, adminId: string, action?: string): Promise<Response> {
+  if (request.method === 'POST' && action === 'reset-token') {
+    const previous = await findAutoHostedUserRecord(env);
+
+    if (!previous) {
+      return fail(createAppError('NOT_FOUND', 'hosted subscription user not found'), 404);
+    }
+
+    const user = await resetUserToken(env.DB, previous.id);
+
+    if (!user) {
+      return fail(createAppError('NOT_FOUND', 'hosted subscription user not found'), 404);
+    }
+
+    await invalidateUserCaches(env, { token: previous.token, id: previous.id });
+    await invalidateUserCaches(env, { token: user.token, id: user.id });
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'hosted_subscription.reset_token',
+      targetType: 'hosted_subscription',
+      targetId: user.id,
+      payload: {
+        tokenReset: true,
+        name: user.name,
+        previousTokenSuffix: maskTokenForAudit(previous.token),
+        currentTokenSuffix: maskTokenForAudit(user.token)
+      }
+    });
+    return ok(user);
+  }
+
+  return notFound('/api/hosted-subscription');
 }
 
 async function handleNodeImportPreview(request: Request, env: Env, adminId: string): Promise<Response> {
@@ -2288,6 +2334,10 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
 
   if (resource === 'users' && resourceId) {
     return handleUserById(request, env, auth.admin.id, resourceId, action);
+  }
+
+  if (resource === 'hosted-subscription') {
+    return handleHostedSubscription(request, env, auth.admin.id, resourceId);
   }
 
   if (resource === 'node-import' && resourceId === 'preview' && request.method === 'POST') {

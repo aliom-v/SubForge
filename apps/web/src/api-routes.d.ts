@@ -15,6 +15,7 @@ export declare const WEB_API_ROUTES: {
   updateUser: WebApiRoute;
   deleteUser: WebApiRoute;
   resetUserToken: WebApiRoute;
+  resetHostedSubscriptionToken: WebApiRoute;
   fetchUserNodeBindings: WebApiRoute;
   replaceUserNodeBindings: WebApiRoute;
   previewNodeImport: WebApiRoute;

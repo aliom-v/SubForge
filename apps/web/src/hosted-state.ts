@@ -1,4 +1,6 @@
 import {
+  AUTO_HOSTED_USER_NAME,
+  AUTO_HOSTED_USER_REMARK,
   SUBSCRIPTION_TARGETS,
   type NodeRecord,
   type SubscriptionTarget,
@@ -8,6 +10,8 @@ import {
 } from '@subforge/shared';
 
 import type { PreviewPayload } from './api';
+
+export { AUTO_HOSTED_USER_NAME, AUTO_HOSTED_USER_REMARK } from '@subforge/shared';
 
 export interface HostedSubscriptionTargetState {
   target: SubscriptionTarget;
@@ -26,8 +30,6 @@ export interface HostedSubscriptionResult {
   targets: HostedSubscriptionTargetState[];
 }
 
-export const AUTO_HOSTED_USER_NAME = '个人托管订阅';
-export const AUTO_HOSTED_USER_REMARK = 'subforge:auto-hosted';
 export const AUTO_HOSTED_TEMPLATE_NAMES: Record<SubscriptionTarget, string> = {
   mihomo: 'Auto Hosted Mihomo',
   singbox: 'Auto Hosted Sing-box'

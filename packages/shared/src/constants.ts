@@ -7,6 +7,8 @@ export const API_PREFIX = '/api';
 export const HEALTH_ENDPOINT = '/health';
 
 export const SUBSCRIPTION_TARGETS = ['mihomo', 'singbox'] as const;
+export const AUTO_HOSTED_USER_NAME = '个人托管订阅';
+export const AUTO_HOSTED_USER_REMARK = 'subforge:auto-hosted';
 export const USER_STATUSES = ['active', 'disabled'] as const;
 export const ADMIN_STATUSES = ['active', 'disabled'] as const;
 export const ADMIN_ROLES = ['admin'] as const;

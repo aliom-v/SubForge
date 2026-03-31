@@ -13,7 +13,8 @@ const {
   deleteUser,
   fetchSetupStatus,
   isAppApiError,
-  previewNodeImportFromUrl
+  previewNodeImportFromUrl,
+  resetHostedSubscriptionToken
 } = await loadTsModule('apps/web/src/api.ts');
 
 async function withMockFetch(handler, fn) {
@@ -142,6 +143,16 @@ test('web api client uses centralized route definitions for preview and delete o
         data = { deleted: true, templateId: 'tpl_demo' };
       } else if (pathname === WEB_API_ROUTES.deleteRuleSource.buildPath('rs_demo')) {
         data = { deleted: true, ruleSourceId: 'rs_demo' };
+      } else if (pathname === WEB_API_ROUTES.resetHostedSubscriptionToken.buildPath()) {
+        data = {
+          id: 'usr_hosted',
+          name: '个人托管订阅',
+          token: 'tok_hosted_next',
+          status: 'active',
+          remark: 'subforge:auto-hosted',
+          createdAt: '2026-03-30T00:00:00.000Z',
+          updatedAt: '2026-03-31T00:00:00.000Z'
+        };
       } else {
         throw new Error(`unexpected request ${method} ${pathname}`);
       }
@@ -158,6 +169,7 @@ test('web api client uses centralized route definitions for preview and delete o
       await deleteNode('demo-token', 'node_demo');
       await deleteTemplate('demo-token', 'tpl_demo');
       await deleteRuleSource('demo-token', 'rs_demo');
+      await resetHostedSubscriptionToken('demo-token');
     }
   );
 
@@ -168,14 +180,16 @@ test('web api client uses centralized route definitions for preview and delete o
       [WEB_API_ROUTES.deleteUser.method, WEB_API_ROUTES.deleteUser.buildPath('user_demo')],
       [WEB_API_ROUTES.deleteNode.method, WEB_API_ROUTES.deleteNode.buildPath('node_demo')],
       [WEB_API_ROUTES.deleteTemplate.method, WEB_API_ROUTES.deleteTemplate.buildPath('tpl_demo')],
-      [WEB_API_ROUTES.deleteRuleSource.method, WEB_API_ROUTES.deleteRuleSource.buildPath('rs_demo')]
+      [WEB_API_ROUTES.deleteRuleSource.method, WEB_API_ROUTES.deleteRuleSource.buildPath('rs_demo')],
+      [WEB_API_ROUTES.resetHostedSubscriptionToken.method, WEB_API_ROUTES.resetHostedSubscriptionToken.buildPath()]
     ]
   );
 
-  assert.deepEqual(calls.map(({ authorization }) => authorization), Array(5).fill('Bearer demo-token'));
+  assert.deepEqual(calls.map(({ authorization }) => authorization), Array(6).fill('Bearer demo-token'));
   assert.equal(calls[0].body, JSON.stringify({ sourceUrl: 'https://example.com/sub.txt' }));
   assert.equal(calls[1].body, null);
   assert.equal(calls[2].body, null);
   assert.equal(calls[3].body, null);
   assert.equal(calls[4].body, null);
+  assert.equal(calls[5].body, null);
 });

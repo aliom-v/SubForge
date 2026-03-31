@@ -43,6 +43,7 @@ import {
   deleteRemoteSubscriptionSource,
   fetchRemoteSubscriptionSources,
   replaceUserNodeBindings,
+  resetHostedSubscriptionToken,
   resetUserToken,
   setDefaultTemplate,
   syncRemoteSubscriptionSource,
@@ -323,6 +324,7 @@ export function App(): JSX.Element {
     ],
     [hostedSubscriptionResult, resources.nodes.length]
   );
+  const autoHostedUser = useMemo(() => findAutoHostedUser(resources.users), [resources.users]);
   const enabledNodes = useMemo(() => resources.nodes.filter((node) => node.enabled), [resources.nodes]);
   const enabledNodeCount = enabledNodes.length;
   const enabledNodeWarnings = useMemo(() => buildImportedNodeWarnings(enabledNodes), [enabledNodes]);
@@ -716,6 +718,33 @@ export function App(): JSX.Element {
   async function handleResetUserToken(userId: string): Promise<void> {
     if (!token) return;
     await withAction(() => resetUserToken(token, userId), '用户 token 已重置');
+  }
+
+  async function handleResetCurrentHostedSubscriptionToken(): Promise<void> {
+    if (!token) return;
+
+    if (!autoHostedUser) {
+      reportValidationError('当前还没有系统托管身份，请先执行一次“使用当前启用节点生成托管 URL”。');
+      return;
+    }
+
+    if (!confirmDestructiveAction('确认重置当前托管链接吗？重置后旧的订阅 URL 会立即失效，客户端需要改成新的地址。')) {
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      await resetHostedSubscriptionToken(token);
+      await refreshResources();
+      setMessage('当前托管链接已重置。旧 URL 已失效，请复制新的托管 URL 并更新客户端。');
+    } catch (caughtError) {
+      await handleProtectedApiError(caughtError);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleDeleteUser(userId: string): Promise<void> {
@@ -1610,13 +1639,20 @@ export function App(): JSX.Element {
               这是唯一的生成出口。当你已经导入并调整完节点后，使用这里按当前启用节点整体刷新托管 URL。
             </p>
             <p className="helper">{hostedSubscriptionSyncStatus.detail}</p>
+            <p className="helper">
+              公开订阅不会复用管理员登录态。系统会单独维护一份内部托管身份来承载 `/s/:token/...` 链接；如果你要让旧链接失效，请直接在这里重置当前托管链接。
+            </p>
             <div className="inline-actions">
               <button type="button" disabled={loading || enabledNodeCount === 0} onClick={() => void handleGenerateHostedFromEnabledNodes()}>
                 使用当前启用节点生成托管 URL
               </button>
+              <button type="button" className="secondary" disabled={loading || !autoHostedUser} onClick={() => void handleResetCurrentHostedSubscriptionToken()}>
+                重置当前托管链接
+              </button>
               <span>当前启用节点：{enabledNodeCount}</span>
               <span>托管状态：{getHostedSyncStatusLabel(hostedSubscriptionSyncStatus)}</span>
               {hostedSubscriptionResult ? <span>当前托管绑定：{hostedSubscriptionResult.nodeCount}</span> : null}
+              <span>托管身份：{autoHostedUser ? autoHostedUser.name : '首次生成时自动创建'}</span>
             </div>
             {enabledNodeWarnings.length > 0 ? (
               <div className="import-errors">
@@ -1634,6 +1670,9 @@ export function App(): JSX.Element {
               <h2>当前托管 URL</h2>
               <p className="helper">
                 当前状态：{hostedSubscriptionResult.sourceLabel}。系统会复用同一组个人托管链接，当前这组托管订阅已绑定 {hostedSubscriptionResult.nodeCount} 个节点。
+              </p>
+              <p className="helper">
+                当前节点页会直接管理这份内部托管身份，不再依赖隐藏的用户页。若你需要轮换链接，只用上方“重置当前托管链接”。
               </p>
               <div className="metadata-grid">
                 {hostedSubscriptionResult.targets.map((target) => (
@@ -2594,6 +2633,7 @@ function formatAuditActionLabel(action: string): string {
   if (action === 'user.create') return '创建用户';
   if (action === 'user.update') return '更新用户';
   if (action === 'user.reset_token') return '重置用户令牌';
+  if (action === 'hosted_subscription.reset_token') return '重置托管订阅链接';
   if (action === 'user.bind_nodes') return '更新用户节点绑定';
   if (action === 'node.create') return '创建节点';
   if (action === 'node.import') return '批量导入节点';
@@ -2612,6 +2652,7 @@ function formatAuditActionLabel(action: string): string {
 
 function formatAuditTargetTypeLabel(targetType: string): string {
   if (targetType === 'user') return '用户';
+  if (targetType === 'hosted_subscription') return '托管订阅';
   if (targetType === 'node') return '节点';
   if (targetType === 'template') return '模板';
   if (targetType === 'rule_source') return '规则源';

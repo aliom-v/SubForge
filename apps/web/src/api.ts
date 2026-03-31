@@ -324,6 +324,14 @@ export async function resetUserToken(token: string, userId: string): Promise<Use
   );
 }
 
+export async function resetHostedSubscriptionToken(token: string): Promise<UserRecord> {
+  return request(
+    WEB_API_ROUTES.resetHostedSubscriptionToken.buildPath(),
+    { method: WEB_API_ROUTES.resetHostedSubscriptionToken.method },
+    token
+  );
+}
+
 export async function fetchUserNodeBindings(token: string, userId: string): Promise<UserNodeBinding[]> {
   return request(
     WEB_API_ROUTES.fetchUserNodeBindings.buildPath(userId),

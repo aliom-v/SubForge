@@ -169,6 +169,10 @@ class MockDatabase {
       }));
     }
 
+    if (sql.includes('SELECT * FROM users ORDER BY created_at DESC')) {
+      return [...this.users.values()].sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
+    }
+
     if (sql.includes('SELECT * FROM user_node_map WHERE user_id = ?')) {
       const userId = bindings[0];
       return this.userNodeMap
@@ -1728,6 +1732,81 @@ test('reset-token invalidates old and new caches, writes audit log, and shifts s
       userAgent: 'worker-write-test',
       method: 'POST',
       path: '/api/users/usr_demo/reset-token',
+      rayId: null
+    }
+  });
+
+  const oldResponse = await requestSubscription(env, oldToken);
+  const oldPayload = await oldResponse.json();
+  assert.equal(oldResponse.status, 404);
+  assert.equal(oldPayload.error.code, 'SUBSCRIPTION_USER_NOT_FOUND');
+
+  const nextResponse = await requestSubscription(env, payload.data.token);
+  const nextBody = await nextResponse.text();
+  assert.equal(nextResponse.status, 200);
+  assert.equal(nextResponse.headers.get('x-subforge-cache'), 'miss');
+  assert.match(nextBody, /HK Edge 01/);
+});
+
+test('hosted-subscription reset-token rotates the internal hosted token and invalidates old subscription URLs', async () => {
+  const oldToken = 'tok_hosted';
+  const hostedUser = createUserRow({
+    id: 'usr_hosted',
+    name: '个人托管订阅',
+    token: oldToken,
+    remark: 'subforge:auto-hosted'
+  });
+  const { env, kv, db } = createEnv({
+    users: [hostedUser],
+    userNodeMap: [{ id: 'unm_hosted', user_id: 'usr_hosted', node_id: 'node_hk_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }],
+    cacheEntries: [
+      [`sub:mihomo:${oldToken}`, 'old-subscription'],
+      ['preview:mihomo:usr_hosted', '{"cached":true}'],
+      [`sub:singbox:${oldToken}`, 'old-singbox'],
+      ['preview:singbox:usr_hosted', '{"cached":true}']
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/hosted-subscription/reset-token',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'user-agent': 'worker-write-test'
+      }
+    },
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.notEqual(payload.data.token, oldToken);
+  assert.deepEqual(kv.deletedKeys, [
+    `sub:mihomo:${oldToken}`,
+    'preview:mihomo:usr_hosted',
+    `sub:singbox:${oldToken}`,
+    'preview:singbox:usr_hosted',
+    `sub:mihomo:${payload.data.token}`,
+    'preview:mihomo:usr_hosted',
+    `sub:singbox:${payload.data.token}`,
+    'preview:singbox:usr_hosted'
+  ]);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'hosted_subscription.reset_token');
+  assert.deepEqual(parseAuditPayload(db.auditLogs[0]), {
+    tokenReset: true,
+    name: '个人托管订阅',
+    previousTokenSuffix: '[REDACTED]',
+    currentTokenSuffix: '[REDACTED]',
+    _request: {
+      ip: null,
+      country: null,
+      colo: null,
+      userAgent: 'worker-write-test',
+      method: 'POST',
+      path: '/api/hosted-subscription/reset-token',
       rayId: null
     }
   });
