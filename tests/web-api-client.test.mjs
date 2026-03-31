@@ -7,14 +7,14 @@ import { loadTsModule } from './helpers/load-ts-module.mjs';
 const {
   AppApiError,
   APP_API_ERROR_CODES,
+  createRemoteSubscriptionSource,
   deleteNode,
-  deleteRuleSource,
-  deleteTemplate,
-  deleteUser,
   fetchSetupStatus,
+  fetchPreview,
   isAppApiError,
   previewNodeImportFromUrl,
-  resetHostedSubscriptionToken
+  resetHostedSubscriptionToken,
+  syncRemoteSubscriptionSource
 } = await loadTsModule('apps/web/src/api.ts');
 
 async function withMockFetch(handler, fn) {
@@ -104,7 +104,7 @@ test('web api client wraps network failures as NETWORK_ERROR', async () => {
   );
 });
 
-test('web api client uses centralized route definitions for preview and delete operations', async () => {
+test('web api client uses centralized route definitions for active single-user operations', async () => {
   const calls = [];
 
   await withMockFetch(
@@ -135,14 +135,48 @@ test('web api client uses centralized route definitions for preview and delete o
           nodes: [],
           errors: []
         };
-      } else if (pathname === WEB_API_ROUTES.deleteUser.buildPath('user_demo')) {
-        data = { deleted: true, userId: 'user_demo' };
       } else if (pathname === WEB_API_ROUTES.deleteNode.buildPath('node_demo')) {
         data = { deleted: true, nodeId: 'node_demo' };
-      } else if (pathname === WEB_API_ROUTES.deleteTemplate.buildPath('tpl_demo')) {
-        data = { deleted: true, templateId: 'tpl_demo' };
-      } else if (pathname === WEB_API_ROUTES.deleteRuleSource.buildPath('rs_demo')) {
-        data = { deleted: true, ruleSourceId: 'rs_demo' };
+      } else if (pathname === WEB_API_ROUTES.createRemoteSubscriptionSource.buildPath()) {
+        data = {
+          id: 'src_demo',
+          name: '上游订阅',
+          sourceUrl: 'https://example.com/sub.txt',
+          enabled: true,
+          createdAt: '2026-03-30T00:00:00.000Z',
+          updatedAt: '2026-03-31T00:00:00.000Z'
+        };
+      } else if (pathname === WEB_API_ROUTES.syncRemoteSubscriptionSource.buildPath('src_demo')) {
+        data = {
+          sourceId: 'src_demo',
+          sourceName: '上游订阅',
+          sourceUrl: 'https://example.com/sub.txt',
+          status: 'success',
+          message: 'sync finished',
+          changed: true,
+          importedAt: '2026-03-31T00:00:00.000Z',
+          importedCount: 3,
+          createdCount: 2,
+          updatedCount: 1,
+          unchangedCount: 0,
+          duplicateCount: 0,
+          disabledCount: 0,
+          errorCount: 0,
+          lineCount: 3,
+          contentEncoding: 'plain_text'
+        };
+      } else if (pathname === WEB_API_ROUTES.fetchPreview.buildPath('user_demo', 'mihomo')) {
+        data = {
+          cacheKey: 'preview:user_demo:mihomo',
+          mimeType: 'text/yaml',
+          content: 'proxies: []',
+          metadata: {
+            userId: 'user_demo',
+            nodeCount: 2,
+            ruleSetCount: 0,
+            templateName: 'auto-mihomo'
+          }
+        };
       } else if (pathname === WEB_API_ROUTES.resetHostedSubscriptionToken.buildPath()) {
         data = {
           id: 'usr_hosted',
@@ -165,10 +199,14 @@ test('web api client uses centralized route definitions for preview and delete o
     },
     async () => {
       await previewNodeImportFromUrl('demo-token', 'https://example.com/sub.txt');
-      await deleteUser('demo-token', 'user_demo');
       await deleteNode('demo-token', 'node_demo');
-      await deleteTemplate('demo-token', 'tpl_demo');
-      await deleteRuleSource('demo-token', 'rs_demo');
+      await createRemoteSubscriptionSource('demo-token', {
+        name: '上游订阅',
+        sourceUrl: 'https://example.com/sub.txt',
+        enabled: true
+      });
+      await syncRemoteSubscriptionSource('demo-token', 'src_demo');
+      await fetchPreview('demo-token', 'user_demo', 'mihomo');
       await resetHostedSubscriptionToken('demo-token');
     }
   );
@@ -177,10 +215,10 @@ test('web api client uses centralized route definitions for preview and delete o
     calls.map(({ method, pathname }) => [method, pathname]),
     [
       [WEB_API_ROUTES.previewNodeImport.method, WEB_API_ROUTES.previewNodeImport.buildPath()],
-      [WEB_API_ROUTES.deleteUser.method, WEB_API_ROUTES.deleteUser.buildPath('user_demo')],
       [WEB_API_ROUTES.deleteNode.method, WEB_API_ROUTES.deleteNode.buildPath('node_demo')],
-      [WEB_API_ROUTES.deleteTemplate.method, WEB_API_ROUTES.deleteTemplate.buildPath('tpl_demo')],
-      [WEB_API_ROUTES.deleteRuleSource.method, WEB_API_ROUTES.deleteRuleSource.buildPath('rs_demo')],
+      [WEB_API_ROUTES.createRemoteSubscriptionSource.method, WEB_API_ROUTES.createRemoteSubscriptionSource.buildPath()],
+      [WEB_API_ROUTES.syncRemoteSubscriptionSource.method, WEB_API_ROUTES.syncRemoteSubscriptionSource.buildPath('src_demo')],
+      [WEB_API_ROUTES.fetchPreview.method, WEB_API_ROUTES.fetchPreview.buildPath('user_demo', 'mihomo')],
       [WEB_API_ROUTES.resetHostedSubscriptionToken.method, WEB_API_ROUTES.resetHostedSubscriptionToken.buildPath()]
     ]
   );
@@ -188,7 +226,14 @@ test('web api client uses centralized route definitions for preview and delete o
   assert.deepEqual(calls.map(({ authorization }) => authorization), Array(6).fill('Bearer demo-token'));
   assert.equal(calls[0].body, JSON.stringify({ sourceUrl: 'https://example.com/sub.txt' }));
   assert.equal(calls[1].body, null);
-  assert.equal(calls[2].body, null);
+  assert.equal(
+    calls[2].body,
+    JSON.stringify({
+      name: '上游订阅',
+      sourceUrl: 'https://example.com/sub.txt',
+      enabled: true
+    })
+  );
   assert.equal(calls[3].body, null);
   assert.equal(calls[4].body, null);
   assert.equal(calls[5].body, null);

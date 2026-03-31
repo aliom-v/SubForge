@@ -178,7 +178,7 @@ h2 {
   grid-column: 1 / -1;
 }
 
-.users-grid {
+.main-grid {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
@@ -477,7 +477,7 @@ pre {
 }
 
 @media (min-width: 1100px) {
-  .users-grid {
+  .main-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

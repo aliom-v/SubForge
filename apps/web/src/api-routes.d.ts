@@ -13,8 +13,6 @@ export declare const WEB_API_ROUTES: {
   fetchUsers: WebApiRoute;
   createUser: WebApiRoute;
   updateUser: WebApiRoute;
-  deleteUser: WebApiRoute;
-  resetUserToken: WebApiRoute;
   resetHostedSubscriptionToken: WebApiRoute;
   fetchUserNodeBindings: WebApiRoute;
   replaceUserNodeBindings: WebApiRoute;
@@ -22,27 +20,16 @@ export declare const WEB_API_ROUTES: {
   fetchNodes: WebApiRoute;
   createNode: WebApiRoute;
   importNodes: WebApiRoute;
-  importRemoteNodes: WebApiRoute;
   updateNode: WebApiRoute;
   deleteNode: WebApiRoute;
   fetchTemplates: WebApiRoute;
   createTemplate: WebApiRoute;
   updateTemplate: WebApiRoute;
-  deleteTemplate: WebApiRoute;
-  setDefaultTemplate: WebApiRoute;
-  fetchRuleSources: WebApiRoute;
-  createRuleSource: WebApiRoute;
-  updateRuleSource: WebApiRoute;
-  deleteRuleSource: WebApiRoute;
-  syncRuleSource: WebApiRoute;
   fetchRemoteSubscriptionSources: WebApiRoute;
   createRemoteSubscriptionSource: WebApiRoute;
   updateRemoteSubscriptionSource: WebApiRoute;
   deleteRemoteSubscriptionSource: WebApiRoute;
   syncRemoteSubscriptionSource: WebApiRoute;
-  fetchSyncLogs: WebApiRoute;
-  fetchAuditLogs: WebApiRoute;
-  rebuildSubscriptionCaches: WebApiRoute;
   fetchPreview: WebApiRoute;
 };
 

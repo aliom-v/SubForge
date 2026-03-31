@@ -1091,7 +1091,7 @@ export function App(): JSX.Element {
       {error ? <p className="feedback error">{error}</p> : null}
       {message ? <p className="feedback success">{message}</p> : null}
 
-      <section className="panel-grid users-grid">
+      <section className="panel-grid main-grid">
           <article className="panel full-width">
             <h2>节点主入口</h2>
             <p className="helper">

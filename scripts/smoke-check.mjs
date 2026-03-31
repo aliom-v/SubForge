@@ -436,7 +436,8 @@ assertIncludes(webApi, 'const API_BASE_URL =', 'web api base url constant');
 assertIncludes(webApi, 'VITE_API_BASE_URL', 'web api env override');
 assertIncludes(webApi, "??\n  '';", 'web api same-origin default');
 const webApiRoutes = readFileSync('apps/web/src/api-routes.js', 'utf8');
-assertIncludes(webApiRoutes, '/api/nodes/import/remote', 'web api remote node route');
+assertIncludes(webApiRoutes, '/api/remote-subscription-sources/{sourceId}/sync', 'web api remote subscription sync route');
+assertIncludes(webApiRoutes, '/api/hosted-subscription/reset-token', 'web api hosted token reset route');
 
 const viteConfig = readFileSync('apps/web/vite.config.ts', 'utf8');
 assertIncludes(viteConfig, "'/api': 'http://127.0.0.1:8787'", 'vite api proxy');
