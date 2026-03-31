@@ -533,6 +533,7 @@ test('parseImportedConfig preserves mihomo reality options from nested reality-o
   }
 
   assert.equal(result.nodes.length, 1);
+  assert.equal(result.warnings.some((warning) => /缺少 public key/.test(warning)), false);
   assert.deepEqual(result.nodes[0].params, {
     tls: true,
     servername: 'www.cloudflare.com',
@@ -540,6 +541,32 @@ test('parseImportedConfig preserves mihomo reality options from nested reality-o
     pbk: 'demo-public-key',
     sid: 'demo-short-id'
   });
+});
+
+test('parseImportedConfig warns when mihomo reality-style vless is missing public key', () => {
+  const result = parseImportedConfig([
+    'proxies:',
+    '  - name: Reality Without Key',
+    '    type: vless',
+    '    server: reality.example.com',
+    '    port: 443',
+    '    uuid: 11111111-1111-1111-1111-111111111111',
+    '    tls: true',
+    '    servername: www.cloudflare.com',
+    '    client-fingerprint: chrome',
+    '    flow: xtls-rprx-vision',
+    'rules:',
+    '  - MATCH,DIRECT'
+  ].join('\n'));
+
+  assert.ok(result);
+
+  if (!result) {
+    throw new Error('expected mihomo config import result');
+  }
+
+  assert.equal(result.nodes.length, 1);
+  assert.match(result.warnings.join('\n'), /缺少 public key/);
 });
 
 test('parseImportedConfig keeps mihomo proxy-provider skeletons even when there are no local proxies', () => {
@@ -842,4 +869,41 @@ test('parseImportedConfig builds sing-box template content for tuic and hysteria
   });
   assert.match(result.templateContent, /{{outbound_items_with_leading_comma}}/);
   assert.match(result.templateContent, /"action": "route"/);
+});
+
+test('parseImportedConfig warns when sing-box reality-style vless is missing public key', () => {
+  const result = parseImportedConfig(
+    JSON.stringify({
+      outbounds: [
+        {
+          tag: 'Reality Without Key',
+          type: 'vless',
+          server: 'reality.example.com',
+          server_port: 443,
+          uuid: '11111111-1111-1111-1111-111111111111',
+          flow: 'xtls-rprx-vision',
+          tls: {
+            enabled: true,
+            server_name: 'www.cloudflare.com',
+            utls: {
+              enabled: true,
+              fingerprint: 'chrome'
+            }
+          }
+        }
+      ],
+      route: {
+        rules: [{ action: 'route', outbound: 'direct' }]
+      }
+    })
+  );
+
+  assert.ok(result);
+
+  if (!result) {
+    throw new Error('expected sing-box config import result');
+  }
+
+  assert.equal(result.nodes.length, 1);
+  assert.match(result.warnings.join('\n'), /缺少 public key/);
 });

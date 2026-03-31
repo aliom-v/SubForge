@@ -4,6 +4,7 @@ import {
   findUnsupportedHysteria2ShareLinkQueryKeys,
   validateNodeProtocolMetadata
 } from './node-protocol-validation';
+import { buildImportedNodeWarnings } from './node-diagnostics';
 
 export interface ImportedNodePayload {
   name: string;
@@ -1633,6 +1634,7 @@ function buildMihomoImportedTemplate(content: string): ImportedConfigPayload | n
   const hasProxyProviders = isObjectRecord(templateObject['proxy-providers']);
 
   templateObject.proxies = '__SUBFORGE_MIHOMO_PROXIES__';
+  warnings.push(...buildImportedNodeWarnings(nodeResult.nodes));
 
   if (!hadLocalProxies && hasProxyProviders) {
     warnings.push('检测到当前配置主要引用 proxy-providers，本地没有可直接导入的 proxies；已保留模板骨架，并注入动态 proxies 占位符。');
@@ -1690,6 +1692,7 @@ function buildSingboxImportedTemplate(content: string): ImportedConfigPayload | 
     staticOutbounds.length > 0 ? staticOutbounds.map((item) => formatJsonBlockLines(item, 4)).join(',\n') : '';
 
   templateObject.outbounds = '__SUBFORGE_SINGBOX_OUTBOUNDS__';
+  warnings.push(...buildImportedNodeWarnings(nodeResult.nodes));
 
   if (!isObjectRecord(templateObject.route)) {
     templateObject.route = { rules: '__SUBFORGE_SINGBOX_RULES__' };

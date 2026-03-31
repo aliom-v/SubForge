@@ -99,6 +99,7 @@ import {
   type NodeProtocolGuideState
 } from './node-metadata';
 import {
+  buildImportedNodeWarnings,
   parseImportedConfig,
   parseNodeImportText,
   type ImportedConfigPayload,
@@ -322,10 +323,9 @@ export function App(): JSX.Element {
     ],
     [hostedSubscriptionResult, resources.nodes.length]
   );
-  const enabledNodeCount = useMemo(
-    () => resources.nodes.filter((node) => node.enabled).length,
-    [resources.nodes]
-  );
+  const enabledNodes = useMemo(() => resources.nodes.filter((node) => node.enabled), [resources.nodes]);
+  const enabledNodeCount = enabledNodes.length;
+  const enabledNodeWarnings = useMemo(() => buildImportedNodeWarnings(enabledNodes), [enabledNodes]);
   const hostedSubscriptionSyncStatus = useMemo(
     () => getHostedSubscriptionSyncStatus(hostedSubscriptionResult, resources.nodes),
     [hostedSubscriptionResult, resources.nodes]
@@ -1618,6 +1618,15 @@ export function App(): JSX.Element {
               <span>托管状态：{getHostedSyncStatusLabel(hostedSubscriptionSyncStatus)}</span>
               {hostedSubscriptionResult ? <span>当前托管绑定：{hostedSubscriptionResult.nodeCount}</span> : null}
             </div>
+            {enabledNodeWarnings.length > 0 ? (
+              <div className="import-errors">
+                <strong>当前启用节点风险提示</strong>
+                <span>这些问题不会阻止生成托管 URL，但很可能导致客户端导入后节点不可用或全部显示为红色。</span>
+                <ul className="overview-list">
+                  {enabledNodeWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+                </ul>
+              </div>
+            ) : null}
           </article>
 
           {hostedSubscriptionResult ? (
