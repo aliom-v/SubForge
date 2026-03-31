@@ -124,8 +124,8 @@ function createEnv({ token, target, userRow, cachedContent }) {
   };
 }
 
-async function requestPublicSubscription(env, token, target) {
-  return worker.fetch(new Request(`http://127.0.0.1:8787/s/${token}/${target}`), env);
+async function requestPublicSubscription(env, token, target, method = 'GET') {
+  return worker.fetch(new Request(`http://127.0.0.1:8787/s/${token}/${target}`, { method }), env);
 }
 
 for (const { target, cacheContent, contentType } of publicSubscriptionCases) {
@@ -146,6 +146,26 @@ for (const { target, cacheContent, contentType } of publicSubscriptionCases) {
     assert.equal(response.headers.get('x-subforge-cache-key'), cacheKey);
     assert.equal(response.headers.get('x-subforge-cache-scope'), 'subscription');
     assert.equal(await response.text(), cacheContent);
+    assert.deepEqual(kv.deletedKeys, []);
+  });
+
+  test(`HEAD public subscription returns cached ${target} headers without a response body`, async () => {
+    const token = `active-head-token-${target}`;
+    const { env, kv, cacheKey } = createEnv({
+      token,
+      target,
+      userRow: createUserRow(token),
+      cachedContent: cacheContent
+    });
+
+    const response = await requestPublicSubscription(env, token, target, 'HEAD');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), contentType);
+    assert.equal(response.headers.get('x-subforge-cache'), 'hit');
+    assert.equal(response.headers.get('x-subforge-cache-key'), cacheKey);
+    assert.equal(response.headers.get('x-subforge-cache-scope'), 'subscription');
+    assert.equal(await response.text(), '');
     assert.deepEqual(kv.deletedKeys, []);
   });
 

@@ -826,6 +826,22 @@ test('singbox public subscription request compiles on miss, writes cache, and re
   assert.equal(subscriptionCacheWrites().length, 1);
 });
 
+test('HEAD public subscription request compiles on miss, writes cache, and returns headers without falling back to assets', async () => {
+  const { env, kv, assets } = createEnv();
+  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:mihomo:tok_demo');
+
+  const response = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/mihomo', { method: 'HEAD' }), env);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'text/yaml; charset=utf-8');
+  assert.equal(response.headers.get('x-subforge-cache'), 'miss');
+  assert.equal(response.headers.get('x-subforge-cache-scope'), 'subscription');
+  assert.equal(response.headers.get('x-assets-method'), null);
+  assert.equal(await response.text(), '');
+  assert.equal(subscriptionCacheWrites().length, 1);
+  assert.equal(assets.requests.length, 0);
+});
+
 test('health endpoint returns JSON and GET or HEAD non-api requests fall back to assets', async () => {
   const { env, assets } = createEnv();
 

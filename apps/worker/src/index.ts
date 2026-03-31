@@ -561,6 +561,14 @@ function mergeVaryHeader(currentValue: string | null, nextValue: string): string
   return [...tokens].join(', ');
 }
 
+function withoutResponseBody(response: Response): Response {
+  return new Response(null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: new Headers(response.headers)
+  });
+}
+
 async function handleAssetRequest(request: Request, env: Env): Promise<Response> {
   const response = await env.ASSETS.fetch(request);
   const contentType = response.headers.get('content-type') ?? '';
@@ -2369,8 +2377,9 @@ export default {
         return await handleApiRequest(request, env, segments.slice(1));
       }
 
-      if (request.method === 'GET' && segments[0] === 's' && segments[1] && segments[2]) {
-        return await handlePublicSubscription(request, env, segments[1], segments[2]);
+      if ((request.method === 'GET' || request.method === 'HEAD') && segments[0] === 's' && segments[1] && segments[2]) {
+        const response = await handlePublicSubscription(request, env, segments[1], segments[2]);
+        return request.method === 'HEAD' ? withoutResponseBody(response) : response;
       }
 
       if (request.method === 'GET' || request.method === 'HEAD') {
