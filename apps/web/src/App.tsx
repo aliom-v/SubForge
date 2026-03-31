@@ -5,37 +5,27 @@ import {
 } from '@subforge/core';
 import {
   SUBSCRIPTION_TARGETS,
-  type AuditLogRecord,
   type NodeRecord,
   type RemoteSubscriptionSourceRecord,
-  type RuleSourceRecord,
   type SubscriptionTarget,
-  type SyncLogRecord,
   type TemplateRecord,
   type UserRecord
 } from '@subforge/shared';
 import {
   bootstrapSetup,
   createNode,
-  createRuleSource,
   createTemplate,
   createUser,
   deleteNode,
-  deleteRuleSource,
-  deleteTemplate,
-  fetchAuditLogs,
   fetchMe,
   fetchNodes,
   fetchPreview,
-  fetchRuleSources,
   fetchSetupStatus,
-  fetchSyncLogs,
   fetchTemplates,
   fetchUserNodeBindings,
   fetchUsers,
   importNodes,
   login,
-  rebuildSubscriptionCaches,
   logout,
   previewNodeImportFromUrl,
   createRemoteSubscriptionSource,
@@ -43,21 +33,14 @@ import {
   fetchRemoteSubscriptionSources,
   replaceUserNodeBindings,
   resetHostedSubscriptionToken,
-  setDefaultTemplate,
   syncRemoteSubscriptionSource,
-  syncRuleSource,
   updateNode,
   updateRemoteSubscriptionSource,
-  updateRuleSource,
   updateTemplate,
   updateUser,
   type AdminSession,
   type NodeImportPreviewPayload,
-  type CacheRebuildPayload,
-  type NodeImportPayload,
-  type PreviewPayload,
   type RemoteSubscriptionSourceSyncPayload,
-  type RuleSourceSyncPayload,
   type SetupStatusPayload
 } from './api';
 import { getErrorMessage, shouldClearProtectedSession } from './error-handling';
@@ -107,28 +90,15 @@ import {
 } from './node-import';
 import { canonicalizeNodeProtocol, validateNodeProtocolMetadata } from './node-protocol-validation';
 import { buildNodeChainSummaries, readNodeUpstreamProxyFromRecord } from './mihomo-topology';
-import { TemplateStructureAssistant } from './template-structure-assistant';
 
 const metadata = getServiceMetadata();
 const sessionStorageKey = 'subforge.admin.token';
-
-type TabKey =
-  | 'overview'
-  | 'nodes'
-  | 'templates'
-  | 'ruleSources'
-  | 'syncLogs'
-  | 'auditLogs'
-  | 'preview';
 
 interface ResourceState {
   users: UserRecord[];
   nodes: NodeRecord[];
   templates: TemplateRecord[];
   remoteSubscriptionSources: RemoteSubscriptionSourceRecord[];
-  ruleSources: RuleSourceRecord[];
-  syncLogs: SyncLogRecord[];
-  auditLogs: AuditLogRecord[];
 }
 
 interface NodeDraftForm {
@@ -145,24 +115,6 @@ interface NodeEditForm extends NodeDraftForm {
   enabled: boolean;
 }
 
-interface TemplateEditForm {
-  id: string;
-  name: string;
-  targetType: SubscriptionTarget;
-  content: string;
-  version: number;
-  enabled: boolean;
-  isDefault: boolean;
-}
-
-interface RuleSourceEditForm {
-  id: string;
-  name: string;
-  sourceUrl: string;
-  format: RuleSourceRecord['format'];
-  enabled: boolean;
-}
-
 interface RemoteSubscriptionSourceForm {
   name: string;
   sourceUrl: string;
@@ -172,10 +124,7 @@ const emptyResources: ResourceState = {
   users: [],
   nodes: [],
   templates: [],
-  remoteSubscriptionSources: [],
-  ruleSources: [],
-  syncLogs: [],
-  auditLogs: []
+  remoteSubscriptionSources: []
 };
 
 const AUTO_HOSTED_MIHOMO_TEMPLATE = ['mixed-port: 7890', 'mode: rule', 'proxies:', '{{proxies}}', 'proxy-groups:', '{{proxy_groups}}', 'rules:', '{{rules}}'].join('\n');
@@ -190,16 +139,6 @@ const emptyNodeDraftForm: NodeDraftForm = {
   paramsText: ''
 };
 const emptyNodeEditForm: NodeEditForm = { id: '', ...emptyNodeDraftForm, enabled: true };
-const emptyTemplateEditForm: TemplateEditForm = {
-  id: '',
-  name: '',
-  targetType: 'mihomo',
-  content: '',
-  version: 1,
-  enabled: true,
-  isDefault: false
-};
-const emptyRuleSourceEditForm: RuleSourceEditForm = { id: '', name: '', sourceUrl: '', format: 'text', enabled: true };
 const emptyRemoteSubscriptionSourceForm: RemoteSubscriptionSourceForm = { name: '', sourceUrl: '' };
 
 function formatNodeImportContentEncoding(value: NodeImportContentEncoding): string {
@@ -264,16 +203,12 @@ rules:
 export function App(): JSX.Element {
   const [token, setToken] = useState<string>(() => localStorage.getItem(sessionStorageKey) ?? '');
   const [admin, setAdmin] = useState<AdminSession | null>(null);
-  const [activeTab] = useState<TabKey>('nodes');
   const [resources, setResources] = useState<ResourceState>(emptyResources);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [preview, setPreview] = useState<PreviewPayload | null>(null);
-  const [syncResult, setSyncResult] = useState<RuleSourceSyncPayload | null>(null);
   const [remoteSubscriptionSyncResult, setRemoteSubscriptionSyncResult] =
     useState<RemoteSubscriptionSourceSyncPayload | null>(null);
-  const [cacheRebuildResult, setCacheRebuildResult] = useState<CacheRebuildPayload | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatusPayload | null>(null);
   const [hostedSubscriptionResult, setHostedSubscriptionResult] = useState<HostedSubscriptionResult | null>(null);
 
@@ -286,18 +221,8 @@ export function App(): JSX.Element {
   const [remoteNodeImportPreview, setRemoteNodeImportPreview] = useState<NodeImportPreviewPayload | null>(null);
   const [remoteSubscriptionSourceForm, setRemoteSubscriptionSourceForm] =
     useState<RemoteSubscriptionSourceForm>(emptyRemoteSubscriptionSourceForm);
-  const [templateForm, setTemplateForm] = useState({
-    name: '',
-    targetType: 'mihomo' as SubscriptionTarget,
-    content: 'proxies:\n{{proxies}}\nproxy-groups:\n{{proxy_groups}}\nrules:\n{{rules}}',
-    isDefault: true
-  });
-  const [ruleSourceForm, setRuleSourceForm] = useState({ name: '', sourceUrl: '', format: 'text' as RuleSourceRecord['format'] });
-  const [previewForm, setPreviewForm] = useState({ userId: '', target: 'mihomo' as SubscriptionTarget });
 
   const [nodeEditForm, setNodeEditForm] = useState<NodeEditForm>(emptyNodeEditForm);
-  const [templateEditForm, setTemplateEditForm] = useState<TemplateEditForm>(emptyTemplateEditForm);
-  const [ruleSourceEditForm, setRuleSourceEditForm] = useState<RuleSourceEditForm>(emptyRuleSourceEditForm);
 
   const summary = useMemo(
     () => [
@@ -385,10 +310,7 @@ export function App(): JSX.Element {
   function resetSessionState(): void {
     setAdmin(null);
     setResources(emptyResources);
-    setPreview(null);
-    setSyncResult(null);
     setRemoteSubscriptionSyncResult(null);
-    setCacheRebuildResult(null);
     setRemoteNodeImportPreview(null);
     setHostedSubscriptionResult(null);
   }
@@ -442,38 +364,6 @@ export function App(): JSX.Element {
     });
   }, [resources.nodes, nodeEditForm.id]);
 
-  useEffect(() => {
-    const template = resources.templates.find((item) => item.id === templateEditForm.id) ?? resources.templates[0];
-    if (!template) {
-      setTemplateEditForm(emptyTemplateEditForm);
-      return;
-    }
-    setTemplateEditForm({
-      id: template.id,
-      name: template.name,
-      targetType: template.targetType,
-      content: template.content,
-      version: template.version,
-      enabled: template.status === 'enabled',
-      isDefault: template.isDefault
-    });
-  }, [resources.templates, templateEditForm.id]);
-
-  useEffect(() => {
-    const ruleSource = resources.ruleSources.find((item) => item.id === ruleSourceEditForm.id) ?? resources.ruleSources[0];
-    if (!ruleSource) {
-      setRuleSourceEditForm(emptyRuleSourceEditForm);
-      return;
-    }
-    setRuleSourceEditForm({
-      id: ruleSource.id,
-      name: ruleSource.name,
-      sourceUrl: ruleSource.sourceUrl,
-      format: ruleSource.format,
-      enabled: ruleSource.enabled
-    });
-  }, [resources.ruleSources, ruleSourceEditForm.id]);
-
   async function bootstrapSession(currentToken: string): Promise<void> {
     setLoading(true);
     setError('');
@@ -499,17 +389,13 @@ export function App(): JSX.Element {
   }
 
   async function refreshResources(currentToken = token): Promise<ResourceState> {
-    const [users, nodes, templates, remoteSubscriptionSources, ruleSources, syncLogs, auditLogs] = await Promise.all([
+    const [users, nodes, templates, remoteSubscriptionSources] = await Promise.all([
       fetchUsers(currentToken),
       fetchNodes(currentToken),
       fetchTemplates(currentToken),
-      fetchRemoteSubscriptionSources(currentToken),
-      fetchRuleSources(currentToken),
-      fetchSyncLogs(currentToken),
-      fetchAuditLogs(currentToken)
+      fetchRemoteSubscriptionSources(currentToken)
     ]);
-    const firstUser = users[0];
-    const nextResources = { users, nodes, templates, remoteSubscriptionSources, ruleSources, syncLogs, auditLogs };
+    const nextResources = { users, nodes, templates, remoteSubscriptionSources };
     const nextHostedSubscriptionResult = await resolveCurrentHostedSubscriptionResult({
       resources: nextResources,
       fetchUserNodeBindings: (userId) => fetchUserNodeBindings(currentToken, userId),
@@ -519,12 +405,6 @@ export function App(): JSX.Element {
 
     setResources(nextResources);
     setHostedSubscriptionResult(nextHostedSubscriptionResult);
-    setPreviewForm((current) => ({
-      ...current,
-      userId: users.some((user) => user.id === current.userId)
-        ? current.userId
-        : nextHostedSubscriptionResult?.userId ?? firstUser?.id ?? ''
-    }));
     return nextResources;
   }
 
@@ -840,8 +720,6 @@ export function App(): JSX.Element {
       })
     );
 
-    setPreviewForm((current) => ({ ...current, userId: managedUser.id }));
-
     return {
       userId: managedUser.id,
       userName: managedUser.name,
@@ -985,7 +863,7 @@ export function App(): JSX.Element {
           ...nodePayload.payload,
           enabled: nodeEditForm.enabled
         }),
-      '节点已更新，可到“预览”页重新验证订阅输出'
+      '节点已更新。如需让客户端拿到最新节点，请重新生成托管 URL。'
     );
   }
 
@@ -994,7 +872,6 @@ export function App(): JSX.Element {
 
     await withAction(async () => {
       await deleteNode(token, nodeId);
-      setPreview(null);
     }, '节点已删除');
   }
 
@@ -1095,175 +972,6 @@ export function App(): JSX.Element {
     await withAction(async () => {
       await deleteRemoteSubscriptionSource(token, source.id);
     }, '自动同步源已删除');
-  }
-
-  async function handleCreateTemplate(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token) return;
-
-    const validationError = validateTemplateDraft({
-      name: templateForm.name,
-      content: templateForm.content,
-      version: 1
-    });
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    await withAction(() => createTemplate(token, templateForm), '模板已创建');
-  }
-
-  async function handleUpdateTemplate(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token || !templateEditForm.id) return;
-
-    const validationError = validateTemplateDraft(templateEditForm);
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    await withAction(
-      () =>
-        updateTemplate(token, templateEditForm.id, {
-          name: templateEditForm.name,
-          content: templateEditForm.content,
-          version: templateEditForm.version,
-          enabled: templateEditForm.enabled,
-          isDefault: templateEditForm.isDefault
-        }),
-      '模板已更新'
-    );
-  }
-
-  async function handleSetDefaultTemplate(templateId: string): Promise<void> {
-    if (!token) return;
-    await withAction(() => setDefaultTemplate(token, templateId), '默认模板已更新');
-  }
-
-  async function handleDeleteTemplate(templateId: string): Promise<void> {
-    if (!token || !confirmDestructiveAction('确认删除该模板吗？')) return;
-
-    await withAction(async () => {
-      await deleteTemplate(token, templateId);
-      setPreview(null);
-    }, '模板已删除');
-  }
-
-  async function handleCreateRuleSource(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token) return;
-
-    const validationError = validateRuleSourceDraft({
-      name: ruleSourceForm.name,
-      sourceUrl: ruleSourceForm.sourceUrl
-    });
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    await withAction(async () => {
-      await createRuleSource(token, ruleSourceForm);
-      setRuleSourceForm({ name: '', sourceUrl: '', format: 'text' });
-    }, '规则源已创建');
-  }
-
-  async function handleUpdateRuleSource(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token || !ruleSourceEditForm.id) return;
-
-    const validationError = validateRuleSourceDraft(ruleSourceEditForm);
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    await withAction(
-      () =>
-        updateRuleSource(token, ruleSourceEditForm.id, {
-          name: ruleSourceEditForm.name,
-          sourceUrl: ruleSourceEditForm.sourceUrl,
-          format: ruleSourceEditForm.format,
-          enabled: ruleSourceEditForm.enabled
-        }),
-      '规则源已更新'
-    );
-  }
-
-  async function handleSyncRuleSource(ruleSourceId: string): Promise<void> {
-    if (!token) return;
-
-    setLoading(true);
-    setError('');
-
-    try {
-      const result = await syncRuleSource(token, ruleSourceId);
-      setSyncResult(result);
-      await refreshResources();
-      setMessage(`规则源同步完成：${result.status} / ${result.ruleCount} rules`);
-    } catch (caughtError) {
-      await handleProtectedApiError(caughtError);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleDeleteRuleSource(ruleSourceId: string): Promise<void> {
-    if (!token || !confirmDestructiveAction('确认删除该规则源吗？')) return;
-
-    await withAction(async () => {
-      await deleteRuleSource(token, ruleSourceId);
-      setPreview(null);
-      setSyncResult((current) => (current?.sourceId === ruleSourceId ? null : current));
-    }, '规则源已删除');
-  }
-
-  async function handleRebuildCaches(): Promise<void> {
-    if (!token) return;
-
-    setLoading(true);
-    setError('');
-    setMessage('');
-
-    try {
-      const result = await rebuildSubscriptionCaches(token);
-      setCacheRebuildResult(result);
-      await refreshResources();
-      setMessage(`缓存重建已提交：${result.userCount} 个用户 / ${result.keysRequested} 个缓存键`);
-    } catch (caughtError) {
-      await handleProtectedApiError(caughtError);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handlePreview(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token) return;
-
-    if (!previewForm.userId) {
-      reportValidationError('请先选择用户');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    try {
-      const result = await fetchPreview(token, previewForm.userId, previewForm.target);
-      setPreview(result);
-      setMessage('预览已刷新');
-    } catch (caughtError) {
-      await handleProtectedApiError(caughtError);
-    } finally {
-      setLoading(false);
-    }
   }
 
   if (!token || !admin) {
@@ -1383,17 +1091,7 @@ export function App(): JSX.Element {
       {error ? <p className="feedback error">{error}</p> : null}
       {message ? <p className="feedback success">{message}</p> : null}
 
-      {activeTab === 'overview' ? (
-        <OverviewPanel
-          {...resources}
-          loading={loading}
-          cacheRebuildResult={cacheRebuildResult}
-          onRebuildCaches={() => void handleRebuildCaches()}
-        />
-      ) : null}
-
-      {activeTab === 'nodes' ? (
-        <section className="panel-grid users-grid">
+      <section className="panel-grid users-grid">
           <article className="panel full-width">
             <h2>节点主入口</h2>
             <p className="helper">
@@ -1804,244 +1502,7 @@ export function App(): JSX.Element {
               ])}
             />
           </article>
-        </section>
-      ) : null}
-
-      {activeTab === 'templates' ? (
-        <section className="panel-grid users-grid">
-          <article className="panel">
-            <h2>创建模板</h2>
-            <form className="form-grid" onSubmit={handleCreateTemplate}>
-              <Field label="名称"><input value={templateForm.name} onChange={(event) => setTemplateForm((current) => ({ ...current, name: event.target.value }))} /></Field>
-              <Field label="目标">
-                <select value={templateForm.targetType} onChange={(event) => setTemplateForm((current) => ({ ...current, targetType: event.target.value as SubscriptionTarget }))}>
-                  {SUBSCRIPTION_TARGETS.map((target) => <option key={target} value={target}>{target}</option>)}
-                </select>
-              </Field>
-              <Field label="内容" full>
-                <textarea value={templateForm.content} onChange={(event) => setTemplateForm((current) => ({ ...current, content: event.target.value }))} rows={10} />
-              </Field>
-              <TemplateStructureAssistant
-                targetType={templateForm.targetType}
-                content={templateForm.content}
-                availableNodeNames={resources.nodes.map((node) => node.name)}
-                onContentChange={(content) => setTemplateForm((current) => ({ ...current, content }))}
-                onError={reportValidationError}
-                onMessage={(messageText) => {
-                  setError('');
-                  setMessage(messageText);
-                }}
-              />
-              <label className="checkbox-row"><input type="checkbox" checked={templateForm.isDefault} onChange={(event) => setTemplateForm((current) => ({ ...current, isDefault: event.target.checked }))} /><span>设为默认模板</span></label>
-              <button type="submit" disabled={loading}>创建模板</button>
-            </form>
-          </article>
-
-          <article className="panel">
-            <h2>编辑模板</h2>
-            <form className="form-grid" onSubmit={handleUpdateTemplate}>
-              <Field label="选择模板">
-                <select value={templateEditForm.id} onChange={(event) => setTemplateEditForm((current) => ({ ...current, id: event.target.value }))}>
-                  <option value="">请选择模板</option>
-                  {resources.templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
-                </select>
-              </Field>
-              <Field label="名称"><input value={templateEditForm.name} onChange={(event) => setTemplateEditForm((current) => ({ ...current, name: event.target.value }))} /></Field>
-              <Field label="目标"><input value={templateEditForm.targetType} readOnly /></Field>
-              <Field label="版本"><input type="number" value={templateEditForm.version} onChange={(event) => setTemplateEditForm((current) => ({ ...current, version: Number(event.target.value) }))} /></Field>
-              <Field label="内容" full>
-                <textarea value={templateEditForm.content} onChange={(event) => setTemplateEditForm((current) => ({ ...current, content: event.target.value }))} rows={10} />
-              </Field>
-              <TemplateStructureAssistant
-                targetType={templateEditForm.targetType}
-                content={templateEditForm.content}
-                availableNodeNames={resources.nodes.map((node) => node.name)}
-                onContentChange={(content) => setTemplateEditForm((current) => ({ ...current, content }))}
-                onError={reportValidationError}
-                onMessage={(messageText) => {
-                  setError('');
-                  setMessage(messageText);
-                }}
-              />
-              <label className="checkbox-row"><input type="checkbox" checked={templateEditForm.enabled} onChange={(event) => setTemplateEditForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用模板</span></label>
-              <label className="checkbox-row"><input type="checkbox" checked={templateEditForm.isDefault} onChange={(event) => setTemplateEditForm((current) => ({ ...current, isDefault: event.target.checked }))} /><span>作为默认模板</span></label>
-              <button type="submit" disabled={loading || !templateEditForm.id}>保存模板</button>
-            </form>
-          </article>
-
-          <article className="panel full-width">
-            <h2>模板列表</h2>
-            <ResourceTable
-              columns={['名称', '目标', '版本', '默认', '状态', '操作']}
-              rows={resources.templates.map((template) => [
-                template.name,
-                template.targetType,
-                template.version,
-                template.isDefault ? 'yes' : 'no',
-                template.status,
-                <div className="inline-actions" key={template.id}>
-                  <button type="button" onClick={() => setTemplateEditForm((current) => ({ ...current, id: template.id }))}>编辑</button>
-                  <button type="button" className="secondary" onClick={() => void handleSetDefaultTemplate(template.id)}>设为默认</button>
-                  <button type="button" className="danger" onClick={() => void handleDeleteTemplate(template.id)}>删除</button>
-                </div>
-              ])}
-            />
-          </article>
-        </section>
-      ) : null}
-
-      {activeTab === 'ruleSources' ? (
-        <section className="panel-grid users-grid">
-          <article className="panel">
-            <h2>创建规则源</h2>
-            <form className="form-grid" onSubmit={handleCreateRuleSource}>
-              <Field label="名称"><input value={ruleSourceForm.name} onChange={(event) => setRuleSourceForm((current) => ({ ...current, name: event.target.value }))} /></Field>
-              <Field label="URL"><input value={ruleSourceForm.sourceUrl} onChange={(event) => setRuleSourceForm((current) => ({ ...current, sourceUrl: event.target.value }))} /></Field>
-              <Field label="格式">
-                <select value={ruleSourceForm.format} onChange={(event) => setRuleSourceForm((current) => ({ ...current, format: event.target.value as RuleSourceRecord['format'] }))}>
-                  <option value="text">text</option>
-                  <option value="yaml">yaml</option>
-                  <option value="json">json</option>
-                </select>
-              </Field>
-              <button type="submit" disabled={loading}>创建规则源</button>
-            </form>
-          </article>
-
-          <article className="panel">
-            <h2>编辑规则源</h2>
-            <form className="form-grid" onSubmit={handleUpdateRuleSource}>
-              <Field label="选择规则源">
-                <select value={ruleSourceEditForm.id} onChange={(event) => setRuleSourceEditForm((current) => ({ ...current, id: event.target.value }))}>
-                  <option value="">请选择规则源</option>
-                  {resources.ruleSources.map((ruleSource) => <option key={ruleSource.id} value={ruleSource.id}>{ruleSource.name}</option>)}
-                </select>
-              </Field>
-              <Field label="名称"><input value={ruleSourceEditForm.name} onChange={(event) => setRuleSourceEditForm((current) => ({ ...current, name: event.target.value }))} /></Field>
-              <Field label="URL"><input value={ruleSourceEditForm.sourceUrl} onChange={(event) => setRuleSourceEditForm((current) => ({ ...current, sourceUrl: event.target.value }))} /></Field>
-              <Field label="格式">
-                <select value={ruleSourceEditForm.format} onChange={(event) => setRuleSourceEditForm((current) => ({ ...current, format: event.target.value as RuleSourceRecord['format'] }))}>
-                  <option value="text">text</option>
-                  <option value="yaml">yaml</option>
-                  <option value="json">json</option>
-                </select>
-              </Field>
-              <label className="checkbox-row"><input type="checkbox" checked={ruleSourceEditForm.enabled} onChange={(event) => setRuleSourceEditForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用规则源</span></label>
-              <button type="submit" disabled={loading || !ruleSourceEditForm.id}>保存规则源</button>
-            </form>
-          </article>
-
-          <article className="panel full-width">
-            <h2>规则源列表</h2>
-            <ResourceTable
-              columns={['名称', '格式', '状态', '失败次数', '上次同步', 'URL', '操作']}
-              rows={resources.ruleSources.map((ruleSource) => [
-                ruleSource.name,
-                ruleSource.format,
-                formatSyncStatusLabel(ruleSource.lastSyncStatus ?? 'never'),
-                ruleSource.failureCount,
-                ruleSource.lastSyncAt ?? '-',
-                ruleSource.sourceUrl,
-                <div className="inline-actions" key={ruleSource.id}>
-                  <button type="button" onClick={() => setRuleSourceEditForm((current) => ({ ...current, id: ruleSource.id }))}>编辑</button>
-                  <button type="button" className="secondary" onClick={() => void handleSyncRuleSource(ruleSource.id)}>触发同步</button>
-                  <button type="button" className="danger" onClick={() => void handleDeleteRuleSource(ruleSource.id)}>删除</button>
-                </div>
-              ])}
-            />
-          </article>
-        </section>
-      ) : null}
-
-      {activeTab === 'syncLogs' ? (
-        <section className="panel-grid">
-          <article className="panel">
-            <h2>同步状态</h2>
-            {syncResult ? (
-              <div className="result-card">
-                <strong>{syncResult.sourceName}</strong>
-                <span>状态：{formatSyncStatusLabel(syncResult.status)}</span>
-                <span>变更：{syncResult.changed ? '有' : '无'}</span>
-                <span>规则数：{syncResult.ruleCount}</span>
-                <span>{syncResult.message}</span>
-                {syncResult.details ? renderSyncDetails(syncResult.details) : null}
-              </div>
-            ) : (
-              <p className="helper">在“规则源”页触发同步后，这里会显示最近一次结果。</p>
-            )}
-          </article>
-          <article className="panel full-width">
-            <h2>同步日志</h2>
-            <ResourceTable
-              columns={['时间', '来源', '状态', '消息', '详情']}
-              rows={resources.syncLogs.map((log) => [
-                log.createdAt,
-                `${log.sourceType}${log.sourceId ? ` / ${log.sourceId}` : ''}`,
-                formatSyncStatusLabel(log.status),
-                log.message ?? '-',
-                log.details ? renderSyncDetails(log.details) : '-'
-              ])}
-            />
-          </article>
-        </section>
-      ) : null}
-
-      {activeTab === 'auditLogs' ? (
-        <section className="panel-grid">
-          <article className="panel full-width">
-            <h2>审计日志</h2>
-            <ResourceTable
-              columns={['时间', '管理员', '动作', '目标', '请求', '详情']}
-              rows={resources.auditLogs.map((log) => [
-                log.createdAt,
-                log.actorAdminUsername ? `${log.actorAdminUsername} / ${log.actorAdminId}` : log.actorAdminId,
-                renderAuditAction(log),
-                renderAuditTarget(log),
-                renderAuditRequest(log),
-                renderAuditDetails(log)
-              ])}
-            />
-          </article>
-        </section>
-      ) : null}
-
-      {activeTab === 'preview' ? (
-        <section className="panel-grid">
-          <article className="panel">
-            <h2>订阅预览</h2>
-            <form className="form-grid" onSubmit={handlePreview}>
-              <Field label="用户">
-                <select value={previewForm.userId} onChange={(event) => setPreviewForm((current) => ({ ...current, userId: event.target.value }))}>
-                  <option value="">请选择用户</option>
-                  {resources.users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-                </select>
-              </Field>
-              <Field label="目标">
-                <select value={previewForm.target} onChange={(event) => setPreviewForm((current) => ({ ...current, target: event.target.value as SubscriptionTarget }))}>
-                  {SUBSCRIPTION_TARGETS.map((target) => <option key={target} value={target}>{target}</option>)}
-                </select>
-              </Field>
-              <button type="submit" disabled={loading || !previewForm.userId}>拉取预览</button>
-            </form>
-          </article>
-          <article className="panel preview-panel">
-            <h2>预览结果</h2>
-            {preview ? (
-              <>
-                <div className="inline-meta">
-                  <span>{preview.mimeType}</span>
-                  <span>{preview.cacheKey}</span>
-                  <span>nodes: {preview.metadata.nodeCount}</span>
-                  <span>rules: {preview.metadata.ruleSetCount}</span>
-                </div>
-                <pre>{preview.content}</pre>
-              </>
-            ) : (
-              <p className="helper">选择用户并点击“拉取预览”。</p>
-            )}
-          </article>
-        </section>
-      ) : null}
+      </section>
     </main>
   );
 }
@@ -2209,368 +1670,6 @@ function buildNodeMutationInput(input: NodeDraftForm): {
       params: params.value
     }
   };
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function validateTemplateDraft(input: { name: string; content: string; version: number }): string | null {
-  if (!input.name.trim()) return '模板名称不能为空';
-  if (!input.content.trim()) return '模板内容不能为空';
-  if (!Number.isInteger(input.version) || input.version <= 0) return '模板版本必须是正整数';
-  return null;
-}
-
-function validateRuleSourceDraft(input: { name: string; sourceUrl: string }): string | null {
-  if (!input.name.trim()) return '规则源名称不能为空';
-  if (!input.sourceUrl.trim()) return '规则源 URL 不能为空';
-  if (!isValidHttpUrl(input.sourceUrl.trim())) return '规则源 URL 必须是有效的 http/https 地址';
-  return null;
-}
-
-function stringifyStructured(value: unknown): string {
-  return JSON.stringify(value, null, 2);
-}
-
-function renderJsonBlock(value: unknown): JSX.Element {
-  return <pre className="json-block">{stringifyStructured(value)}</pre>;
-}
-
-function readStringValue(record: Record<string, unknown>, key: string): string | null {
-  const value = record[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function readNumberValue(record: Record<string, unknown>, key: string): number | null {
-  const value = record[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function formatSyncStatusLabel(status: string): string {
-  if (status === 'success') return '成功';
-  if (status === 'failed') return '失败';
-  if (status === 'skipped') return '跳过';
-  if (status === 'never') return '未同步';
-  return status;
-}
-
-function formatSyncStageLabel(stage: string): string {
-  if (stage === 'fetch') return '拉取';
-  if (stage === 'parse') return '解析';
-  if (stage === 'compare') return '比对';
-  return stage;
-}
-
-function formatSyncSeverityLabel(severity: string): string {
-  if (severity === 'info') return '提示';
-  if (severity === 'warning') return '警告';
-  if (severity === 'error') return '错误';
-  return severity;
-}
-
-function formatSyncErrorCodeLabel(errorCode: string): string {
-  if (errorCode === 'FETCH_TIMEOUT') return '上游拉取超时';
-  if (errorCode === 'FETCH_NETWORK_ERROR') return '上游网络异常';
-  if (errorCode === 'UPSTREAM_HTTP_ERROR') return '上游返回异常状态';
-  if (errorCode === 'EMPTY_UPSTREAM_CONTENT') return '上游内容为空';
-  if (errorCode === 'INVALID_JSON') return 'JSON 无法解析';
-  if (errorCode === 'UNSUPPORTED_JSON_SHAPE') return 'JSON 结构不受支持';
-  if (errorCode === 'NO_VALID_RULES') return '未提取到有效规则';
-  return errorCode;
-}
-
-function formatSyncSourceShapeLabel(sourceShape: string): string {
-  if (sourceShape === 'plain-text') return '纯文本逐行';
-  if (sourceShape === 'yaml-lines') return 'YAML 行文本';
-  if (sourceShape === 'yaml-list') return 'YAML 列表';
-  if (sourceShape === 'yaml-block') return 'YAML 块文本';
-  if (sourceShape === 'invalid-json') return '非法 JSON';
-  if (sourceShape === 'array') return 'JSON 数组';
-  if (sourceShape.startsWith('object:')) {
-    return `JSON 对象（键：${sourceShape.slice('object:'.length).split('|').join(' / ')}）`;
-  }
-  if (sourceShape.startsWith('yaml-') && sourceShape.endsWith('-inline')) {
-    return `YAML 内联数组（${sourceShape.slice('yaml-'.length, -'-inline'.length)}）`;
-  }
-  return sourceShape;
-}
-
-function readBooleanValue(record: Record<string, unknown>, key: string): boolean | null {
-  const value = record[key];
-  return typeof value === 'boolean' ? value : null;
-}
-
-function readStringArrayValue(record: Record<string, unknown>, key: string): string[] {
-  const value = record[key];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : [];
-}
-
-function renderSyncDetails(value: unknown): JSX.Element {
-  if (!isObjectRecord(value)) {
-    return renderJsonBlock(value);
-  }
-
-  const errorCode = readStringValue(value, 'errorCode');
-  const reason = readStringValue(value, 'reason');
-  const operatorHint = readStringValue(value, 'operatorHint');
-  const contentPreview = readStringValue(value, 'contentPreview');
-  const supportedShapes = readStringArrayValue(value, 'supportedShapes');
-  const retryable = readBooleanValue(value, 'retryable');
-  const items = [
-    (() => {
-      const stage = readStringValue(value, 'stage');
-      return stage ? `阶段：${formatSyncStageLabel(stage)}` : null;
-    })(),
-    (() => {
-      const severity = readStringValue(value, 'severity');
-      return severity ? `级别：${formatSyncSeverityLabel(severity)}` : null;
-    })(),
-    errorCode ? `诊断：${formatSyncErrorCodeLabel(errorCode)}` : null,
-    errorCode ? `错误码：${errorCode}` : null,
-    (() => {
-      const format = readStringValue(value, 'format');
-      return format ? `格式：${format}` : null;
-    })(),
-    (() => {
-      const parser = readStringValue(value, 'parser');
-      return parser ? `解析器：${parser}` : null;
-    })(),
-    (() => {
-      const upstreamStatus = readNumberValue(value, 'upstreamStatus');
-      return upstreamStatus !== null ? `HTTP：${upstreamStatus}` : null;
-    })(),
-    (() => {
-      const contentType = readStringValue(value, 'contentType');
-      return contentType ? `类型：${contentType}` : null;
-    })(),
-    (() => {
-      const sourceShape = readStringValue(value, 'sourceShape');
-      return sourceShape ? `结构：${formatSyncSourceShapeLabel(sourceShape)}` : null;
-    })(),
-    (() => {
-      const fetchedBytes = readNumberValue(value, 'fetchedBytes');
-      return fetchedBytes !== null ? `字节：${fetchedBytes}` : null;
-    })(),
-    (() => {
-      const ruleCount = readNumberValue(value, 'ruleCount');
-      return ruleCount !== null ? `规则：${ruleCount}` : null;
-    })(),
-    (() => {
-      const extractedRuleCount = readNumberValue(value, 'extractedRuleCount');
-      return extractedRuleCount !== null ? `提取：${extractedRuleCount}` : null;
-    })(),
-    (() => {
-      const duplicateRuleCount = readNumberValue(value, 'duplicateRuleCount');
-      return duplicateRuleCount !== null ? `重复：${duplicateRuleCount}` : null;
-    })(),
-    (() => {
-      const ignoredLineCount = readNumberValue(value, 'ignoredLineCount');
-      return ignoredLineCount !== null ? `忽略：${ignoredLineCount}` : null;
-    })(),
-    (() => {
-      const durationMs = readNumberValue(value, 'durationMs');
-      return durationMs !== null ? `耗时：${durationMs}ms` : null;
-    })(),
-    retryable === true ? '可重试：是' : retryable === false ? '可重试：否' : null
-  ].filter((item): item is string => Boolean(item));
-
-  return (
-    <>
-      {items.length > 0 ? (
-        <div className="inline-meta">
-          {items.map((item) => <span key={item}>{item}</span>)}
-        </div>
-      ) : null}
-      {reason ? <p className="helper">原因：{reason}</p> : null}
-      {operatorHint ? <p className="helper">建议：{operatorHint}</p> : null}
-      {supportedShapes.length > 0 ? (
-        <>
-          <p className="helper">支持的源结构：</p>
-          <div className="inline-meta">
-            {supportedShapes.map((item) => <span key={item}>{item}</span>)}
-          </div>
-        </>
-      ) : null}
-      {contentPreview ? (
-        <>
-          <p className="helper">上游内容预览：</p>
-          <pre className="json-block">{contentPreview}</pre>
-        </>
-      ) : null}
-      {renderJsonBlock(value)}
-    </>
-  );
-}
-
-function formatAuditActionLabel(action: string): string {
-  if (action === 'user.create') return '创建用户';
-  if (action === 'user.update') return '更新用户';
-  if (action === 'user.reset_token') return '重置用户令牌';
-  if (action === 'hosted_subscription.reset_token') return '重置托管订阅链接';
-  if (action === 'user.bind_nodes') return '更新用户节点绑定';
-  if (action === 'node.create') return '创建节点';
-  if (action === 'node.import') return '批量导入节点';
-  if (action === 'node.import_remote') return '同步远程节点源';
-  if (action === 'node.update') return '更新节点';
-  if (action === 'node.delete') return '删除节点';
-  if (action === 'template.create') return '创建模板';
-  if (action === 'template.update') return '更新模板';
-  if (action === 'template.set_default') return '设为默认模板';
-  if (action === 'rule_source.create') return '创建规则源';
-  if (action === 'rule_source.update') return '更新规则源';
-  if (action === 'rule_source.sync') return '同步规则源';
-  if (action === 'cache.rebuild') return '重建缓存';
-  return action;
-}
-
-function formatAuditTargetTypeLabel(targetType: string): string {
-  if (targetType === 'user') return '用户';
-  if (targetType === 'hosted_subscription') return '托管订阅';
-  if (targetType === 'node') return '节点';
-  if (targetType === 'template') return '模板';
-  if (targetType === 'rule_source') return '规则源';
-  if (targetType === 'cache') return '缓存';
-  return targetType;
-}
-
-function formatAuditTargetLabel(log: AuditLogRecord): string {
-  const targetTypeLabel = formatAuditTargetTypeLabel(log.targetType);
-  if (log.targetDisplayName) return `${targetTypeLabel} / ${log.targetDisplayName}`;
-  if (log.targetId) return `${targetTypeLabel} / ${log.targetId}`;
-  return targetTypeLabel;
-}
-
-function getAuditPayloadDetails(log: AuditLogRecord): unknown {
-  if (!isObjectRecord(log.payload)) {
-    return log.payload ?? null;
-  }
-
-  const { _request, ...rest } = log.payload;
-  return Object.keys(rest).length > 0 ? rest : null;
-}
-
-function renderAuditAction(log: AuditLogRecord): JSX.Element {
-  return (
-    <>
-      <div>{formatAuditActionLabel(log.action)}</div>
-      <div className="helper">{log.action}</div>
-    </>
-  );
-}
-
-function renderAuditTarget(log: AuditLogRecord): JSX.Element {
-  return (
-    <>
-      <div>{formatAuditTargetTypeLabel(log.targetType)}</div>
-      {log.targetDisplayName ? <div className="helper">{log.targetDisplayName}</div> : null}
-      {log.targetId ? <div className="helper">{log.targetId}</div> : null}
-    </>
-  );
-}
-
-function renderAuditRequest(log: AuditLogRecord): JSX.Element {
-  const requestMeta = log.requestMeta;
-
-  if (!requestMeta) {
-    return <span>-</span>;
-  }
-
-  const requestPath = requestMeta.method && requestMeta.path
-    ? `${requestMeta.method} ${requestMeta.path}`
-    : requestMeta.method ?? requestMeta.path ?? null;
-  const requestLocation = [requestMeta.country, requestMeta.colo].filter((item): item is string => Boolean(item)).join(' / ');
-  const items = [
-    requestPath,
-    requestMeta.ip ? `IP：${requestMeta.ip}` : null,
-    requestLocation ? `地区：${requestLocation}` : null,
-    requestMeta.rayId ? `Ray：${requestMeta.rayId}` : null
-  ].filter((item): item is string => Boolean(item));
-
-  return (
-    <>
-      {items.length > 0 ? (
-        <div className="inline-meta">
-          {items.map((item) => <span key={item}>{item}</span>)}
-        </div>
-      ) : null}
-      {requestMeta.userAgent ? <div className="helper">{requestMeta.userAgent}</div> : null}
-    </>
-  );
-}
-
-function renderAuditDetails(log: AuditLogRecord): JSX.Element {
-  const payload = getAuditPayloadDetails(log);
-
-  if (payload == null) {
-    return <span>-</span>;
-  }
-
-  return renderJsonBlock(payload);
-}
-
-interface OverviewPanelProps extends ResourceState {
-  loading: boolean;
-  cacheRebuildResult: CacheRebuildPayload | null;
-  onRebuildCaches: () => void;
-}
-
-function OverviewPanel(props: OverviewPanelProps): JSX.Element {
-  const latestLog = props.syncLogs[0];
-  const latestAudit = props.auditLogs[0];
-
-  return (
-    <section className="panel-grid">
-      <article className="panel">
-        <h2>系统概览</h2>
-        <ul className="overview-list">
-          <li>用户：{props.users.length}</li>
-          <li>节点：{props.nodes.length}</li>
-          <li>模板：{props.templates.length}</li>
-          <li>规则源：{props.ruleSources.length}</li>
-          <li>同步日志：{props.syncLogs.length}</li>
-          <li>审计日志：{props.auditLogs.length}</li>
-        </ul>
-      </article>
-      <article className="panel">
-        <h2>当前建议</h2>
-        <ul className="overview-list">
-          <li>首次部署时先完成安装向导或导入 demo 数据</li>
-          <li>优先确认默认模板和节点绑定是否正确</li>
-          <li>规则源同步后，查看同步日志与预览输出</li>
-          <li>资源变更后，相关预览与订阅缓存会自动失效</li>
-        </ul>
-        {latestLog ? <p className="helper">最近同步：{formatSyncStatusLabel(latestLog.status)} / {latestLog.message ?? '-'}</p> : null}
-        {latestAudit ? <p className="helper">最近审计：{formatAuditActionLabel(latestAudit.action)} / {formatAuditTargetLabel(latestAudit)}</p> : null}
-      </article>
-      <article className="panel">
-        <h2>缓存维护</h2>
-        <p className="helper">当模板、规则或节点发生批量调整时，可手动清理现有预览与公开订阅缓存；下一次访问会按最新数据自动重建。</p>
-        <div className="inline-actions">
-          <button
-            type="button"
-            className="secondary"
-            onClick={props.onRebuildCaches}
-            disabled={props.loading || props.users.length === 0}
-          >
-            重建订阅缓存
-          </button>
-        </div>
-        {props.cacheRebuildResult ? (
-          <div className="result-card">
-            <strong>最近一次缓存重建</strong>
-            <span>时间：{props.cacheRebuildResult.rebuiltAt}</span>
-            <span>用户数：{props.cacheRebuildResult.userCount}</span>
-            <span>目标：{props.cacheRebuildResult.targets.join(' / ')}</span>
-            <span>失效请求：{props.cacheRebuildResult.keysRequested} 个缓存键</span>
-          </div>
-        ) : (
-          <p className="helper">当前只会清理缓存，不会主动预热；预览页或公开订阅在下一次访问时会即时生成最新内容。</p>
-        )}
-        {props.users.length === 0 ? <p className="helper">当前还没有用户，无需手动重建缓存。</p> : null}
-      </article>
-    </section>
-  );
 }
 
 function NodeProtocolAssistant(props: {
