@@ -23,7 +23,6 @@ import {
   deleteNode,
   deleteRuleSource,
   deleteTemplate,
-  deleteUser,
   fetchAuditLogs,
   fetchMe,
   fetchNodes,
@@ -44,7 +43,6 @@ import {
   fetchRemoteSubscriptionSources,
   replaceUserNodeBindings,
   resetHostedSubscriptionToken,
-  resetUserToken,
   setDefaultTemplate,
   syncRemoteSubscriptionSource,
   syncRuleSource,
@@ -116,7 +114,6 @@ const sessionStorageKey = 'subforge.admin.token';
 
 type TabKey =
   | 'overview'
-  | 'users'
   | 'nodes'
   | 'templates'
   | 'ruleSources'
@@ -132,14 +129,6 @@ interface ResourceState {
   ruleSources: RuleSourceRecord[];
   syncLogs: SyncLogRecord[];
   auditLogs: AuditLogRecord[];
-}
-
-interface UserEditForm {
-  id: string;
-  name: string;
-  status: string;
-  remark: string;
-  expiresAt: string;
 }
 
 interface NodeDraftForm {
@@ -192,7 +181,6 @@ const emptyResources: ResourceState = {
 const AUTO_HOSTED_MIHOMO_TEMPLATE = ['mixed-port: 7890', 'mode: rule', 'proxies:', '{{proxies}}', 'proxy-groups:', '{{proxy_groups}}', 'rules:', '{{rules}}'].join('\n');
 const AUTO_HOSTED_SINGBOX_TEMPLATE = ['{', '  "outbounds": {{outbounds}},', '  "route": {', '    "rules": {{rules}}', '  }', '}'].join('\n');
 
-const emptyUserEditForm: UserEditForm = { id: '', name: '', status: 'active', remark: '', expiresAt: '' };
 const emptyNodeDraftForm: NodeDraftForm = {
   name: '',
   protocol: 'vless',
@@ -276,7 +264,7 @@ rules:
 export function App(): JSX.Element {
   const [token, setToken] = useState<string>(() => localStorage.getItem(sessionStorageKey) ?? '');
   const [admin, setAdmin] = useState<AdminSession | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>('nodes');
+  const [activeTab] = useState<TabKey>('nodes');
   const [resources, setResources] = useState<ResourceState>(emptyResources);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -291,7 +279,6 @@ export function App(): JSX.Element {
 
   const [loginForm, setLoginForm] = useState({ username: 'admin', password: '' });
   const [setupForm, setSetupForm] = useState({ username: 'admin', password: '', confirmPassword: '' });
-  const [userForm, setUserForm] = useState({ name: '', remark: '', expiresAt: '' });
   const [nodeForm, setNodeForm] = useState<NodeDraftForm>(emptyNodeDraftForm);
   const [nodeImportText, setNodeImportText] = useState('');
   const [configImportText, setConfigImportText] = useState('');
@@ -308,10 +295,6 @@ export function App(): JSX.Element {
   const [ruleSourceForm, setRuleSourceForm] = useState({ name: '', sourceUrl: '', format: 'text' as RuleSourceRecord['format'] });
   const [previewForm, setPreviewForm] = useState({ userId: '', target: 'mihomo' as SubscriptionTarget });
 
-  const [bindingUserId, setBindingUserId] = useState('');
-  const [bindingNodeIds, setBindingNodeIds] = useState<string[]>([]);
-
-  const [userEditForm, setUserEditForm] = useState<UserEditForm>(emptyUserEditForm);
   const [nodeEditForm, setNodeEditForm] = useState<NodeEditForm>(emptyNodeEditForm);
   const [templateEditForm, setTemplateEditForm] = useState<TemplateEditForm>(emptyTemplateEditForm);
   const [ruleSourceEditForm, setRuleSourceEditForm] = useState<RuleSourceEditForm>(emptyRuleSourceEditForm);
@@ -408,8 +391,6 @@ export function App(): JSX.Element {
     setCacheRebuildResult(null);
     setRemoteNodeImportPreview(null);
     setHostedSubscriptionResult(null);
-    setBindingUserId('');
-    setBindingNodeIds([]);
   }
 
   async function clearPersistedSession(refreshSetup = true): Promise<void> {
@@ -442,30 +423,6 @@ export function App(): JSX.Element {
 
     void bootstrapSession(token);
   }, [token]);
-
-  useEffect(() => {
-    if (!token || !bindingUserId) {
-      setBindingNodeIds([]);
-      return;
-    }
-
-    void loadUserBindings(bindingUserId);
-  }, [token, bindingUserId]);
-
-  useEffect(() => {
-    const user = resources.users.find((item) => item.id === userEditForm.id) ?? resources.users[0];
-    if (!user) {
-      setUserEditForm(emptyUserEditForm);
-      return;
-    }
-    setUserEditForm({
-      id: user.id,
-      name: user.name,
-      status: user.status,
-      remark: user.remark ?? '',
-      expiresAt: user.expiresAt ?? ''
-    });
-  }, [resources.users, userEditForm.id]);
 
   useEffect(() => {
     const node = resources.nodes.find((item) => item.id === nodeEditForm.id) ?? resources.nodes[0];
@@ -564,19 +521,11 @@ export function App(): JSX.Element {
     setHostedSubscriptionResult(nextHostedSubscriptionResult);
     setPreviewForm((current) => ({
       ...current,
-      userId: users.some((user) => user.id === current.userId) ? current.userId : firstUser?.id ?? ''
+      userId: users.some((user) => user.id === current.userId)
+        ? current.userId
+        : nextHostedSubscriptionResult?.userId ?? firstUser?.id ?? ''
     }));
-    setBindingUserId((current) => (users.some((user) => user.id === current) ? current : firstUser?.id ?? ''));
     return nextResources;
-  }
-
-  async function loadUserBindings(userId: string): Promise<void> {
-    try {
-      const bindings = await fetchUserNodeBindings(token, userId);
-      setBindingNodeIds(bindings.filter((item) => item.enabled).map((item) => item.nodeId));
-    } catch (caughtError) {
-      await handleProtectedApiError(caughtError);
-    }
   }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -675,51 +624,6 @@ export function App(): JSX.Element {
     }
   }
 
-  async function handleCreateUser(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token) return;
-
-    const validationError = validateUserDraft(userForm);
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    await withAction(async () => {
-      await createUser(token, userForm);
-      setUserForm({ name: '', remark: '', expiresAt: '' });
-    }, '用户已创建');
-  }
-
-  async function handleUpdateUser(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token || !userEditForm.id) return;
-
-    const validationError = validateUserDraft(userEditForm);
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    await withAction(
-      () =>
-        updateUser(token, userEditForm.id, {
-          name: userEditForm.name,
-          status: userEditForm.status,
-          remark: userEditForm.remark,
-          expiresAt: userEditForm.expiresAt || null
-        }),
-      '用户已更新'
-    );
-  }
-
-  async function handleResetUserToken(userId: string): Promise<void> {
-    if (!token) return;
-    await withAction(() => resetUserToken(token, userId), '用户 token 已重置');
-  }
-
   async function handleResetCurrentHostedSubscriptionToken(): Promise<void> {
     if (!token) return;
 
@@ -745,26 +649,6 @@ export function App(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleDeleteUser(userId: string): Promise<void> {
-    if (!token || !confirmDestructiveAction('确认删除该用户吗？')) return;
-
-    await withAction(async () => {
-      await deleteUser(token, userId);
-      setPreview(null);
-    }, '用户已删除');
-  }
-
-  async function handleSaveBindings(): Promise<void> {
-    if (!token || !bindingUserId) return;
-    await withAction(() => replaceUserNodeBindings(token, bindingUserId, bindingNodeIds), '用户节点绑定已更新');
-  }
-
-  function toggleBindingNode(nodeId: string): void {
-    setBindingNodeIds((current) =>
-      current.includes(nodeId) ? current.filter((id) => id !== nodeId) : [...current, nodeId]
-    );
   }
 
   async function handleCreateNode(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -957,8 +841,6 @@ export function App(): JSX.Element {
     );
 
     setPreviewForm((current) => ({ ...current, userId: managedUser.id }));
-    setBindingUserId(managedUser.id);
-    setBindingNodeIds(boundNodeIds);
 
     return {
       userId: managedUser.id,
@@ -1508,104 +1390,6 @@ export function App(): JSX.Element {
           cacheRebuildResult={cacheRebuildResult}
           onRebuildCaches={() => void handleRebuildCaches()}
         />
-      ) : null}
-
-      {activeTab === 'users' ? (
-        <section className="panel-grid users-grid">
-          <article className="panel">
-            <h2>创建用户</h2>
-            <form className="form-grid" onSubmit={handleCreateUser}>
-              <Field label="名称">
-                <input value={userForm.name} onChange={(event) => setUserForm((current) => ({ ...current, name: event.target.value }))} />
-              </Field>
-              <Field label="备注">
-                <input value={userForm.remark} onChange={(event) => setUserForm((current) => ({ ...current, remark: event.target.value }))} />
-              </Field>
-              <Field label="到期时间">
-                <input value={userForm.expiresAt} onChange={(event) => setUserForm((current) => ({ ...current, expiresAt: event.target.value }))} placeholder="2026-12-31T23:59:59.000Z" />
-              </Field>
-              <button type="submit" disabled={loading}>创建用户</button>
-            </form>
-          </article>
-
-          <article className="panel">
-            <h2>编辑用户</h2>
-            <form className="form-grid" onSubmit={handleUpdateUser}>
-              <Field label="选择用户">
-                <select value={userEditForm.id} onChange={(event) => setUserEditForm((current) => ({ ...current, id: event.target.value }))}>
-                  <option value="">请选择用户</option>
-                  {resources.users.map((user) => (
-                    <option key={user.id} value={user.id}>{user.name}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="名称">
-                <input value={userEditForm.name} onChange={(event) => setUserEditForm((current) => ({ ...current, name: event.target.value }))} />
-              </Field>
-              <Field label="状态">
-                <select value={userEditForm.status} onChange={(event) => setUserEditForm((current) => ({ ...current, status: event.target.value }))}>
-                  <option value="active">active</option>
-                  <option value="disabled">disabled</option>
-                </select>
-              </Field>
-              <Field label="备注">
-                <input value={userEditForm.remark} onChange={(event) => setUserEditForm((current) => ({ ...current, remark: event.target.value }))} />
-              </Field>
-              <Field label="到期时间">
-                <input value={userEditForm.expiresAt} onChange={(event) => setUserEditForm((current) => ({ ...current, expiresAt: event.target.value }))} />
-              </Field>
-              <button type="submit" disabled={loading || !userEditForm.id}>保存用户</button>
-            </form>
-          </article>
-
-          <article className="panel">
-            <h2>用户节点绑定</h2>
-            <div className="form-grid">
-              <Field label="目标用户">
-                <select value={bindingUserId} onChange={(event) => setBindingUserId(event.target.value)}>
-                  <option value="">请选择用户</option>
-                  {resources.users.map((user) => (
-                    <option key={user.id} value={user.id}>{user.name}</option>
-                  ))}
-                </select>
-              </Field>
-              <div className="checkbox-list">
-                {resources.nodes.length > 0 ? (
-                  resources.nodes.map((node) => (
-                    <label className="checkbox-row" key={node.id}>
-                      <input type="checkbox" checked={bindingNodeIds.includes(node.id)} onChange={() => toggleBindingNode(node.id)} />
-                      <span>{node.name} / {node.protocol} / {node.server}:{node.port}</span>
-                    </label>
-                  ))
-                ) : (
-                  <p className="helper">暂无节点，请先创建节点。</p>
-                )}
-              </div>
-              <button type="button" disabled={loading || !bindingUserId} onClick={() => void handleSaveBindings()}>
-                保存绑定
-              </button>
-            </div>
-          </article>
-
-          <article className="panel full-width">
-            <h2>用户列表</h2>
-            <ResourceTable
-              columns={['名称', '状态', 'Token', '备注', '操作']}
-              rows={resources.users.map((user) => [
-                user.name,
-                user.status,
-                user.token,
-                user.remark ?? '-',
-                <div className="inline-actions" key={user.id}>
-                  <button type="button" onClick={() => setBindingUserId(user.id)}>绑定节点</button>
-                  <button type="button" onClick={() => setUserEditForm((current) => ({ ...current, id: user.id }))}>编辑</button>
-                  <button type="button" className="secondary" onClick={() => void handleResetUserToken(user.id)}>重置 Token</button>
-                  <button type="button" className="danger" onClick={() => void handleDeleteUser(user.id)}>删除</button>
-                </div>
-              ])}
-            />
-          </article>
-        </section>
       ) : null}
 
       {activeTab === 'nodes' ? (
@@ -2307,18 +2091,8 @@ function confirmDestructiveAction(message: string): boolean {
   return typeof window === 'undefined' ? true : window.confirm(message);
 }
 
-function isValidDateTime(value: string): boolean {
-  return !value || !Number.isNaN(Date.parse(value));
-}
-
 function isValidPort(value: number): boolean {
   return Number.isInteger(value) && value > 0 && value <= 65535;
-}
-
-function validateUserDraft(input: { name: string; expiresAt: string }): string | null {
-  if (!input.name.trim()) return '用户名称不能为空';
-  if (!isValidDateTime(input.expiresAt.trim())) return '到期时间必须是合法的日期时间';
-  return null;
 }
 
 function validateNodeDraft(input: { name: string; protocol: string; server: string; port: number }): string | null {
