@@ -470,8 +470,10 @@ assertIncludes(workerRepository, 'target_display_name', 'worker audit target dis
 assertIncludes(workerRepository, 'mapAuditRequestMeta', 'worker audit request meta mapping');
 
 const webApp = readFileSync('apps/web/src/App.tsx', 'utf8');
-assertIncludes(webApp, 'formatAuditActionLabel', 'web audit action formatter');
-assertIncludes(webApp, 'renderAuditRequest', 'web audit request renderer');
+assertIncludes(webApp, '使用当前启用节点生成托管 URL', 'web single-user hosted generation action');
+assertIncludes(webApp, '重置当前托管链接', 'web hosted token reset action');
+assertIncludes(webApp, '保存为自动同步源', 'web remote subscription source action');
+assertIncludes(webApp, '链式代理拓扑', 'web node topology panel');
 
 const workerSyncDiagnostics = readFileSync('apps/worker/src/rule-sync-diagnostics.ts', 'utf8');
 assertIncludes(workerSyncDiagnostics, 'operatorHint', 'worker sync operator hint field');
@@ -484,8 +486,6 @@ assertIncludes(workerSync, 'duplicateRuleCount', 'worker sync parse metrics');
 assertIncludes(workerSync, 'buildRuleSourceSyncDiagnostics', 'worker sync diagnostics helper usage');
 
 const webSync = readFileSync('apps/web/src/App.tsx', 'utf8');
-assertIncludes(webSync, 'formatSyncErrorCodeLabel', 'web sync error code formatter');
-assertIncludes(webSync, 'supportedShapes', 'web sync supported shapes rendering');
 assertIncludes(webSync, 'className="page auth-page"', 'web auth view should render the auth-page layout');
 
 const webStyles = readFileSync('apps/web/src/styles.css', 'utf8');

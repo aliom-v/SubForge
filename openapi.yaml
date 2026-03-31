@@ -417,6 +417,31 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
+  /api/hosted-subscription/reset-token:
+    post:
+      tags: [Users]
+      summary: 重置当前托管订阅 token
+      description: |
+        重置系统自动维护的单用户托管身份 token。
+
+        旧的 `/s/{token}/{target}` 链接会立即失效，客户端需要改用新的托管 URL。
+      operationId: resetHostedSubscriptionToken
+      responses:
+        '200':
+          description: 返回重置后的托管用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
   /api/users/{userId}/nodes:
     get:
       tags: [Users]
