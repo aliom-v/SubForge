@@ -458,9 +458,13 @@ assertIncludes(rateLimit, 'consumeSubscriptionRateLimit', 'worker subscription r
 const sharedDomain = readFileSync('packages/shared/src/domain.ts', 'utf8');
 assertIncludes(sharedDomain, 'export interface RemoteSubscriptionSourceRecord extends TimestampedRecord {', 'shared remote subscription record');
 assertIncludes(sharedDomain, 'lastSyncStatus?: SyncLogStatus | null;', 'shared remote subscription sync status field');
+assertIncludes(sharedDomain, 'lastSyncMessage?: string | null;', 'shared remote subscription sync message field');
+assertIncludes(sharedDomain, 'lastSyncDetails?: Record<string, JsonValue> | null;', 'shared remote subscription sync details field');
 
 const workerRepository = readFileSync('apps/worker/src/repository.ts', 'utf8');
 assertIncludes(workerRepository, 'recordRemoteSubscriptionSourceSync', 'worker remote subscription sync status persistence');
+assertIncludes(workerRepository, 'last_sync_message', 'worker remote subscription sync message persistence');
+assertIncludes(workerRepository, 'last_sync_details_json', 'worker remote subscription sync details persistence');
 assertIncludes(workerRepository, 'ruleSets: []', 'worker subscription compile input should not depend on rule snapshots');
 
 const webApp = readFileSync('apps/web/src/App.tsx', 'utf8');

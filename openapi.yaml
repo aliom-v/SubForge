@@ -2189,6 +2189,12 @@ components:
           oneOf:
             - $ref: '#/components/schemas/SyncLogStatus'
             - type: 'null'
+        lastSyncMessage:
+          type: [string, 'null']
+        lastSyncDetails:
+          oneOf:
+            - $ref: '#/components/schemas/RemoteSubscriptionSourceSyncDetails'
+            - type: 'null'
         failureCount:
           type: integer
           minimum: 0
@@ -2251,6 +2257,24 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/DeleteRemoteSubscriptionSourceData'
+    RemoteSubscriptionSourceSyncIssue:
+      type: object
+      required: [nodeId, nodeName, kind, message]
+      properties:
+        nodeId:
+          type: string
+        nodeName:
+          type: string
+        kind:
+          type: string
+        message:
+          type: string
+        reference:
+          type: [string, 'null']
+        chain:
+          type: [string, 'null']
+        upstreamProxy:
+          type: [string, 'null']
     RemoteSubscriptionSourceSyncDetails:
       type: object
       required: [sourceUrl, durationMs]
@@ -2299,6 +2323,17 @@ components:
           minimum: 0
         errorSummary:
           type: string
+        scope:
+          type: string
+        operation:
+          type: string
+        issueCount:
+          type: integer
+          minimum: 0
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/RemoteSubscriptionSourceSyncIssue'
         reason:
           type: string
     RemoteSubscriptionSourceSyncResult:

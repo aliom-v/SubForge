@@ -5,6 +5,7 @@ import type {
   SubscriptionRenderContext,
   SubscriptionRuleSet
 } from './models';
+import { parseMihomoTemplateStructure, updateMihomoTemplateStructure } from './template-structure';
 
 export interface SubscriptionRenderer {
   target: SubscriptionTarget;
@@ -661,10 +662,81 @@ function toSingboxRules(ruleSets: SubscriptionRuleSet[]): string {
   return JSON.stringify(rules, null, 2);
 }
 
+const mihomoBuiltinReferences = new Set(['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'GLOBAL', 'COMPATIBLE']);
+
+function sanitizeStaticMihomoTemplate(content: string, nodeNames: string[]): string {
+  try {
+    const parsed = parseMihomoTemplateStructure(content);
+
+    if (parsed.useDynamicProxyGroups || parsed.proxyGroups.length === 0) {
+      return content;
+    }
+
+    const groupNames = new Set(
+      parsed.proxyGroups
+        .map((group) => (typeof group.name === 'string' ? group.name.trim() : ''))
+        .filter(Boolean)
+    );
+    const nodeNameSet = new Set(nodeNames.map((name) => name.trim()).filter(Boolean));
+    const providerNameSet = new Set(parsed.proxyProviders.map((name) => name.trim()).filter(Boolean));
+    const nextProxyGroups = parsed.proxyGroups.map((group) => {
+      const nextGroup = JSON.parse(JSON.stringify(group)) as Record<string, unknown>;
+
+      if (Array.isArray(nextGroup.proxies)) {
+        nextGroup.proxies = nextGroup.proxies.filter((item) => {
+          if (typeof item !== 'string') {
+            return true;
+          }
+
+          const normalized = item.trim();
+          return (
+            !normalized ||
+            mihomoBuiltinReferences.has(normalized) ||
+            nodeNameSet.has(normalized) ||
+            groupNames.has(normalized) ||
+            providerNameSet.has(normalized)
+          );
+        });
+      }
+
+      if (Array.isArray(nextGroup.use)) {
+        nextGroup.use = nextGroup.use.filter((item) => {
+          if (typeof item !== 'string') {
+            return true;
+          }
+
+          const normalized = item.trim();
+          return !normalized || providerNameSet.has(normalized);
+        });
+      }
+
+      return nextGroup;
+    });
+
+    if (JSON.stringify(nextProxyGroups) === JSON.stringify(parsed.proxyGroups)) {
+      return content;
+    }
+
+    return updateMihomoTemplateStructure(content, {
+      useDynamicProxies: parsed.useDynamicProxies,
+      useDynamicProxyGroups: parsed.useDynamicProxyGroups,
+      useDynamicRules: parsed.useDynamicRules,
+      proxyGroups: nextProxyGroups,
+      rules: parsed.rules
+    });
+  } catch {
+    return content;
+  }
+}
+
 export const mihomoRenderer: SubscriptionRenderer = {
   target: 'mihomo',
   mimeType: 'text/yaml; charset=utf-8',
   render(context): string {
+    const templateContent = sanitizeStaticMihomoTemplate(
+      context.template.content,
+      context.nodes.map((node) => node.name)
+    );
     const proxiesBlock = context.nodes.length
       ? indentBlock(context.nodes.map(toMihomoProxy).join('\n'), 2)
       : '  []';
@@ -672,7 +744,7 @@ export const mihomoRenderer: SubscriptionRenderer = {
     const proxyGroupsBlock = indentBlock(toMihomoProxyGroup(context.nodes), 2);
     const rulesBlock = toMihomoRules(context.ruleSets);
 
-    return replaceTemplateSlots(context.template.content, {
+    return replaceTemplateSlots(templateContent, {
       proxies: proxiesBlock,
       proxy_groups: proxyGroupsBlock,
       rules: rulesBlock

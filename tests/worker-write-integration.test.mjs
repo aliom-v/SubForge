@@ -187,6 +187,10 @@ class MockDatabase {
         .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
     }
 
+    if (sql.includes('SELECT * FROM nodes ORDER BY created_at DESC')) {
+      return [...this.nodes.values()].sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
+    }
+
     if (sql.includes('SELECT * FROM nodes WHERE source_type = ? AND source_id = ? ORDER BY created_at DESC')) {
       const [sourceType, sourceId] = bindings;
       return [...this.nodes.values()]
@@ -399,7 +403,7 @@ class MockDatabase {
     }
 
     if (sql.startsWith('INSERT INTO remote_subscription_sources')) {
-      const [id, name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, failureCount, createdAt, updatedAt] = bindings;
+      const [id, name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, lastSyncMessage, lastSyncDetailsJson, failureCount, createdAt, updatedAt] = bindings;
       this.remoteSubscriptionSources.set(id, {
         id,
         name,
@@ -407,6 +411,8 @@ class MockDatabase {
         enabled,
         last_sync_at: lastSyncAt,
         last_sync_status: lastSyncStatus,
+        last_sync_message: lastSyncMessage,
+        last_sync_details_json: lastSyncDetailsJson,
         failure_count: failureCount,
         created_at: createdAt,
         updated_at: updatedAt
@@ -414,27 +420,34 @@ class MockDatabase {
       return { success: true };
     }
 
-    if (sql.startsWith('UPDATE remote_subscription_sources SET name = ?, source_url = ?, enabled = ?, updated_at = ? WHERE id = ?')) {
-      const [name, sourceUrl, enabled, updatedAt, sourceId] = bindings;
+    if (sql.startsWith('UPDATE remote_subscription_sources SET name = ?, source_url = ?, enabled = ?, last_sync_at = ?, last_sync_status = ?, last_sync_message = ?, last_sync_details_json = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
+      const [name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, lastSyncMessage, lastSyncDetailsJson, failureCount, updatedAt, sourceId] = bindings;
       const source = this.remoteSubscriptionSources.get(sourceId);
 
       if (source) {
         source.name = name;
         source.source_url = sourceUrl;
         source.enabled = enabled;
+        source.last_sync_at = lastSyncAt;
+        source.last_sync_status = lastSyncStatus;
+        source.last_sync_message = lastSyncMessage;
+        source.last_sync_details_json = lastSyncDetailsJson;
+        source.failure_count = failureCount;
         source.updated_at = updatedAt;
       }
 
       return { success: true };
     }
 
-    if (sql.startsWith('UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
-      const [lastSyncAt, status, failureCount, updatedAt, sourceId] = bindings;
+    if (sql.startsWith('UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, last_sync_message = ?, last_sync_details_json = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
+      const [lastSyncAt, status, lastSyncMessage, lastSyncDetailsJson, failureCount, updatedAt, sourceId] = bindings;
       const source = this.remoteSubscriptionSources.get(sourceId);
 
       if (source) {
         source.last_sync_at = lastSyncAt;
         source.last_sync_status = status;
+        source.last_sync_message = lastSyncMessage;
+        source.last_sync_details_json = lastSyncDetailsJson;
         source.failure_count = failureCount;
         source.updated_at = updatedAt;
       }
@@ -576,6 +589,8 @@ function createRemoteSubscriptionSourceRow(id, overrides = {}) {
     enabled: 1,
     last_sync_at: null,
     last_sync_status: null,
+    last_sync_message: null,
+    last_sync_details_json: null,
     failure_count: 0,
     created_at: '2026-03-08T00:00:00.000Z',
     updated_at: '2026-03-08T00:00:00.000Z',
@@ -963,6 +978,8 @@ test('syncing a saved remote subscription source rewires bound users to the late
   assert.equal(activeRemoteNodes[0].server, 'new.example.com');
   assert.equal(db.nodes.get('node_remote_old')?.enabled, 0);
   assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_status, 'success');
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_message, 'subscription updated (1 nodes)');
+  assert.match(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_details_json ?? '', /"createdCount":1/);
 
   const boundNodeIds = db.userNodeMap
     .filter((row) => row.user_id === 'usr_demo' && row.enabled === 1)
@@ -989,6 +1006,211 @@ test('syncing a saved remote subscription source rewires bound users to the late
   assert.equal(nextPreview.payload.data.content, nextSubscriptionBody);
   assert.match(nextSubscriptionBody, /Remote New/);
   assert.doesNotMatch(nextSubscriptionBody, /Remote Old/);
+});
+
+test('updating a remote subscription source url clears stale sync diagnostics', async () => {
+  const { env, db, kv } = createEnv({
+    remoteSubscriptionSources: [
+      createRemoteSubscriptionSourceRow('rss_demo', {
+        name: 'Stale Remote Source',
+        source_url: 'https://example.com/old-subscription.txt',
+        last_sync_at: '2026-03-30T00:00:00.000Z',
+        last_sync_status: 'failed',
+        last_sync_message: 'node chain validation failed',
+        last_sync_details_json: JSON.stringify({
+          scope: 'node_chain',
+          operation: 'remote_subscription_source.sync',
+          issueCount: 1
+        }),
+        failure_count: 3
+      })
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/remote-subscription-sources/rss_demo',
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        sourceUrl: 'https://example.com/new-subscription.txt'
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.sourceUrl, 'https://example.com/new-subscription.txt');
+  assert.equal(payload.data.lastSyncAt, undefined);
+  assert.equal(payload.data.lastSyncStatus, undefined);
+  assert.equal(payload.data.lastSyncMessage, undefined);
+  assert.equal(payload.data.lastSyncDetails, undefined);
+  assert.equal(payload.data.failureCount, 0);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_at, null);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_status, null);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_message, null);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_details_json, null);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.failure_count, 0);
+  assert.deepEqual(kv.deletedKeys, []);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'remote_subscription_source.update');
+});
+
+test('syncing a saved remote subscription source fails cleanly when imported nodes introduce broken upstream chains', async () => {
+  const { env, db, kv } = createEnv({
+    nodes: [
+      createNodeRow('node_manual_01', { name: 'Manual Keep', server: 'manual.example.com' }),
+      createNodeRow('node_remote_old', {
+        name: 'Remote Old',
+        server: 'old.example.com',
+        source_type: 'remote',
+        source_id: 'rss_demo',
+        credentials_json: JSON.stringify({
+          uuid: 'remote-old-uuid'
+        })
+      })
+    ],
+    remoteSubscriptionSources: [
+      createRemoteSubscriptionSourceRow('rss_demo', {
+        name: 'My Remote Subscription',
+        source_url: 'https://example.com/subscription.txt'
+      })
+    ],
+    userNodeMap: [
+      { id: 'unm_manual', user_id: 'usr_demo', node_id: 'node_manual_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' },
+      { id: 'unm_remote_old', user_id: 'usr_demo', node_id: 'node_remote_old', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+
+  await withMockFetch(
+    async () =>
+      new Response(
+        JSON.stringify([
+          {
+            name: 'Remote Broken',
+            protocol: 'vless',
+            server: 'broken.example.com',
+            port: 443,
+            credentials: {
+              uuid: '11111111-1111-1111-1111-111111111111'
+            },
+            params: {
+              tls: true,
+              upstreamProxy: 'Transit Missing'
+            }
+          }
+        ]),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      ),
+    async () => {
+      const { response, payload } = await requestJson(
+        'http://127.0.0.1:8787/api/remote-subscription-sources/rss_demo/sync',
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${adminToken}`
+          }
+        },
+        env
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.status, 'failed');
+      assert.equal(payload.data.message, 'node chain validation failed');
+      assert.equal(payload.data.changed, false);
+      assert.equal(payload.data.importedCount, 1);
+      assert.equal(payload.data.errorCount, 1);
+      assert.equal(payload.data.details.scope, 'node_chain');
+      assert.equal(payload.data.details.operation, 'remote_subscription_source.sync');
+      assert.equal(payload.data.details.issueCount, 1);
+      assert.equal(payload.data.details.issues[0].kind, 'missing_reference');
+      assert.equal(payload.data.details.issues[0].reference, 'Transit Missing');
+    }
+  );
+
+  assert.equal(db.nodes.size, 2);
+  assert.equal(db.nodes.get('node_remote_old')?.enabled, 1);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_status, 'failed');
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_message, 'node chain validation failed');
+  assert.match(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_details_json ?? '', /"scope":"node_chain"/);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.failure_count, 1);
+  assert.deepEqual(
+    db.userNodeMap
+      .filter((row) => row.user_id === 'usr_demo' && row.enabled === 1)
+      .map((row) => row.node_id)
+      .sort(),
+    ['node_manual_01', 'node_remote_old'].sort()
+  );
+  assert.deepEqual(kv.deletedKeys, []);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'remote_subscription_source.sync');
+});
+
+test('syncing a saved remote subscription source still allows unrelated changes when another historical bad chain already exists', async () => {
+  const { env, db, kv } = createEnv({
+    nodes: [
+      createNodeRow('node_bad_manual', {
+        name: 'Broken Manual',
+        server: 'broken-manual.example.com',
+        params_json: JSON.stringify({
+          tls: true,
+          upstreamProxy: 'Transit Missing'
+        })
+      })
+    ],
+    remoteSubscriptionSources: [
+      createRemoteSubscriptionSourceRow('rss_demo', {
+        name: 'My Remote Subscription',
+        source_url: 'https://example.com/subscription.txt'
+      })
+    ],
+    userNodeMap: []
+  });
+  const adminToken = await createAdminToken(env);
+
+  await withMockFetch(
+    async () =>
+      new Response(
+        'vless://11111111-1111-1111-1111-111111111111@new.example.com:443?security=tls&type=ws#Remote New',
+        { status: 200 }
+      ),
+    async () => {
+      const { response, payload } = await requestJson(
+        'http://127.0.0.1:8787/api/remote-subscription-sources/rss_demo/sync',
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${adminToken}`
+          }
+        },
+        env
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.status, 'success');
+      assert.equal(payload.data.createdCount, 1);
+      assert.equal(payload.data.updatedCount, 0);
+      assert.equal(payload.data.importedCount, 1);
+    }
+  );
+
+  assert.equal(db.nodes.size, 2);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_status, 'success');
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_message, 'subscription updated (1 nodes)');
+  assert.match(db.remoteSubscriptionSources.get('rss_demo')?.last_sync_details_json ?? '', /"importedCount":1/);
+  assert.equal(db.remoteSubscriptionSources.get('rss_demo')?.failure_count, 0);
+  assert.equal(db.nodes.get('node_bad_manual')?.server, 'broken-manual.example.com');
+  assert.deepEqual(kv.deletedKeys, []);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'remote_subscription_source.sync');
 });
 
 test('creating a user rejects missing names', async () => {
@@ -1235,6 +1457,153 @@ test('creating a node rejects non-object credentials payloads', async () => {
   assert.equal(payload.error.message, 'credentials must be a JSON object or null');
   assert.deepEqual(captureWriteState(db), initialState);
   assert.deepEqual(kv.deletedKeys, []);
+});
+
+test('creating a node rejects newly introduced broken upstream chains', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'Broken Chain Node',
+        protocol: 'vless',
+        server: 'broken-chain.example.com',
+        port: 443,
+        credentials: {
+          uuid: '11111111-1111-1111-1111-111111111111'
+        },
+        params: {
+          tls: true,
+          upstreamProxy: 'Transit Missing'
+        }
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'node chain validation failed');
+  assert.equal(payload.error.details.scope, 'node_chain');
+  assert.equal(payload.error.details.operation, 'node.create');
+  assert.equal(payload.error.details.issueCount, 1);
+  assert.equal(payload.error.details.issues[0].kind, 'missing_reference');
+  assert.equal(payload.error.details.issues[0].reference, 'Transit Missing');
+  assert.deepEqual(captureWriteState(db), initialState);
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
+test('importing nodes rejects newly introduced broken upstream chains', async () => {
+  const { env, kv, db } = createEnv();
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/import',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        nodes: [
+          {
+            name: 'Broken Import Node',
+            protocol: 'vless',
+            server: 'broken-import.example.com',
+            port: 443,
+            credentials: {
+              uuid: '11111111-1111-1111-1111-111111111111'
+            },
+            params: {
+              tls: true,
+              upstreamProxy: 'Transit Missing'
+            }
+          }
+        ]
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'node chain validation failed');
+  assert.equal(payload.error.details.scope, 'node_chain');
+  assert.equal(payload.error.details.operation, 'node.import');
+  assert.equal(payload.error.details.issueCount, 1);
+  assert.equal(payload.error.details.issues[0].kind, 'missing_reference');
+  assert.equal(payload.error.details.issues[0].reference, 'Transit Missing');
+  assert.deepEqual(captureWriteState(db), initialState);
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
+test('importing nodes still allows unrelated changes when another historical bad chain already exists', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_bad_manual', {
+        name: 'Broken Manual',
+        server: 'broken-manual.example.com',
+        params_json: JSON.stringify({
+          tls: true,
+          upstreamProxy: 'Transit Missing'
+        })
+      })
+    ],
+    userNodeMap: []
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/import',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        nodes: [
+          {
+            name: 'Good Import Node',
+            protocol: 'vless',
+            server: 'good-import.example.com',
+            port: 443,
+            credentials: {
+              uuid: '11111111-1111-1111-1111-111111111111'
+            },
+            params: {
+              tls: true
+            }
+          }
+        ]
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.importedCount, 1);
+  assert.equal(payload.data.createdCount, 1);
+  assert.equal(payload.data.updatedCount, 0);
+  assert.equal(payload.data.changed, true);
+  assert.equal(db.nodes.size, 2);
+  assert.equal(db.nodes.get('node_bad_manual')?.server, 'broken-manual.example.com');
+  assert.deepEqual(kv.deletedKeys, []);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'node.import');
 });
 
 test('creating a node accepts credentials and params objects', async () => {
@@ -2175,6 +2544,52 @@ test('updating a node rejects non-object params payloads', async () => {
   assert.equal(db.auditLogs.length, 0);
 });
 
+test('updating a node rejects renames that break downstream upstream references', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_hk_01', { name: 'HK Edge 01', server: 'hk-01.example.com' }),
+      createNodeRow('node_sg_01', {
+        name: 'SG Edge 01',
+        server: 'sg-01.example.com',
+        params_json: JSON.stringify({
+          tls: true,
+          upstreamProxy: 'HK Edge 01'
+        })
+      })
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/node_hk_01',
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'HK Edge Renamed'
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'node chain validation failed');
+  assert.equal(payload.error.details.scope, 'node_chain');
+  assert.equal(payload.error.details.operation, 'node.update');
+  assert.equal(payload.error.details.issues[0].kind, 'missing_reference');
+  assert.equal(payload.error.details.issues[0].nodeId, 'node_sg_01');
+  assert.equal(payload.error.details.issues[0].reference, 'HK Edge 01');
+  assert.equal(db.nodes.get('node_hk_01').name, 'HK Edge 01');
+  assert.deepEqual(captureWriteState(db), initialState);
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
 test('updating a node rejects invalid hysteria2 metadata', async () => {
   const { env, kv, db } = createEnv({
     nodes: [
@@ -2464,6 +2879,57 @@ test('updating a node invalidates affected caches, writes audit log, and changes
   assert.equal(subscription.status, 200);
   assert.match(content, /HK Edge Updated/);
   assert.doesNotMatch(content, /HK Edge 01/);
+});
+
+test('updating a node still allows unrelated changes when another historical bad chain already exists', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_hk_01', { name: 'HK Edge 01', server: 'hk-01.example.com' }),
+      createNodeRow('node_sg_01', {
+        name: 'SG Edge 01',
+        server: 'sg-01.example.com',
+        params_json: JSON.stringify({
+          tls: true,
+          upstreamProxy: 'Transit Missing'
+        })
+      })
+    ],
+    cacheEntries: [
+      ['sub:mihomo:tok_demo', 'cached'],
+      ['preview:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:singbox:tok_demo', 'cached'],
+      ['preview:singbox:usr_demo', '{"cached":true}']
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/node_hk_01',
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        server: 'hk-01-updated.example.com'
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.server, 'hk-01-updated.example.com');
+  assert.equal(db.nodes.get('node_hk_01').server, 'hk-01-updated.example.com');
+  assert.deepEqual(kv.deletedKeys, [
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo',
+    'sub:singbox:tok_demo',
+    'preview:singbox:usr_demo'
+  ]);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'node.update');
 });
 
 test('deleting a node invalidates affected caches, writes audit log, and leaves the user without available nodes', async () => {

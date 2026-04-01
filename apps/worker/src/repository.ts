@@ -121,6 +121,8 @@ function mapTemplate(row: Row): TemplateRecord {
 function mapRemoteSubscriptionSource(row: Row): RemoteSubscriptionSourceRecord {
   const lastSyncAt = asNullableString(row.last_sync_at);
   const lastSyncStatus = asNullableString(row.last_sync_status);
+  const lastSyncMessage = asNullableString(row.last_sync_message);
+  const lastSyncDetails = parseJsonObject(row.last_sync_details_json);
 
   return {
     id: asString(row.id),
@@ -133,7 +135,9 @@ function mapRemoteSubscriptionSource(row: Row): RemoteSubscriptionSourceRecord {
     ...(lastSyncAt !== null ? { lastSyncAt } : {}),
     ...(lastSyncStatus !== null
       ? { lastSyncStatus: lastSyncStatus as Exclude<RemoteSubscriptionSourceRecord['lastSyncStatus'], null | undefined> }
-      : {})
+      : {}),
+    ...(lastSyncMessage !== null ? { lastSyncMessage } : {}),
+    ...(lastSyncDetails ? { lastSyncDetails } : {})
   };
 }
 
@@ -659,9 +663,9 @@ export async function createRemoteSubscriptionSource(
 
   await db
     .prepare(
-      'INSERT INTO remote_subscription_sources (id, name, source_url, enabled, last_sync_at, last_sync_status, failure_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO remote_subscription_sources (id, name, source_url, enabled, last_sync_at, last_sync_status, last_sync_message, last_sync_details_json, failure_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
-    .bind(id, input.name, input.sourceUrl, input.enabled === false ? 0 : 1, null, null, 0, now, now)
+    .bind(id, input.name, input.sourceUrl, input.enabled === false ? 0 : 1, null, null, null, null, 0, now, now)
     .run();
 
   return (await getRemoteSubscriptionSourceById(db, id)) as RemoteSubscriptionSourceRecord;
@@ -682,14 +686,21 @@ export async function updateRemoteSubscriptionSource(
     return null;
   }
 
+  const sourceUrlChanged = input.sourceUrl !== undefined && input.sourceUrl !== current.sourceUrl;
+
   await db
     .prepare(
-      'UPDATE remote_subscription_sources SET name = ?, source_url = ?, enabled = ?, updated_at = ? WHERE id = ?'
+      'UPDATE remote_subscription_sources SET name = ?, source_url = ?, enabled = ?, last_sync_at = ?, last_sync_status = ?, last_sync_message = ?, last_sync_details_json = ?, failure_count = ?, updated_at = ? WHERE id = ?'
     )
     .bind(
       input.name ?? current.name,
       input.sourceUrl ?? current.sourceUrl,
       input.enabled === undefined ? (current.enabled ? 1 : 0) : input.enabled ? 1 : 0,
+      sourceUrlChanged ? null : (current.lastSyncAt ?? null),
+      sourceUrlChanged ? null : (current.lastSyncStatus ?? null),
+      sourceUrlChanged ? null : (current.lastSyncMessage ?? null),
+      sourceUrlChanged ? null : serializeJsonObject(current.lastSyncDetails),
+      sourceUrlChanged ? 0 : current.failureCount,
       new Date().toISOString(),
       id
     )
@@ -713,8 +724,8 @@ export async function recordRemoteSubscriptionSourceSync(
   db: D1Database,
   sourceId: string,
   status: Exclude<RemoteSubscriptionSourceRecord['lastSyncStatus'], null | undefined>,
-  _message: string,
-  _details?: Record<string, unknown> | null
+  message: string,
+  details?: Record<string, unknown> | null
 ): Promise<RemoteSubscriptionSourceRecord | null> {
   const now = new Date().toISOString();
   const current = await getRemoteSubscriptionSourceById(db, sourceId);
@@ -725,9 +736,17 @@ export async function recordRemoteSubscriptionSourceSync(
 
   await db
     .prepare(
-      'UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?'
+      'UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, last_sync_message = ?, last_sync_details_json = ?, failure_count = ?, updated_at = ? WHERE id = ?'
     )
-    .bind(now, status, status === 'failed' ? current.failureCount + 1 : 0, now, sourceId)
+    .bind(
+      now,
+      status,
+      message,
+      details ? JSON.stringify(details) : null,
+      status === 'failed' ? current.failureCount + 1 : 0,
+      now,
+      sourceId
+    )
     .run();
 
   return getRemoteSubscriptionSourceById(db, sourceId);

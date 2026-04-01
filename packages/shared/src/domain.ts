@@ -74,6 +74,8 @@ export interface RemoteSubscriptionSourceRecord extends TimestampedRecord {
   enabled: boolean;
   lastSyncAt?: string | null;
   lastSyncStatus?: SyncLogStatus | null;
+  lastSyncMessage?: string | null;
+  lastSyncDetails?: Record<string, JsonValue> | null;
   failureCount: number;
 }
 

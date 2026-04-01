@@ -20,6 +20,7 @@ import {
   type AdminRecord,
   type AppErrorShape,
   type JsonValue,
+  type NodeRecord,
   type NodeSourceType,
   type SubscriptionTarget,
   type UserRecord,
@@ -86,6 +87,12 @@ import {
   planNodeImport,
   type ImportedNodeInput
 } from './node-source';
+import {
+  createNodeChainValidationError,
+  createPendingNodeRecord,
+  findIntroducedNodeChainIssues,
+  mergeNodeRecords
+} from './node-chain-validation';
 import {
   runEnabledRemoteSubscriptionSourceSync,
   syncRemoteSubscriptionSourceNow
@@ -352,6 +359,10 @@ function readNullableSourceIdField(
     present: true,
     value: normalized ? normalized : null
   };
+}
+
+function toJsonRecord(value: Record<string, unknown> | null | undefined): Record<string, JsonValue> | null {
+  return value == null ? null : (value as Record<string, JsonValue>);
 }
 
 function validateDefaultTemplateState(input: {
@@ -1167,6 +1178,32 @@ async function handleNodes(request: Request, env: Env, adminId: string): Promise
       return fail(createAppError('VALIDATION_FAILED', metadataValidationError), 400);
     }
 
+    const currentNodes = await listNodes(env.DB);
+    const nextSourceType: NodeSourceType = sourceType === 'remote' || sourceType === 'manual' ? sourceType : 'manual';
+    const nextNode = createPendingNodeRecord({
+      id: '__pending_node__',
+      name,
+      protocol,
+      server,
+      port,
+      sourceType: nextSourceType,
+      enabled: enabled !== false,
+      ...(sourceIdInput.present ? { sourceId: sourceIdInput.value ?? null } : {}),
+      ...(credentialsInput.present && credentialsInput.value ? { credentials: toJsonRecord(credentialsInput.value) ?? undefined } : {}),
+      ...(paramsInput.present && paramsInput.value ? { params: toJsonRecord(paramsInput.value) ?? undefined } : {})
+    });
+    const introducedIssues = await findIntroducedNodeChainIssues(
+      env.DB,
+      currentNodes,
+      mergeNodeRecords(currentNodes, {
+        additions: [nextNode]
+      })
+    );
+
+    if (introducedIssues.length > 0) {
+      return fail(createNodeChainValidationError(introducedIssues, 'node.create'), 400);
+    }
+
     const node = await createNode(env.DB, {
       name,
       protocol,
@@ -1202,8 +1239,35 @@ async function handleNodeImport(request: Request, env: Env, adminId: string): Pr
   const rawNodes = getRawNodeImportItems(body);
   const importedNodes = parseImportedNodeInputs(rawNodes);
   const { nodes: dedupedNodes, duplicateCount } = normalizeImportedNodes(importedNodes, 'manual');
+  const currentNodes = await listNodes(env.DB);
   const existingManualNodes = await listNodesBySource(env.DB, 'manual');
   const plan = planNodeImport(existingManualNodes, dedupedNodes);
+  const introducedIssues = await findIntroducedNodeChainIssues(
+    env.DB,
+    currentNodes,
+    mergeNodeRecords(currentNodes, {
+      replacements: plan.updated.map((update) =>
+        createPendingNodeRecord({
+          ...update.current,
+          ...update.next,
+          id: update.current.id,
+          createdAt: update.current.createdAt,
+          updatedAt: update.current.updatedAt,
+          ...(update.current.lastSyncAt !== undefined ? { lastSyncAt: update.current.lastSyncAt } : {})
+        })
+      ),
+      additions: plan.created.map((node, index) =>
+        createPendingNodeRecord({
+          id: `__pending_import_node_${index}__`,
+          ...node
+        })
+      )
+    })
+  );
+
+  if (introducedIssues.length > 0) {
+    return fail(createNodeChainValidationError(introducedIssues, 'node.import'), 400);
+  }
 
   for (const node of plan.created) {
     await createNode(env.DB, node);
@@ -1312,8 +1376,57 @@ async function handleNodeById(request: Request, env: Env, adminId: string, nodeI
       return fail(createAppError('VALIDATION_FAILED', metadataValidationError), 400);
     }
 
+    const currentNodes = await listNodes(env.DB);
     const shouldClearSourceIdOnManualSwitch =
       nextSourceType === 'manual' && currentNode.sourceType !== 'manual' && !nextSourceId.present;
+    const nextNode = createPendingNodeRecord({
+      ...currentNode,
+      ...(nextName ? { name: nextName } : {}),
+      ...(nextProtocol ? { protocol: nextProtocol } : {}),
+      ...(nextServer ? { server: nextServer } : {}),
+      ...(port !== undefined ? { port } : {}),
+      ...(nextSourceType ? { sourceType: nextSourceType as NodeSourceType } : {}),
+      ...(nextEnabled !== undefined ? { enabled: nextEnabled } : {})
+    });
+
+    if (nextSourceId.present) {
+      if (nextSourceId.value === null) {
+        delete nextNode.sourceId;
+      } else {
+        nextNode.sourceId = nextSourceId.value;
+      }
+    } else if (shouldClearSourceIdOnManualSwitch) {
+      delete nextNode.sourceId;
+    }
+
+    if (nextCredentials.present) {
+      if (nextCredentials.value === null) {
+        delete nextNode.credentials;
+      } else {
+        nextNode.credentials = toJsonRecord(nextCredentials.value) ?? undefined;
+      }
+    }
+
+    if (nextParams.present) {
+      if (nextParams.value === null) {
+        delete nextNode.params;
+      } else {
+        nextNode.params = toJsonRecord(nextParams.value) ?? undefined;
+      }
+    }
+
+    const introducedIssues = await findIntroducedNodeChainIssues(
+      env.DB,
+      currentNodes,
+      mergeNodeRecords(currentNodes, {
+        replacements: [nextNode]
+      })
+    );
+
+    if (introducedIssues.length > 0) {
+      return fail(createNodeChainValidationError(introducedIssues, 'node.update'), 400);
+    }
+
     const node = await updateNode(env.DB, nodeId, {
       ...(nextName ? { name: nextName } : {}),
       ...(nextProtocol ? { protocol: nextProtocol } : {}),

@@ -5,6 +5,7 @@ import type { Env } from './env';
 import {
   createNode,
   listEnabledRemoteSubscriptionSources,
+  listNodes,
   listNodesBySource,
   listUserNodeBindings,
   listUsersByNodeId,
@@ -12,6 +13,12 @@ import {
   replaceUserNodes,
   updateNode
 } from './repository';
+import {
+  createNodeChainValidationError,
+  createPendingNodeRecord,
+  findIntroducedNodeChainIssues,
+  mergeNodeRecords
+} from './node-chain-validation';
 import { normalizeImportedNodes, planRemoteNodeSync, type ImportedNodeInput } from './node-source';
 import { fetchText } from './sync';
 
@@ -91,7 +98,10 @@ export async function syncRemoteSubscriptionSourceNow(
 ): Promise<RemoteSubscriptionSourceSyncResult> {
   const importedAt = new Date().toISOString();
   const startedAt = Date.now();
-  const existingSourceNodes = await listNodesBySource(env.DB, 'remote', source.id);
+  const currentNodes = await listNodes(env.DB);
+  const existingSourceNodes = currentNodes.filter(
+    (node) => node.sourceType === 'remote' && (node.sourceId ?? null) === source.id
+  );
   const existingSourceNodeIds = existingSourceNodes.map((node) => node.id);
   const affectedUsers = await listAffectedUsersByNodeIds(env, existingSourceNodeIds);
   let upstream: Awaited<ReturnType<typeof fetchText>> | null = null;
@@ -179,6 +189,81 @@ export async function syncRemoteSubscriptionSourceNow(
     const { nodes: dedupedNodes, duplicateCount } = normalizeImportedNodes(importedNodes, 'remote', source.id);
     const plan = planRemoteNodeSync(existingSourceNodes, dedupedNodes);
     const staleToDisable = plan.stale.filter((node) => node.enabled);
+    const introducedIssues = await findIntroducedNodeChainIssues(
+      env.DB,
+      currentNodes,
+      mergeNodeRecords(currentNodes, {
+        replacements: [
+          ...plan.updated.map((update) =>
+            createPendingNodeRecord({
+              ...update.current,
+              ...update.next,
+              id: update.current.id,
+              createdAt: update.current.createdAt,
+              updatedAt: update.current.updatedAt,
+              lastSyncAt: importedAt
+            })
+          ),
+          ...staleToDisable.map((node) =>
+            createPendingNodeRecord({
+              ...node,
+              enabled: false,
+              lastSyncAt: importedAt
+            })
+          )
+        ],
+        additions: plan.created.map((node, index) =>
+          createPendingNodeRecord({
+            id: `__pending_remote_node_${source.id}_${index}__`,
+            ...node,
+            lastSyncAt: importedAt
+          })
+        )
+      })
+    );
+
+    if (introducedIssues.length > 0) {
+      const validationError = createNodeChainValidationError(
+        introducedIssues,
+        'remote_subscription_source.sync'
+      );
+      const details = toDetailsRecord({
+        sourceUrl: source.sourceUrl,
+        durationMs: Date.now() - startedAt,
+        upstreamStatus: upstream.status,
+        fetchedBytes: upstream.fetchedBytes,
+        ...(upstream.contentType ? { contentType: upstream.contentType } : {}),
+        lineCount: parsed.lineCount,
+        contentEncoding: parsed.contentEncoding,
+        importedCount: dedupedNodes.length,
+        duplicateCount,
+        errorCount: parsed.errors.length + introducedIssues.length,
+        ...(parsed.errors.length > 0 ? { errorSummary: parsed.errors.slice(0, 5).join(' | ') } : {}),
+        ...(validationError.details as Record<string, JsonValue>),
+        reason: validationError.message
+      });
+      await recordRemoteSubscriptionSourceSync(env.DB, source.id, 'failed', validationError.message, details);
+
+      return {
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceUrl: source.sourceUrl,
+        status: 'failed',
+        message: validationError.message,
+        changed: false,
+        importedAt,
+        importedCount: dedupedNodes.length,
+        createdCount: 0,
+        updatedCount: 0,
+        unchangedCount: 0,
+        duplicateCount,
+        disabledCount: 0,
+        errorCount: parsed.errors.length + introducedIssues.length,
+        lineCount: parsed.lineCount,
+        contentEncoding: parsed.contentEncoding,
+        details
+      };
+    }
 
     for (const node of plan.created) {
       await createNode(env.DB, {

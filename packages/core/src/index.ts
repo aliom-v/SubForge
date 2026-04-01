@@ -1,6 +1,7 @@
 export * from './bootstrap';
 export * from './compile';
 export * from './models';
+export * from './node-chain';
 export * from './node-diagnostics';
 export * from './node-import';
 export * from './node-protocol-validation';

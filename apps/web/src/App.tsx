@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
   getServiceMetadata,
-  parseMihomoTemplateStructure
+  parseMihomoTemplateStructure,
+  validateNodeChains
 } from '@subforge/core';
 import {
   SUBSCRIPTION_TARGETS,
+  type JsonValue,
   type NodeRecord,
   type RemoteSubscriptionSourceRecord,
   type SubscriptionTarget,
@@ -30,9 +32,11 @@ import {
   createRemoteSubscriptionSource,
   deleteRemoteSubscriptionSource,
   fetchRemoteSubscriptionSources,
+  isAppApiError,
   replaceUserNodeBindings,
   resetHostedSubscriptionToken,
   syncRemoteSubscriptionSource,
+  updateNode,
   updateRemoteSubscriptionSource,
   updateTemplate,
   updateUser,
@@ -59,6 +63,7 @@ import {
   buildRemoteSubscriptionSourceSyncMessage,
   getHostedSyncStatusLabel
 } from './workflow-feedback';
+import { getRemoteSyncNodeChainDiagnostics } from './remote-sync-diagnostics';
 import {
   runConfigImportWorkflow,
   runHostedGenerationWorkflow,
@@ -93,6 +98,18 @@ interface ResourceState {
 interface RemoteSubscriptionSourceForm {
   name: string;
   sourceUrl: string;
+}
+
+interface NodeEditorState {
+  nodeId: string;
+  name: string;
+  protocol: string;
+  server: string;
+  port: string;
+  enabled: boolean;
+  upstreamProxy: string;
+  credentialsText: string;
+  paramsText: string;
 }
 
 const emptyResources: ResourceState = {
@@ -186,6 +203,8 @@ export function App(): JSX.Element {
   const [remoteNodeImportPreview, setRemoteNodeImportPreview] = useState<NodeImportPreviewPayload | null>(null);
   const [remoteSubscriptionSourceForm, setRemoteSubscriptionSourceForm] =
     useState<RemoteSubscriptionSourceForm>(emptyRemoteSubscriptionSourceForm);
+  const [nodeEditor, setNodeEditor] = useState<NodeEditorState | null>(null);
+  const [nodeEditorIssues, setNodeEditorIssues] = useState<string[]>([]);
 
   const summary = useMemo(
     () => [
@@ -202,6 +221,24 @@ export function App(): JSX.Element {
   const hostedSubscriptionSyncStatus = useMemo(
     () => getHostedSubscriptionSyncStatus(hostedSubscriptionResult, resources.nodes),
     [hostedSubscriptionResult, resources.nodes]
+  );
+  const latestPersistedRemoteSyncSource = useMemo(
+    () =>
+      [...resources.remoteSubscriptionSources]
+        .filter((source) => source.lastSyncAt)
+        .sort((left, right) => Date.parse(right.lastSyncAt ?? '') - Date.parse(left.lastSyncAt ?? ''))[0] ?? null,
+    [resources.remoteSubscriptionSources]
+  );
+  const effectiveRemoteSyncSourceName = remoteSubscriptionSyncResult?.sourceName ?? latestPersistedRemoteSyncSource?.name ?? null;
+  const effectiveRemoteSyncStatus =
+    remoteSubscriptionSyncResult?.status ?? latestPersistedRemoteSyncSource?.lastSyncStatus ?? null;
+  const effectiveRemoteSyncMessage =
+    remoteSubscriptionSyncResult?.message ?? latestPersistedRemoteSyncSource?.lastSyncMessage ?? null;
+  const effectiveRemoteSyncAt =
+    remoteSubscriptionSyncResult?.importedAt ?? latestPersistedRemoteSyncSource?.lastSyncAt ?? null;
+  const remoteSyncNodeChainDiagnostics = useMemo(
+    () => getRemoteSyncNodeChainDiagnostics(remoteSubscriptionSyncResult ?? latestPersistedRemoteSyncSource),
+    [latestPersistedRemoteSyncSource, remoteSubscriptionSyncResult]
   );
   const singleUserWorkflowSteps = useMemo(
     () =>
@@ -259,6 +296,21 @@ export function App(): JSX.Element {
     () => buildNodeChainSummaries(resources.nodes, mihomoTopology.proxyGroups, mihomoTopology.proxyProviders),
     [mihomoTopology.proxyGroups, mihomoTopology.proxyProviders, resources.nodes]
   );
+  const editingNodeSummary = useMemo(
+    () => (nodeEditor ? nodeChainSummaries.find((item) => item.nodeId === nodeEditor.nodeId) ?? null : null),
+    [nodeChainSummaries, nodeEditor]
+  );
+  const nodeEditorUpstreamOptions = useMemo(
+    () => (nodeEditor ? buildNodeUpstreamOptions(resources.nodes, nodeEditor) : []),
+    [nodeEditor, resources.nodes]
+  );
+  const nodeEditorHasLegacyUpstream = useMemo(() => {
+    if (!nodeEditor?.upstreamProxy.trim()) {
+      return false;
+    }
+
+    return nodeEditorUpstreamOptions.some((option) => option.value === nodeEditor.upstreamProxy && option.legacy);
+  }, [nodeEditor, nodeEditorUpstreamOptions]);
 
   function reportValidationError(messageText: string): void {
     setMessage('');
@@ -724,6 +776,141 @@ export function App(): JSX.Element {
     await withAction(async () => {
       await deleteNode(token, nodeId);
     }, '节点已删除');
+
+    if (nodeEditor?.nodeId === nodeId) {
+      setNodeEditor(null);
+      setNodeEditorIssues([]);
+    }
+  }
+
+  function handleStartEditingNode(node: NodeRecord): void {
+    setNodeEditor(createNodeEditorState(node));
+    setNodeEditorIssues([]);
+    setError('');
+  }
+
+  function handleCancelNodeEditor(): void {
+    setNodeEditor(null);
+    setNodeEditorIssues([]);
+  }
+
+  async function handleToggleNodeEnabled(node: NodeRecord): Promise<void> {
+    if (!token) return;
+
+    setNodeEditorIssues([]);
+
+    await withAction(
+      () =>
+        updateNode(token, node.id, {
+          enabled: !node.enabled
+        }),
+      node.enabled ? '节点已禁用' : '节点已启用'
+    );
+
+    if (nodeEditor?.nodeId === node.id) {
+      setNodeEditor((current) => (current ? { ...current, enabled: !node.enabled } : current));
+    }
+  }
+
+  async function handleSaveNodeEditor(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+
+    if (!token || !nodeEditor) {
+      return;
+    }
+
+    const currentNode = resources.nodes.find((node) => node.id === nodeEditor.nodeId);
+
+    if (!currentNode) {
+      setNodeEditorIssues(['当前编辑的节点已不存在，请刷新后重试']);
+      return;
+    }
+
+    const name = nodeEditor.name.trim();
+    const protocol = nodeEditor.protocol.trim();
+    const server = nodeEditor.server.trim();
+    const port = Number(nodeEditor.port);
+
+    if (!name || !protocol || !server) {
+      setNodeEditorIssues(['名称、协议、地址不能为空']);
+      return;
+    }
+
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setNodeEditorIssues(['端口必须是 1 到 65535 的整数']);
+      return;
+    }
+
+    let credentials: Record<string, JsonValue> | null;
+    let paramsDraft: Record<string, JsonValue> | null;
+
+    try {
+      credentials = parseOptionalJsonObjectInput(nodeEditor.credentialsText, 'credentials');
+      paramsDraft = parseOptionalJsonObjectInput(nodeEditor.paramsText, 'params');
+    } catch (caughtError) {
+      setNodeEditorIssues([getErrorMessage(caughtError)]);
+      return;
+    }
+
+    const params = buildNodeEditorParams(paramsDraft, nodeEditor.upstreamProxy);
+    const nextNode = buildNodeEditorDraft(currentNode, {
+      ...nodeEditor,
+      name,
+      protocol,
+      server
+    }, port, credentials, params);
+    const currentValidation = validateNodeChains({
+      nodes: resources.nodes,
+      proxyGroups: mihomoTopology.proxyGroups,
+      proxyProviders: mihomoTopology.proxyProviders,
+      includeDisabledNodes: true,
+      allowProxyGroups: true,
+      allowBuiltinReferences: true
+    });
+    const nextValidation = validateNodeChains({
+      nodes: resources.nodes.map((node) => node.id === currentNode.id ? nextNode : node),
+      proxyGroups: mihomoTopology.proxyGroups,
+      proxyProviders: mihomoTopology.proxyProviders,
+      includeDisabledNodes: true,
+      allowProxyGroups: true,
+      allowBuiltinReferences: true
+    });
+    const currentIssueKeys = new Set(currentValidation.issues.map(buildNodeChainIssueKey));
+    const introducedIssues = nextValidation.issues.filter((issue) => !currentIssueKeys.has(buildNodeChainIssueKey(issue)));
+
+    if (introducedIssues.length > 0) {
+      setNodeEditorIssues(introducedIssues.map((issue) => issue.message));
+      setError('');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setNodeEditorIssues([]);
+
+    try {
+      await updateNode(token, currentNode.id, {
+        name,
+        protocol,
+        server,
+        port,
+        enabled: nodeEditor.enabled,
+        credentials,
+        params
+      });
+      await refreshResources();
+      setNodeEditor(null);
+      setMessage(`节点“${name}”已更新`);
+    } catch (caughtError) {
+      if (isAppApiError(caughtError) && caughtError.details?.scope === 'node_chain') {
+        setNodeEditorIssues(extractNodeChainIssueMessages(caughtError.details?.issues));
+        setError('');
+      } else {
+        await handleProtectedApiError(caughtError);
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleSaveRemoteSubscriptionSource(): Promise<void> {
@@ -822,6 +1009,9 @@ export function App(): JSX.Element {
 
     await withAction(async () => {
       await deleteRemoteSubscriptionSource(token, source.id);
+      if (remoteSubscriptionSyncResult?.sourceId === source.id) {
+        setRemoteSubscriptionSyncResult(null);
+      }
     }, '自动同步源已删除');
   }
 
@@ -1182,31 +1372,57 @@ export function App(): JSX.Element {
                   )}
                 </>
               ) : null}
-              {remoteSubscriptionSyncResult ? (
+              {effectiveRemoteSyncSourceName && effectiveRemoteSyncStatus ? (
                 <div className="metadata-grid full-span">
                   <div className="result-card">
                     <strong>最近一次自动同步</strong>
-                    <span>{remoteSubscriptionSyncResult.sourceName}</span>
-                    <span>状态 {remoteSubscriptionSyncResult.status}</span>
-                    <span>节点 {remoteSubscriptionSyncResult.importedCount}</span>
-                    <span>
-                      变更 {remoteSubscriptionSyncResult.createdCount} / {remoteSubscriptionSyncResult.updatedCount} /{' '}
-                      {remoteSubscriptionSyncResult.disabledCount}
-                    </span>
+                    <span>{effectiveRemoteSyncSourceName}</span>
+                    <span>状态 {effectiveRemoteSyncStatus}</span>
+                    {effectiveRemoteSyncAt ? <span>时间 {effectiveRemoteSyncAt}</span> : null}
+                    {effectiveRemoteSyncMessage ? <span>{effectiveRemoteSyncMessage}</span> : null}
+                    {remoteSubscriptionSyncResult ? (
+                      <>
+                        <span>节点 {remoteSubscriptionSyncResult.importedCount}</span>
+                        <span>
+                          变更 {remoteSubscriptionSyncResult.createdCount} / {remoteSubscriptionSyncResult.updatedCount} /{' '}
+                          {remoteSubscriptionSyncResult.disabledCount}
+                        </span>
+                      </>
+                    ) : (
+                      latestPersistedRemoteSyncSource ? <span>失败次数 {latestPersistedRemoteSyncSource.failureCount}</span> : null
+                    )}
                   </div>
                 </div>
+              ) : null}
+              {remoteSyncNodeChainDiagnostics ? (
+                <details className="full-span" open>
+                  <summary>链式代理校验详情（{remoteSyncNodeChainDiagnostics.issueCount}）</summary>
+                  <div className="metadata-grid">
+                    {remoteSyncNodeChainDiagnostics.issues.map((issue) => (
+                      <div className="result-card" key={`${issue.nodeId}:${issue.kind}:${issue.reference ?? ''}`}>
+                        <strong>{issue.nodeName}</strong>
+                        <span>类型 {issue.kind}</span>
+                        {issue.reference ? <span>引用 {issue.reference}</span> : null}
+                        {issue.upstreamProxy ? <span>上游 {issue.upstreamProxy}</span> : null}
+                        {issue.chain ? <span>链路 {issue.chain}</span> : null}
+                        <span>{issue.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
               ) : null}
               <div className="full-span">
                 <strong>已保存的自动同步源</strong>
               </div>
               {resources.remoteSubscriptionSources.length > 0 ? (
                 <ResourceTable
-                  columns={['同步源', '上游 URL', '状态', '最近同步', '失败次数', '操作']}
+                  columns={['同步源', '上游 URL', '状态', '最近同步', '最近结果', '失败次数', '操作']}
                   rows={resources.remoteSubscriptionSources.map((source) => [
                     source.name,
                     source.sourceUrl,
                     `${source.enabled ? 'enabled' : 'paused'} / ${source.lastSyncStatus ?? 'never'}`,
                     source.lastSyncAt ?? 'never',
+                    source.lastSyncMessage ?? '-',
                     source.failureCount,
                     <div className="inline-actions" key={source.id}>
                       <button type="button" className="secondary" onClick={() => void handleSyncSavedRemoteSubscriptionSource(source)}>
@@ -1337,6 +1553,114 @@ export function App(): JSX.Element {
 
           <article className="panel full-width">
             <h2>节点列表</h2>
+            <p className="helper">
+              现在可以直接在这里编辑节点、切换启用状态和调整节点级链式代理。内置编辑器默认只提供节点级上游，避免 Mihomo 和 sing-box 再次跑偏。
+            </p>
+            {nodeEditor ? (
+              <div className="result-card full-span">
+                <strong>当前编辑：{nodeEditor.name || '未命名节点'}</strong>
+                <div className="inline-meta">
+                  <span>已保存链路：{editingNodeSummary?.chain ?? '未找到'}</span>
+                  <span>当前状态：{editingNodeSummary?.issue ?? '正常'}</span>
+                </div>
+                {nodeEditorHasLegacyUpstream ? (
+                  <p className="helper">
+                    当前上游是历史引用值。你可以先保留，但更推荐改成具体节点或 `direct`，这样 Mihomo / sing-box 的行为会更一致。
+                  </p>
+                ) : null}
+                {nodeEditorIssues.length > 0 ? (
+                  <div className="import-errors">
+                    <strong>保存前需处理的问题</strong>
+                    <ul className="overview-list">
+                      {nodeEditorIssues.map((issue) => <li key={issue}>{issue}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+                <form className="form-grid" onSubmit={(event) => void handleSaveNodeEditor(event)}>
+                  <Field label="名称">
+                    <input
+                      value={nodeEditor.name}
+                      onChange={(event) => setNodeEditor((current) => current ? { ...current, name: event.target.value } : current)}
+                      placeholder="节点名称"
+                    />
+                  </Field>
+                  <Field label="协议">
+                    <input
+                      value={nodeEditor.protocol}
+                      onChange={(event) => setNodeEditor((current) => current ? { ...current, protocol: event.target.value } : current)}
+                      placeholder="vless / trojan / ss / hysteria2"
+                    />
+                  </Field>
+                  <Field label="地址">
+                    <input
+                      value={nodeEditor.server}
+                      onChange={(event) => setNodeEditor((current) => current ? { ...current, server: event.target.value } : current)}
+                      placeholder="example.com"
+                    />
+                  </Field>
+                  <Field label="端口">
+                    <input
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={nodeEditor.port}
+                      onChange={(event) => setNodeEditor((current) => current ? { ...current, port: event.target.value } : current)}
+                      placeholder="443"
+                    />
+                  </Field>
+                  <Field label="启用状态">
+                    <select
+                      value={nodeEditor.enabled ? 'enabled' : 'disabled'}
+                      onChange={(event) =>
+                        setNodeEditor((current) => current ? { ...current, enabled: event.target.value === 'enabled' } : current)}
+                    >
+                      <option value="enabled">enabled</option>
+                      <option value="disabled">disabled</option>
+                    </select>
+                  </Field>
+                  <Field label="上游代理">
+                    <select
+                      value={nodeEditor.upstreamProxy}
+                      onChange={(event) => setNodeEditor((current) => current ? { ...current, upstreamProxy: event.target.value } : current)}
+                    >
+                      <option value="">direct</option>
+                      {nodeEditorUpstreamOptions.map((option) => (
+                        <option key={`${option.value}-${option.label}`} value={option.value} disabled={option.disabled}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="credentials JSON" full>
+                    <textarea
+                      rows={8}
+                      value={nodeEditor.credentialsText}
+                      onChange={(event) =>
+                        setNodeEditor((current) => current ? { ...current, credentialsText: event.target.value } : current)}
+                      placeholder='{"uuid":"..."}'
+                    />
+                  </Field>
+                  <Field label="params JSON" full>
+                    <textarea
+                      rows={8}
+                      value={nodeEditor.paramsText}
+                      onChange={(event) => setNodeEditor((current) => current ? { ...current, paramsText: event.target.value } : current)}
+                      placeholder='{"tls":true,"servername":"example.com"}'
+                    />
+                  </Field>
+                  <div className="inline-actions full-span">
+                    <button type="submit" disabled={loading}>
+                      {loading ? '保存中...' : '保存节点'}
+                    </button>
+                    <button type="button" className="secondary" disabled={loading} onClick={() => handleCancelNodeEditor()}>
+                      取消
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <p className="helper">点下方节点列表里的“编辑”，即可修改节点名字、启用状态和上游代理。</p>
+            )}
             <ResourceTable
               columns={['名称', '协议', '地址', '端口', '来源', '元数据', '状态', '操作']}
               rows={resources.nodes.map((node) => [
@@ -1348,6 +1672,10 @@ export function App(): JSX.Element {
                 summarizeNodeMetadata(node),
                 node.enabled ? 'enabled' : 'disabled',
                 <div className="inline-actions" key={node.id}>
+                  <button type="button" onClick={() => handleStartEditingNode(node)}>编辑</button>
+                  <button type="button" className="secondary" onClick={() => void handleToggleNodeEnabled(node)}>
+                    {node.enabled ? '禁用' : '启用'}
+                  </button>
                   <button type="button" className="danger" onClick={() => void handleDeleteNode(node.id)}>删除</button>
                 </div>
               ])}
@@ -1384,6 +1712,159 @@ function selectPreferredMihomoTemplate(templates: TemplateRecord[]): TemplateRec
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function createNodeEditorState(node: NodeRecord): NodeEditorState {
+  const upstreamProxy = typeof node.params?.upstreamProxy === 'string' ? node.params.upstreamProxy.trim() : '';
+  const paramsText = node.params
+    ? JSON.stringify(
+      Object.fromEntries(Object.entries(node.params).filter(([key]) => key !== 'upstreamProxy')),
+      null,
+      2
+    )
+    : '';
+
+  return {
+    nodeId: node.id,
+    name: node.name,
+    protocol: node.protocol,
+    server: node.server,
+    port: String(node.port),
+    enabled: node.enabled,
+    upstreamProxy,
+    credentialsText: node.credentials ? JSON.stringify(node.credentials, null, 2) : '',
+    paramsText: paramsText === '{}' ? '' : paramsText
+  };
+}
+
+function parseOptionalJsonObjectInput(value: string, fieldName: string): Record<string, JsonValue> | null {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(`${fieldName} 必须是合法 JSON 对象`);
+  }
+
+  if (parsed === null) {
+    return null;
+  }
+
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${fieldName} 必须是 JSON 对象`);
+  }
+
+  return parsed as Record<string, JsonValue>;
+}
+
+function buildNodeEditorParams(params: Record<string, JsonValue> | null, upstreamProxy: string): Record<string, JsonValue> | null {
+  const nextParams = { ...(params ?? {}) };
+  delete nextParams.upstreamProxy;
+
+  if (upstreamProxy.trim()) {
+    nextParams.upstreamProxy = upstreamProxy.trim();
+  }
+
+  return Object.keys(nextParams).length > 0 ? nextParams : null;
+}
+
+function buildNodeEditorDraft(
+  currentNode: NodeRecord,
+  editor: Pick<NodeEditorState, 'name' | 'protocol' | 'server' | 'enabled'>,
+  port: number,
+  credentials: Record<string, JsonValue> | null,
+  params: Record<string, JsonValue> | null
+): NodeRecord {
+  const nextNode: NodeRecord = {
+    ...currentNode,
+    name: editor.name,
+    protocol: editor.protocol,
+    server: editor.server,
+    port,
+    enabled: editor.enabled
+  };
+
+  if (credentials) {
+    nextNode.credentials = credentials;
+  } else {
+    delete nextNode.credentials;
+  }
+
+  if (params) {
+    nextNode.params = params;
+  } else {
+    delete nextNode.params;
+  }
+
+  return nextNode;
+}
+
+function buildNodeChainIssueKey(issue: { nodeId: string; kind: string; reference?: string | null; message: string }): string {
+  return [issue.nodeId, issue.kind, issue.reference ?? '', issue.message].join('::');
+}
+
+function extractNodeChainIssueMessages(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return ['节点链路校验失败'];
+  }
+
+  const messages = value.flatMap((item) => {
+    if (typeof item === 'object' && item !== null && 'message' in item && typeof item.message === 'string') {
+      return [item.message];
+    }
+
+    return [];
+  });
+
+  return messages.length > 0 ? messages : ['节点链路校验失败'];
+}
+
+function buildNodeUpstreamOptions(
+  nodes: NodeRecord[],
+  editor: Pick<NodeEditorState, 'nodeId' | 'upstreamProxy'>
+): Array<{ value: string; label: string; disabled?: boolean; legacy?: boolean }> {
+  const grouped = new Map<string, { enabled: boolean; count: number }>();
+
+  for (const node of nodes) {
+    if (node.id === editor.nodeId) {
+      continue;
+    }
+
+    const name = node.name.trim();
+
+    if (!name) {
+      continue;
+    }
+
+    const current = grouped.get(name) ?? { enabled: false, count: 0 };
+    grouped.set(name, {
+      enabled: current.enabled || node.enabled,
+      count: current.count + 1
+    });
+  }
+
+  const options: Array<{ value: string; label: string; disabled?: boolean; legacy?: boolean }> = [...grouped.entries()].map(([name, info]) => ({
+    value: name,
+    label: info.count > 1 ? `${name}（同名 ${info.count} 个）` : `${name}${info.enabled ? '' : '（已禁用）'}`,
+    disabled: !info.enabled
+  }));
+  const currentUpstream = editor.upstreamProxy.trim();
+
+  if (currentUpstream && !grouped.has(currentUpstream)) {
+    options.unshift({
+      value: currentUpstream,
+      label: `当前值（历史引用）: ${currentUpstream}`,
+      legacy: true
+    });
+  }
+
+  return options;
 }
 
 function buildAutoHostedTemplateContent(

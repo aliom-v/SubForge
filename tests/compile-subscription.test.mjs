@@ -180,6 +180,170 @@ test('compileSubscription falls back to MATCH,DIRECT when rules are empty', () =
   assert.match(result.data.content, /MATCH,DIRECT/);
 });
 
+test('compileSubscription rejects missing upstream references', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_missing_upstream',
+          name: 'HK Chain',
+          protocol: 'vless',
+          server: 'hk-chain.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          },
+          params: {
+            tls: true,
+            upstreamProxy: 'Transit Missing'
+          }
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.ok, false);
+
+  if (result.ok) {
+    throw new Error('expected failure for missing upstream reference');
+  }
+
+  assert.equal(result.error.code, 'VALIDATION_FAILED');
+  assert.equal(result.error.details?.scope, 'node_chain');
+  assert.equal(result.error.details?.issueCount, 1);
+  assert.equal(result.error.details?.issues?.[0]?.kind, 'missing_reference');
+  assert.equal(result.error.details?.issues?.[0]?.reference, 'Transit Missing');
+});
+
+test('compileSubscription rejects self-referential upstream nodes', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_self',
+          name: 'Self Chain',
+          protocol: 'vless',
+          server: 'self-chain.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          },
+          params: {
+            tls: true,
+            upstreamProxy: 'Self Chain'
+          }
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.ok, false);
+
+  if (result.ok) {
+    throw new Error('expected failure for self-referential upstream');
+  }
+
+  assert.equal(result.error.code, 'VALIDATION_FAILED');
+  assert.equal(result.error.details?.issues?.[0]?.kind, 'self_reference');
+  assert.equal(result.error.details?.issues?.[0]?.reference, 'Self Chain');
+});
+
+test('compileSubscription rejects cyclic upstream nodes', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_cycle_a',
+          name: 'Cycle A',
+          protocol: 'trojan',
+          server: 'cycle-a.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            password: 'replace-me'
+          },
+          params: {
+            upstreamProxy: 'Cycle B'
+          }
+        },
+        {
+          id: 'node_cycle_b',
+          name: 'Cycle B',
+          protocol: 'vless',
+          server: 'cycle-b.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          },
+          params: {
+            tls: true,
+            upstreamProxy: 'Cycle A'
+          }
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.ok, false);
+
+  if (result.ok) {
+    throw new Error('expected failure for cyclic upstream nodes');
+  }
+
+  assert.equal(result.error.code, 'VALIDATION_FAILED');
+  assert.equal(result.error.details?.scope, 'node_chain');
+  assert.ok((result.error.details?.issueCount ?? 0) >= 1);
+  assert.ok(result.error.details?.issues?.some((issue) => issue.kind === 'node_cycle'));
+});
+
+test('compileSubscription rejects disabled upstream nodes', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_disabled_parent',
+          name: 'Transit Disabled',
+          protocol: 'trojan',
+          server: 'transit-disabled.example.com',
+          port: 443,
+          enabled: false,
+          credentials: {
+            password: 'replace-me'
+          }
+        },
+        {
+          id: 'node_enabled_child',
+          name: 'HK Child',
+          protocol: 'vless',
+          server: 'hk-child.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          },
+          params: {
+            tls: true,
+            upstreamProxy: 'Transit Disabled'
+          }
+        }
+      ]
+    })
+  );
+
+  assert.equal(result.ok, false);
+
+  if (result.ok) {
+    throw new Error('expected failure for disabled upstream node');
+  }
+
+  assert.equal(result.error.code, 'VALIDATION_FAILED');
+  assert.equal(result.error.details?.issues?.[0]?.kind, 'disabled_upstream');
+  assert.equal(result.error.details?.issues?.[0]?.reference, 'Transit Disabled');
+});
+
 test('compileSubscription maps upstreamProxy to dialer-proxy for mihomo output', () => {
   const result = compileSubscription(
     createCompileInput({
@@ -320,6 +484,17 @@ test('compileSubscription maps detour and transport fields for sing-box template
       target: 'singbox',
       nodes: [
         {
+          id: 'node_transit_singbox',
+          name: 'Transit',
+          protocol: 'trojan',
+          server: 'transit.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            password: 'replace-me'
+          }
+        },
+        {
           id: 'node_singbox',
           name: 'HK TUIC',
           protocol: 'tuic',
@@ -362,16 +537,18 @@ test('compileSubscription maps detour and transport fields for sing-box template
   }
 
   const parsed = JSON.parse(result.data.content);
+  const outbound = parsed.outbounds.find((item) => item.tag === 'HK TUIC');
 
-  assert.equal(parsed.outbounds[0].detour, 'Transit');
-  assert.equal(parsed.outbounds[0].tls.server_name, 'sub.example.com');
-  assert.deepEqual(parsed.outbounds[0].tls.alpn, ['h3']);
-  assert.equal(parsed.outbounds[0].tls.insecure, true);
-  assert.equal(parsed.outbounds[0].congestion_control, 'bbr');
-  assert.equal(parsed.outbounds[0].udp_relay_mode, 'native');
-  assert.equal(parsed.outbounds[0].disable_sni, true);
-  assert.equal(parsed.outbounds[0].request_timeout, 8000);
-  assert.equal(parsed.outbounds[0].zero_rtt_handshake, true);
+  assert.ok(outbound);
+  assert.equal(outbound.detour, 'Transit');
+  assert.equal(outbound.tls.server_name, 'sub.example.com');
+  assert.deepEqual(outbound.tls.alpn, ['h3']);
+  assert.equal(outbound.tls.insecure, true);
+  assert.equal(outbound.congestion_control, 'bbr');
+  assert.equal(outbound.udp_relay_mode, 'native');
+  assert.equal(outbound.disable_sni, true);
+  assert.equal(outbound.request_timeout, 8000);
+  assert.equal(outbound.zero_rtt_handshake, true);
 });
 
 test('compileSubscription preserves ssr and hysteria2 metadata in mihomo output', () => {
@@ -453,6 +630,77 @@ test('compileSubscription preserves ssr and hysteria2 metadata in mihomo output'
   assert.match(result.data.content, /\n\s+down: "160"/);
   assert.match(result.data.content, /upmbps: "100"/);
   assert.match(result.data.content, /downmbps: "200"/);
+});
+
+test('compileSubscription removes stale static proxy-group references from imported mihomo templates', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      target: 'mihomo',
+      nodes: [
+        {
+          id: 'node_hk_01',
+          name: 'HK Edge 01',
+          protocol: 'vless',
+          server: 'hk-01.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            uuid: '11111111-1111-1111-1111-111111111111'
+          }
+        },
+        {
+          id: 'node_us_01',
+          name: 'US Edge 01',
+          protocol: 'trojan',
+          server: 'us-01.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            password: 'replace-me'
+          }
+        }
+      ],
+      ruleSets: [],
+      template: {
+        id: 'tpl_mihomo_imported',
+        name: 'Imported Mihomo',
+        target: 'mihomo',
+        content: `mixed-port: 7890
+proxies:
+{{proxies}}
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - DIRECT
+      - "HK Edge 01"
+      - "US Edge 01"
+      - "Stale Edge 01"
+  - name: "⚡ 自动选择"
+    type: url-test
+    proxies:
+      - "HK Edge 01"
+      - "US Edge 01"
+      - "Stale Edge 01"
+    url: "https://www.gstatic.com/generate_204"
+    interval: 300
+rules:
+{{rules}}`,
+        version: 1,
+        isDefault: true
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /HK Edge 01/);
+  assert.match(result.data.content, /US Edge 01/);
+  assert.doesNotMatch(result.data.content, /Stale Edge 01/);
 });
 
 test('compileSubscription maps hysteria2 tls and obfs fields for sing-box templates', () => {

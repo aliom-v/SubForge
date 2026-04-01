@@ -9,7 +9,9 @@ import type {
   SubscriptionCompileResult,
   SubscriptionRenderContext
 } from './models';
+import { validateNodeChains } from './node-chain';
 import { AppError, assertRendererAvailable } from './renderers';
+import { parseMihomoTemplateStructure } from './template-structure';
 
 function isExpired(expiresAt?: string | null): boolean {
   if (!expiresAt) {
@@ -75,7 +77,44 @@ function validateCompileInput(input: SubscriptionCompileInput): SubscriptionComp
     };
   }
 
+  const chainValidation = validateCompileNodeChains(input);
+
+  if (chainValidation.issues.length > 0) {
+    return {
+      ok: false,
+      error: createAppError(APP_ERROR_CODES.validationFailed, 'node chain validation failed', {
+        scope: 'node_chain',
+        target: input.target,
+        userId: input.user.id,
+        issueCount: chainValidation.issues.length,
+        issues: chainValidation.issues
+      })
+    };
+  }
+
   return null;
+}
+
+function validateCompileNodeChains(input: SubscriptionCompileInput) {
+  let proxyGroups: Array<Record<string, unknown>> = [];
+  let proxyProviders: string[] = [];
+
+  if (input.target === 'mihomo') {
+    try {
+      const parsed = parseMihomoTemplateStructure(input.template.content);
+      proxyGroups = parsed.proxyGroups;
+      proxyProviders = parsed.proxyProviders;
+    } catch {
+    }
+  }
+
+  return validateNodeChains({
+    nodes: input.nodes,
+    proxyGroups,
+    proxyProviders,
+    allowProxyGroups: input.target === 'mihomo',
+    allowBuiltinReferences: input.target === 'mihomo'
+  });
 }
 
 export function compileSubscription(input: SubscriptionCompileInput): SubscriptionCompileResult {

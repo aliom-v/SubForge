@@ -159,6 +159,10 @@ class MockDatabase {
         .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
     }
 
+    if (sql.includes('SELECT * FROM nodes ORDER BY created_at DESC')) {
+      return [...this.nodes.values()].sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
+    }
+
     if (sql.includes('SELECT * FROM user_node_map WHERE user_id = ? ORDER BY created_at DESC')) {
       return this.userNodeMap
         .filter((row) => row.user_id === bindings[0])
@@ -304,7 +308,7 @@ class MockDatabase {
     }
 
     if (sql.startsWith('INSERT INTO remote_subscription_sources')) {
-      const [id, name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, failureCount, createdAt, updatedAt] = bindings;
+      const [id, name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, lastSyncMessage, lastSyncDetailsJson, failureCount, createdAt, updatedAt] = bindings;
       this.remoteSubscriptionSources.set(id, {
         id,
         name,
@@ -312,6 +316,8 @@ class MockDatabase {
         enabled,
         last_sync_at: lastSyncAt,
         last_sync_status: lastSyncStatus,
+        last_sync_message: lastSyncMessage,
+        last_sync_details_json: lastSyncDetailsJson,
         failure_count: failureCount,
         created_at: createdAt,
         updated_at: updatedAt
@@ -319,27 +325,34 @@ class MockDatabase {
       return { success: true };
     }
 
-    if (sql.startsWith('UPDATE remote_subscription_sources SET name = ?, source_url = ?, enabled = ?, updated_at = ? WHERE id = ?')) {
-      const [name, sourceUrl, enabled, updatedAt, sourceId] = bindings;
+    if (sql.startsWith('UPDATE remote_subscription_sources SET name = ?, source_url = ?, enabled = ?, last_sync_at = ?, last_sync_status = ?, last_sync_message = ?, last_sync_details_json = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
+      const [name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, lastSyncMessage, lastSyncDetailsJson, failureCount, updatedAt, sourceId] = bindings;
       const source = this.remoteSubscriptionSources.get(sourceId);
 
       if (source) {
         source.name = name;
         source.source_url = sourceUrl;
         source.enabled = enabled;
+        source.last_sync_at = lastSyncAt;
+        source.last_sync_status = lastSyncStatus;
+        source.last_sync_message = lastSyncMessage;
+        source.last_sync_details_json = lastSyncDetailsJson;
+        source.failure_count = failureCount;
         source.updated_at = updatedAt;
       }
 
       return { success: true };
     }
 
-    if (sql.startsWith('UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
-      const [lastSyncAt, status, failureCount, updatedAt, sourceId] = bindings;
+    if (sql.startsWith('UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, last_sync_message = ?, last_sync_details_json = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
+      const [lastSyncAt, status, lastSyncMessage, lastSyncDetailsJson, failureCount, updatedAt, sourceId] = bindings;
       const source = this.remoteSubscriptionSources.get(sourceId);
 
       if (source) {
         source.last_sync_at = lastSyncAt;
         source.last_sync_status = status;
+        source.last_sync_message = lastSyncMessage;
+        source.last_sync_details_json = lastSyncDetailsJson;
         source.failure_count = failureCount;
         source.updated_at = updatedAt;
       }
@@ -507,6 +520,8 @@ function createRemoteSubscriptionSourceRow(overrides = {}) {
     enabled: 1,
     last_sync_at: null,
     last_sync_status: null,
+    last_sync_message: null,
+    last_sync_details_json: null,
     failure_count: 0,
     created_at: '2026-03-08T00:00:00.000Z',
     updated_at: '2026-03-08T00:00:00.000Z',
@@ -894,6 +909,56 @@ test('unknown runtime errors return a structured 500 internal error response', a
   assert.equal(payload.error.message, 'internal server error');
 });
 
+test('fetching remote subscription sources returns persisted sync message and details', async () => {
+  const { env } = createEnv({
+    remoteSubscriptionSources: [
+      createRemoteSubscriptionSourceRow({
+        id: 'rss_demo',
+        name: 'Persisted Remote Source',
+        last_sync_at: '2026-03-30T00:00:00.000Z',
+        last_sync_status: 'failed',
+        last_sync_message: 'node chain validation failed',
+        last_sync_details_json: JSON.stringify({
+          scope: 'node_chain',
+          operation: 'remote_subscription_source.sync',
+          issueCount: 1,
+          issues: [
+            {
+              nodeId: 'node_remote_01',
+              nodeName: 'Remote Broken',
+              kind: 'missing_reference',
+              message: '缺少上游节点或代理组：Transit Missing',
+              reference: 'Transit Missing'
+            }
+          ]
+        }),
+        failure_count: 2
+      })
+    ]
+  });
+  const adminToken = await signAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/remote-subscription-sources',
+    {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    },
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.length, 1);
+  assert.equal(payload.data[0].lastSyncStatus, 'failed');
+  assert.equal(payload.data[0].lastSyncMessage, 'node chain validation failed');
+  assert.equal(payload.data[0].lastSyncDetails.scope, 'node_chain');
+  assert.equal(payload.data[0].lastSyncDetails.issues[0].reference, 'Transit Missing');
+  assert.equal(payload.data[0].failureCount, 2);
+});
+
 test('scheduled delegates sync work to waitUntil and processes only enabled remote subscription sources', async () => {
   const enabledRemoteSource = createRemoteSubscriptionSourceRow({
     id: 'rss_enabled',
@@ -952,6 +1017,8 @@ test('scheduled delegates sync work to waitUntil and processes only enabled remo
   assert.deepEqual(requestedUrls, ['https://example.com/subscription.txt']);
   assert.equal(db.nodes.size, 2);
   assert.equal(db.remoteSubscriptionSources.get('rss_enabled')?.last_sync_status, 'success');
+  assert.equal(db.remoteSubscriptionSources.get('rss_enabled')?.last_sync_message, 'subscription updated (1 nodes)');
+  assert.match(db.remoteSubscriptionSources.get('rss_enabled')?.last_sync_details_json ?? '', /"createdCount":1/);
   assert.equal(db.remoteSubscriptionSources.get('rss_disabled')?.last_sync_status, null);
   assert.deepEqual(kv.deletedKeys, []);
 });
