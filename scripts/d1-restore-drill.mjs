@@ -12,10 +12,7 @@ const requiredTables = [
   'users',
   'nodes',
   'templates',
-  'rule_sources',
-  'rule_snapshots',
   'user_node_map',
-  'sync_logs',
   'audit_logs'
 ];
 const environmentMap = {

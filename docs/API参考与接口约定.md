@@ -76,7 +76,6 @@ Authorization: Bearer <token>
 - `target`: `mihomo` | `singbox`
 - `user.status`: `active` | `disabled`
 - `admin.status`: `active` | `disabled`
-- `ruleSource.format`: `text` | `yaml` | `json`
 - `node.sourceType`: 普通创建 / 更新接口当前只允许 `manual`；`remote` 仅由自动同步源写入的远程节点使用
 
 ### 2.5 按资源分组的状态码速查
@@ -87,7 +86,7 @@ Authorization: Bearer <token>
 | `users` | `200` / `201` / `400` / `404` | 创建、更新时间格式非法、绑定未知节点、用户不存在 |
 | `node-import` / `nodes` | `200` / `201` / `400` / `404` | 远程预览成功、metadata 校验失败、节点不存在 |
 | `templates` | `200` / `201` / `400` / `404` | 默认模板必须启用、模板不存在 |
-| `rule-sources` | `200` / `201` / `400` / `404` | URL/format 非法、规则源不存在 |
+| `remote-subscription-sources` | `200` / `201` / `400` / `404` | URL 非法、自动同步源不存在、上游抓取失败 |
 | `preview` / `subscription` | `200` / `400` / `404` | target 非法、用户禁用/过期、模板或 token 缺失 |
 
 ### 2.6 正式 OpenAPI 与契约入口
@@ -332,56 +331,56 @@ Authorization: Bearer <token>
     - `deleted: true`
     - `templateId`
 
-### 4.5 规则源
+### 4.5 自动同步源
 
-- `GET /api/rule-sources`
-  - 返回规则源列表
+- `GET /api/remote-subscription-sources`
+  - 返回自动同步源列表
 
-- `POST /api/rule-sources`
+- `POST /api/remote-subscription-sources`
   - 请求体：
 
 ```json
 {
-  "name": "ACL4SSR",
-  "sourceUrl": "https://example.com/rules.yaml",
-  "format": "yaml"
+  "name": "My Upstream Subscription",
+  "sourceUrl": "https://example.com/sub.txt"
 }
 ```
 
   - 约束：
-    - `format` 只能是 `text` / `yaml` / `json`
     - `sourceUrl` 必须是合法 `http/https` URL
+  - 返回：
+    - 自动同步源记录
+    - 保存后会立即执行一次首次同步
 
-- `PATCH /api/rule-sources/:id`
+- `PATCH /api/remote-subscription-sources/:id`
   - 可更新：
     - `name`
     - `sourceUrl`
-    - `format`
     - `enabled`
 
-- `POST /api/rule-sources/:id/sync`
-  - 立即同步一个规则源
+- `POST /api/remote-subscription-sources/:id/sync`
+  - 立即同步一个自动同步源
   - 返回：
     - `sourceId`
     - `sourceName`
+    - `sourceUrl`
     - `status`
     - `message`
     - `changed`
-    - `ruleCount`
+    - `importedCount`
+    - `createdCount`
+    - `updatedCount`
+    - `unchangedCount`
+    - `duplicateCount`
+    - `disabledCount`
+    - `errorCount`
+    - `lineCount`
     - `details`
 
-- `DELETE /api/rule-sources/:id`
+- `DELETE /api/remote-subscription-sources/:id`
   - 返回：
     - `deleted: true`
-    - `ruleSourceId`
-
-### 4.6 日志
-
-- `GET /api/sync-logs`
-  - 返回同步日志列表
-
-- `GET /api/audit-logs`
-  - 返回审计日志列表
+    - `remoteSubscriptionSourceId`
 
 ---
 

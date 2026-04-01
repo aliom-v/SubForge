@@ -1,5 +1,5 @@
 import { parseNodeImportText, type NodeImportContentEncoding } from '@subforge/core';
-import type { JsonValue, RemoteSubscriptionSourceRecord, SyncLogRecord } from '@subforge/shared';
+import type { JsonValue, RemoteSubscriptionSourceRecord } from '@subforge/shared';
 import { invalidateUsersCaches } from './cache';
 import type { Env } from './env';
 import {
@@ -69,7 +69,7 @@ export interface RemoteSubscriptionSourceSyncResult {
   sourceId: string;
   sourceName: string;
   sourceUrl: string;
-  status: SyncLogRecord['status'];
+  status: Exclude<RemoteSubscriptionSourceRecord['lastSyncStatus'], null | undefined>;
   message: string;
   changed: boolean;
   importedAt: string;
@@ -210,7 +210,7 @@ export async function syncRemoteSubscriptionSourceNow(
     );
 
     const changed = plan.created.length + plan.updated.length + staleToDisable.length > 0;
-    const status: SyncLogRecord['status'] = changed ? 'success' : 'skipped';
+    const status: Exclude<RemoteSubscriptionSourceRecord['lastSyncStatus'], null | undefined> = changed ? 'success' : 'skipped';
     const message = changed
       ? `subscription updated (${dedupedNodes.length} nodes)`
       : `subscription unchanged (${dedupedNodes.length} nodes)`;

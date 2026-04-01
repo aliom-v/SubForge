@@ -124,7 +124,7 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
 | `/api/*` 返回 HTML 或出现 `Unexpected token '<'` | `run_worker_first = true`、响应 `content-type`、静态资源回退是否误命中 | `docs/排障与常见问题.md` |
 | 管理员登录异常（`401` / `429`） | `ADMIN_JWT_SECRET`、管理员记录、`retry-after`、`x-subforge-rate-limit-remaining` | `docs/排障与常见问题.md` |
 | 公开订阅异常（`404` / `429` / 旧数据） | `x-subforge-cache-key`、`x-subforge-rate-limit-reset`、用户 / 模板 / 节点状态 | `docs/排障与常见问题.md` |
-| 规则源同步持续失败 | `sync_logs.details_json`、`errorCode`、`upstreamStatus`、最近成功快照 | `docs/排障与常见问题.md` |
+| 自动同步源持续失败 | `remote_subscription_sources.last_sync_status`、`failure_count`、上游 URL、最近同步时间 | `docs/排障与常见问题.md` |
 
 ## 6. 告警建议
 
@@ -137,8 +137,8 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
 - `/health` 连续失败
 - 登录 `429` 明显激增
 - 公开订阅 `429` 明显激增
-- 规则源连续多次同步失败
-- 规则数突然降为 `0`
+- 自动同步源连续多次同步失败
+- 自动同步后节点数突然降为 `0`
 - 预览或公开订阅连续出现 `4xx` / `5xx` 异常峰值
 
 ### 6.2 中优先级告警
@@ -248,7 +248,7 @@ npx wrangler d1 execute DB --remote --config ./wrangler.toml --file "./backups/d
 - **建议补做的月度演练**
   - 手动触发一次 `.github/workflows/d1-backup.yml`，建议优先用 `target_environment=staging`、`backup_scope=full`
   - 下载该次 artifact 到本地，并执行 `npm run d1:restore:drill -- --file ./backups/d1/<backup.sql>`；如为加密 artifact，则改为 `D1_BACKUP_ARCHIVE_PASSPHRASE=your-passphrase npm run d1:restore:drill -- --file ./backups/d1/<backup.sql.enc>`
-  - 演练完成后，至少抽查 `users`、`nodes`、`templates`、`rule_sources` 四张核心表和一条最近的 `audit_logs`
+  - 演练完成后，至少抽查 `users`、`nodes`、`templates`、`remote_subscription_sources` 四张核心表
   - 把本次 workflow run URL、artifact 名称、演练时间和结果记录到值班日志或发布记录中
 
 ## 10. 文档边界

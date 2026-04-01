@@ -13,7 +13,6 @@ import {
 } from '@subforge/shared';
 import {
   bootstrapSetup,
-  createNode,
   createTemplate,
   createUser,
   deleteNode,
@@ -34,7 +33,6 @@ import {
   replaceUserNodeBindings,
   resetHostedSubscriptionToken,
   syncRemoteSubscriptionSource,
-  updateNode,
   updateRemoteSubscriptionSource,
   updateTemplate,
   updateUser,
@@ -69,16 +67,8 @@ import {
 } from './workflow-orchestration';
 import { buildSingleUserWorkflowSteps, getWorkflowStepStatusLabel } from './workflow-progress';
 import {
-  COMMON_NODE_PROTOCOLS,
-  createNodeProtocolGuideState,
-  detectNodeProtocolPreset,
-  formatNodeMetadataText,
-  getNodeMetadataExamples,
-  parseNodeMetadataText,
-  serializeNodeProtocolGuideState,
   summarizeNodeMetadata,
-  summarizeNodeMetadataParts,
-  type NodeProtocolGuideState
+  summarizeNodeMetadataParts
 } from './node-metadata';
 import {
   buildImportedNodeWarnings,
@@ -88,8 +78,7 @@ import {
   type ImportedNodePayload,
   type NodeImportContentEncoding
 } from './node-import';
-import { canonicalizeNodeProtocol, validateNodeProtocolMetadata } from './node-protocol-validation';
-import { buildNodeChainSummaries, readNodeUpstreamProxyFromRecord } from './mihomo-topology';
+import { buildNodeChainSummaries } from './mihomo-topology';
 
 const metadata = getServiceMetadata();
 const sessionStorageKey = 'subforge.admin.token';
@@ -99,20 +88,6 @@ interface ResourceState {
   nodes: NodeRecord[];
   templates: TemplateRecord[];
   remoteSubscriptionSources: RemoteSubscriptionSourceRecord[];
-}
-
-interface NodeDraftForm {
-  name: string;
-  protocol: string;
-  server: string;
-  port: number;
-  credentialsText: string;
-  paramsText: string;
-}
-
-interface NodeEditForm extends NodeDraftForm {
-  id: string;
-  enabled: boolean;
 }
 
 interface RemoteSubscriptionSourceForm {
@@ -130,15 +105,6 @@ const emptyResources: ResourceState = {
 const AUTO_HOSTED_MIHOMO_TEMPLATE = ['mixed-port: 7890', 'mode: rule', 'proxies:', '{{proxies}}', 'proxy-groups:', '{{proxy_groups}}', 'rules:', '{{rules}}'].join('\n');
 const AUTO_HOSTED_SINGBOX_TEMPLATE = ['{', '  "outbounds": {{outbounds}},', '  "route": {', '    "rules": {{rules}}', '  }', '}'].join('\n');
 
-const emptyNodeDraftForm: NodeDraftForm = {
-  name: '',
-  protocol: 'vless',
-  server: '',
-  port: 443,
-  credentialsText: '',
-  paramsText: ''
-};
-const emptyNodeEditForm: NodeEditForm = { id: '', ...emptyNodeDraftForm, enabled: true };
 const emptyRemoteSubscriptionSourceForm: RemoteSubscriptionSourceForm = { name: '', sourceUrl: '' };
 
 function formatNodeImportContentEncoding(value: NodeImportContentEncoding): string {
@@ -214,15 +180,12 @@ export function App(): JSX.Element {
 
   const [loginForm, setLoginForm] = useState({ username: 'admin', password: '' });
   const [setupForm, setSetupForm] = useState({ username: 'admin', password: '', confirmPassword: '' });
-  const [nodeForm, setNodeForm] = useState<NodeDraftForm>(emptyNodeDraftForm);
   const [nodeImportText, setNodeImportText] = useState('');
   const [configImportText, setConfigImportText] = useState('');
   const [nodeImportSourceUrl, setNodeImportSourceUrl] = useState('');
   const [remoteNodeImportPreview, setRemoteNodeImportPreview] = useState<NodeImportPreviewPayload | null>(null);
   const [remoteSubscriptionSourceForm, setRemoteSubscriptionSourceForm] =
     useState<RemoteSubscriptionSourceForm>(emptyRemoteSubscriptionSourceForm);
-
-  const [nodeEditForm, setNodeEditForm] = useState<NodeEditForm>(emptyNodeEditForm);
 
   const summary = useMemo(
     () => [
@@ -249,15 +212,12 @@ export function App(): JSX.Element {
       }),
     [hostedSubscriptionResult, hostedSubscriptionSyncStatus, resources.nodes]
   );
-  const nodeCreateExamples = useMemo(() => getNodeMetadataExamples(nodeForm.protocol), [nodeForm.protocol]);
-  const nodeEditExamples = useMemo(() => getNodeMetadataExamples(nodeEditForm.protocol), [nodeEditForm.protocol]);
   const parsedNodeImport = useMemo(() => parseNodeImportText(nodeImportText), [nodeImportText]);
   const parsedConfigImport = useMemo(() => parseImportedConfig(configImportText), [configImportText]);
   const summarizedParsedNodeImportErrors = useMemo(
     () => summarizeImportErrors(parsedNodeImport.errors),
     [parsedNodeImport.errors]
   );
-  const firstImportedNode = parsedNodeImport.nodes[0];
   const summarizedRemoteNodeImportErrors = useMemo(
     () => summarizeImportErrors(remoteNodeImportPreview?.errors ?? []),
     [remoteNodeImportPreview?.errors]
@@ -299,8 +259,6 @@ export function App(): JSX.Element {
     () => buildNodeChainSummaries(resources.nodes, mihomoTopology.proxyGroups, mihomoTopology.proxyProviders),
     [mihomoTopology.proxyGroups, mihomoTopology.proxyProviders, resources.nodes]
   );
-  const createFormUpstreamProxy = useMemo(() => readNodeUpstreamProxyFromText(nodeForm.paramsText), [nodeForm.paramsText]);
-  const editFormUpstreamProxy = useMemo(() => readNodeUpstreamProxyFromText(nodeEditForm.paramsText), [nodeEditForm.paramsText]);
 
   function reportValidationError(messageText: string): void {
     setMessage('');
@@ -345,24 +303,6 @@ export function App(): JSX.Element {
 
     void bootstrapSession(token);
   }, [token]);
-
-  useEffect(() => {
-    const node = resources.nodes.find((item) => item.id === nodeEditForm.id) ?? resources.nodes[0];
-    if (!node) {
-      setNodeEditForm(emptyNodeEditForm);
-      return;
-    }
-    setNodeEditForm({
-      id: node.id,
-      name: node.name,
-      protocol: node.protocol,
-      server: node.server,
-      port: node.port,
-      credentialsText: formatNodeMetadataText(node.credentials),
-      paramsText: formatNodeMetadataText(node.params),
-      enabled: node.enabled
-    });
-  }, [resources.nodes, nodeEditForm.id]);
 
   async function bootstrapSession(currentToken: string): Promise<void> {
     setLoading(true);
@@ -529,67 +469,6 @@ export function App(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleCreateNode(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token) return;
-
-    const validationError = validateNodeDraft(nodeForm);
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    const nodePayload = buildNodeMutationInput(nodeForm);
-
-    if (nodePayload.error) {
-      reportValidationError(nodePayload.error);
-      return;
-    }
-
-    await withAction(async () => {
-      await createNode(token, nodePayload.payload);
-      setNodeForm(emptyNodeDraftForm);
-    }, '节点已创建。若要直接给客户端使用，请回到上方导入入口生成托管 URL。');
-  }
-
-  function loadImportedNodeToCreateForm(importedNode: ImportedNodePayload): void {
-    setNodeForm({
-      name: importedNode.name,
-      protocol: importedNode.protocol,
-      server: importedNode.server,
-      port: importedNode.port,
-      credentialsText: formatNodeMetadataText(importedNode.credentials),
-      paramsText: formatNodeMetadataText(importedNode.params)
-    });
-    setError('');
-    setMessage(`已将 ${importedNode.name} 载入创建表单`);
-  }
-
-  function updateCreateFormUpstreamProxy(upstreamProxy: string): void {
-    const result = applyUpstreamProxyToParamsText(nodeForm.paramsText, upstreamProxy);
-
-    if (result.error) {
-      reportValidationError(result.error);
-      return;
-    }
-
-    setNodeForm((current) => ({ ...current, paramsText: result.value }));
-    setError('');
-  }
-
-  function updateEditFormUpstreamProxy(upstreamProxy: string): void {
-    const result = applyUpstreamProxyToParamsText(nodeEditForm.paramsText, upstreamProxy);
-
-    if (result.error) {
-      reportValidationError(result.error);
-      return;
-    }
-
-    setNodeEditForm((current) => ({ ...current, paramsText: result.value }));
-    setError('');
   }
 
   async function copyHostedUrl(url: string, target: SubscriptionTarget): Promise<void> {
@@ -837,34 +716,6 @@ export function App(): JSX.Element {
       importedNodes: previewResult.nodes,
       errorCount: previewResult.errors.length
     });
-  }
-
-  async function handleUpdateNode(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!token || !nodeEditForm.id) return;
-
-    const validationError = validateNodeDraft(nodeEditForm);
-
-    if (validationError) {
-      reportValidationError(validationError);
-      return;
-    }
-
-    const nodePayload = buildNodeMutationInput(nodeEditForm);
-
-    if (nodePayload.error) {
-      reportValidationError(nodePayload.error);
-      return;
-    }
-
-    await withAction(
-      () =>
-        updateNode(token, nodeEditForm.id, {
-          ...nodePayload.payload,
-          enabled: nodeEditForm.enabled
-        }),
-      '节点已更新。如需让客户端拿到最新节点，请重新生成托管 URL。'
-    );
   }
 
   async function handleDeleteNode(nodeId: string): Promise<void> {
@@ -1229,7 +1080,7 @@ export function App(): JSX.Element {
                   <div className="disclosure-body">
                     <ResourceTable
                       columns={['名称', '协议', '地址', '端口', '元数据']}
-                      rows={parsedNodeImport.nodes.map((node, index) => [
+                      rows={parsedNodeImport.nodes.map((node) => [
                         node.name,
                         node.protocol,
                         node.server,
@@ -1314,7 +1165,7 @@ export function App(): JSX.Element {
                       <div className="disclosure-body">
                         <ResourceTable
                           columns={['名称', '协议', '地址', '端口', '元数据']}
-                          rows={remoteNodeImportPreview.nodes.map((node, index) => [
+                          rows={remoteNodeImportPreview.nodes.map((node) => [
                             node.name,
                             node.protocol,
                             node.server,
@@ -1442,7 +1293,7 @@ export function App(): JSX.Element {
                       <div className="disclosure-body">
                         <ResourceTable
                           columns={['名称', '协议', '地址', '端口', '元数据']}
-                          rows={parsedConfigImport.nodes.map((node, index) => [
+                          rows={parsedConfigImport.nodes.map((node) => [
                             node.name,
                             node.protocol,
                             node.server,
@@ -1506,39 +1357,6 @@ export function App(): JSX.Element {
     </main>
   );
 }
-
-
-function readNodeUpstreamProxyFromText(paramsText: string): string {
-  const parsed = parseNodeMetadataText(paramsText, 'params');
-  return parsed.error ? '' : readNodeUpstreamProxyFromRecord(parsed.value) ?? '';
-}
-
-function applyUpstreamProxyToParamsText(
-  paramsText: string,
-  upstreamProxy: string
-): { value: string; error?: string } {
-  const parsed = parseNodeMetadataText(paramsText, 'params');
-
-  if (parsed.error) {
-    return {
-      value: paramsText,
-      error: '当前参数 JSON 不是合法对象，暂时无法通过可视化方式设置上游代理'
-    };
-  }
-
-  const nextParams = { ...(parsed.value ?? {}) };
-
-  if (upstreamProxy.trim()) {
-    nextParams.upstreamProxy = upstreamProxy.trim();
-  } else {
-    delete nextParams.upstreamProxy;
-  }
-
-  return {
-    value: Object.keys(nextParams).length > 0 ? JSON.stringify(nextParams, null, 2) : ''
-  };
-}
-
 function isValidHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -1550,18 +1368,6 @@ function isValidHttpUrl(value: string): boolean {
 
 function confirmDestructiveAction(message: string): boolean {
   return typeof window === 'undefined' ? true : window.confirm(message);
-}
-
-function isValidPort(value: number): boolean {
-  return Number.isInteger(value) && value > 0 && value <= 65535;
-}
-
-function validateNodeDraft(input: { name: string; protocol: string; server: string; port: number }): string | null {
-  if (!input.name.trim()) return '节点名称不能为空';
-  if (!input.protocol.trim()) return '节点协议不能为空';
-  if (!input.server.trim()) return '节点地址不能为空';
-  if (!isValidPort(input.port)) return '节点端口必须在 1-65535 之间';
-  return null;
 }
 
 function selectPreferredMihomoTemplate(templates: TemplateRecord[]): TemplateRecord | null {
@@ -1596,441 +1402,6 @@ function buildAutoHostedTemplateContent(
   return target === 'mihomo' ? AUTO_HOSTED_MIHOMO_TEMPLATE : AUTO_HOSTED_SINGBOX_TEMPLATE;
 }
 
-function buildNodeMutationInput(input: NodeDraftForm): {
-  payload: {
-    name: string;
-    protocol: string;
-    server: string;
-    port: number;
-    credentials: Record<string, unknown> | null;
-    params: Record<string, unknown> | null;
-  };
-  error?: string;
-} {
-  const protocol = canonicalizeNodeProtocol(input.protocol);
-  const credentials = parseNodeMetadataText(input.credentialsText, 'credentials');
-
-  if (credentials.error) {
-    return {
-      payload: {
-        name: input.name.trim(),
-        protocol,
-        server: input.server.trim(),
-        port: input.port,
-        credentials: null,
-        params: null
-      },
-      error: credentials.error
-    };
-  }
-
-  const params = parseNodeMetadataText(input.paramsText, 'params');
-
-  if (params.error) {
-    return {
-      payload: {
-        name: input.name.trim(),
-        protocol,
-        server: input.server.trim(),
-        port: input.port,
-        credentials: credentials.value,
-        params: null
-      },
-      error: params.error
-    };
-  }
-
-  const metadataValidationError = validateNodeProtocolMetadata({
-    protocol,
-    credentials: credentials.value,
-    params: params.value
-  });
-
-  if (metadataValidationError) {
-    return {
-      payload: {
-        name: input.name.trim(),
-        protocol,
-        server: input.server.trim(),
-        port: input.port,
-        credentials: credentials.value,
-        params: params.value
-      },
-      error: metadataValidationError
-    };
-  }
-
-  return {
-    payload: {
-      name: input.name.trim(),
-      protocol,
-      server: input.server.trim(),
-      port: input.port,
-      credentials: credentials.value,
-      params: params.value
-    }
-  };
-}
-
-function NodeProtocolAssistant(props: {
-  protocol: string;
-  credentialsText: string;
-  paramsText: string;
-  onMetadataChange: (value: { credentialsText: string; paramsText: string }) => void;
-}): JSX.Element {
-  const preset = detectNodeProtocolPreset(props.protocol);
-  const parsedCredentials = useMemo(
-    () => parseNodeMetadataText(props.credentialsText, 'credentials'),
-    [props.credentialsText]
-  );
-  const parsedParams = useMemo(() => parseNodeMetadataText(props.paramsText, 'params'), [props.paramsText]);
-  const [guideState, setGuideState] = useState<NodeProtocolGuideState>(() =>
-    createNodeProtocolGuideState(props.protocol, {
-      credentials: parsedCredentials.value,
-      params: parsedParams.value
-    })
-  );
-
-  useEffect(() => {
-    if (parsedCredentials.error || parsedParams.error) {
-      return;
-    }
-
-    setGuideState(
-      createNodeProtocolGuideState(props.protocol, {
-        credentials: parsedCredentials.value,
-        params: parsedParams.value
-      })
-    );
-  }, [parsedCredentials.error, parsedCredentials.value, parsedParams.error, parsedParams.value, props.protocol]);
-
-  function updateGuideState(patch: Partial<NodeProtocolGuideState>): void {
-    setGuideState((current) => {
-      const next = { ...current, ...patch };
-      const serialized = serializeNodeProtocolGuideState(props.protocol, next);
-
-      props.onMetadataChange({
-        credentialsText: formatNodeMetadataText(serialized.credentials),
-        paramsText: formatNodeMetadataText(serialized.params)
-      });
-
-      return next;
-    });
-  }
-
-  if (preset === 'custom') {
-    return (
-      <div className="protocol-assistant full-span">
-        <div className="assistant-header">
-          <strong>协议字段向导</strong>
-          <span className="assistant-badge">custom</span>
-        </div>
-        <p className="helper">
-          当前协议暂无结构化字段向导，请继续使用下方 JSON 字段。常见的 `vless`、`trojan`、`vmess`、`ss`、`ssr`、`tuic`、`hysteria2`
-          已支持自动回填。
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="protocol-assistant full-span">
-      <div className="assistant-header">
-        <strong>协议字段向导</strong>
-        <span className="assistant-badge">{preset}</span>
-      </div>
-      <p className="helper">
-        修改下列字段会自动回填到下方 JSON 文本框；更多高级参数仍可直接编辑原始 JSON。
-      </p>
-      {preset === 'hysteria2' ? (
-        <p className="helper">
-          `hysteria2` 向导当前优先覆盖 `password`、`sni`、`obfs`、`obfs-password`、`alpn`、`insecure`；authority 多端口会在导入时自动收敛为
-          `port + params.mport`，更复杂组合仍请直接核对 JSON。
-        </p>
-      ) : null}
-      {preset === 'ssr' ? (
-        <p className="helper">
-          `ssr` 向导会回填 `cipher`、`password`、`protocol`、`obfs` 以及常见 `protocol-param` / `obfs-param`。
-        </p>
-      ) : null}
-      {preset === 'tuic' ? (
-        <p className="helper">
-          `tuic` 向导会回填 `uuid`、`password`、`sni`、`alpn`、拥塞控制、UDP relay、0-RTT 等常见字段；更少见的传输细节仍可继续编辑 JSON。
-        </p>
-      ) : null}
-      {parsedCredentials.error || parsedParams.error ? (
-        <p className="helper">
-          当前 JSON 不是合法对象，协议向导会在你修正 JSON 后重新同步。
-        </p>
-      ) : null}
-      <div className="assistant-grid">
-        {preset === 'ss' ? (
-          <>
-            <Field label="Cipher">
-              <input
-                value={guideState.primaryCredential}
-                onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
-                placeholder="aes-256-gcm"
-              />
-            </Field>
-            <Field label="Password">
-              <input
-                value={guideState.secondaryCredential}
-                onChange={(event) => updateGuideState({ secondaryCredential: event.target.value })}
-                placeholder="replace-me"
-              />
-            </Field>
-            <Field label="Plugin">
-              <input
-                value={guideState.plugin}
-                onChange={(event) => updateGuideState({ plugin: event.target.value })}
-                placeholder="v2ray-plugin"
-              />
-            </Field>
-          </>
-        ) : preset === 'ssr' ? (
-          <>
-            <Field label="Cipher">
-              <input
-                value={guideState.primaryCredential}
-                onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
-                placeholder="aes-256-cfb"
-              />
-            </Field>
-            <Field label="Password">
-              <input
-                value={guideState.secondaryCredential}
-                onChange={(event) => updateGuideState({ secondaryCredential: event.target.value })}
-                placeholder="replace-me"
-              />
-            </Field>
-            <Field label="Protocol">
-              <input
-                value={guideState.protocolName}
-                onChange={(event) => updateGuideState({ protocolName: event.target.value })}
-                placeholder="auth_aes128_md5"
-              />
-            </Field>
-            <Field label="Obfs">
-              <input
-                value={guideState.obfs}
-                onChange={(event) => updateGuideState({ obfs: event.target.value })}
-                placeholder="tls1.2_ticket_auth"
-              />
-            </Field>
-            <Field label="Protocol Param">
-              <input
-                value={guideState.protocolParam}
-                onChange={(event) => updateGuideState({ protocolParam: event.target.value })}
-                placeholder="100:replace-me"
-              />
-            </Field>
-            <Field label="Obfs Param">
-              <input
-                value={guideState.obfsParam}
-                onChange={(event) => updateGuideState({ obfsParam: event.target.value })}
-                placeholder="sub.example.com"
-              />
-            </Field>
-          </>
-        ) : preset === 'tuic' ? (
-          <>
-            <Field label="UUID">
-              <input
-                value={guideState.primaryCredential}
-                onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
-                placeholder="11111111-1111-1111-1111-111111111111"
-              />
-            </Field>
-            <Field label="Password">
-              <input
-                value={guideState.secondaryCredential}
-                onChange={(event) => updateGuideState({ secondaryCredential: event.target.value })}
-                placeholder="replace-me"
-              />
-            </Field>
-            <Field label="SNI">
-              <input
-                value={guideState.sni}
-                onChange={(event) => updateGuideState({ sni: event.target.value })}
-                placeholder="sub.example.com"
-              />
-            </Field>
-            <Field label="ALPN">
-              <input
-                value={guideState.alpn}
-                onChange={(event) => updateGuideState({ alpn: event.target.value })}
-                placeholder="h3"
-              />
-            </Field>
-            <Field label="Congestion">
-              <input
-                value={guideState.congestionController}
-                onChange={(event) => updateGuideState({ congestionController: event.target.value })}
-                placeholder="bbr"
-              />
-            </Field>
-            <Field label="UDP Relay">
-              <input
-                value={guideState.udpRelayMode}
-                onChange={(event) => updateGuideState({ udpRelayMode: event.target.value })}
-                placeholder="native"
-              />
-            </Field>
-            <Field label="Heartbeat">
-              <input
-                value={guideState.heartbeat}
-                onChange={(event) => updateGuideState({ heartbeat: event.target.value })}
-                placeholder="10s"
-              />
-            </Field>
-            <Field label="Request Timeout">
-              <input
-                type="number"
-                value={guideState.requestTimeout}
-                onChange={(event) => updateGuideState({ requestTimeout: event.target.value })}
-                placeholder="8000"
-              />
-            </Field>
-            <label className="checkbox-row assistant-checkbox">
-              <input
-                type="checkbox"
-                checked={guideState.disableSni}
-                onChange={(event) => updateGuideState({ disableSni: event.target.checked })}
-              />
-              <span>Disable SNI</span>
-            </label>
-            <label className="checkbox-row assistant-checkbox">
-              <input
-                type="checkbox"
-                checked={guideState.reduceRtt}
-                onChange={(event) => updateGuideState({ reduceRtt: event.target.checked })}
-              />
-              <span>启用 0-RTT</span>
-            </label>
-          </>
-        ) : preset === 'hysteria2' ? (
-          <>
-            <Field label="Password">
-              <input
-                value={guideState.primaryCredential}
-                onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
-                placeholder="replace-me"
-              />
-            </Field>
-            <Field label="SNI">
-              <input
-                value={guideState.sni}
-                onChange={(event) => updateGuideState({ sni: event.target.value })}
-                placeholder="sub.example.com"
-              />
-            </Field>
-            <Field label="Obfs">
-              <input
-                value={guideState.obfs}
-                onChange={(event) => updateGuideState({ obfs: event.target.value })}
-                placeholder="salamander"
-              />
-            </Field>
-            <Field label="Obfs Password">
-              <input
-                value={guideState.obfsPassword}
-                onChange={(event) => updateGuideState({ obfsPassword: event.target.value })}
-                placeholder="replace-me"
-              />
-            </Field>
-            <Field label="ALPN">
-              <input
-                value={guideState.alpn}
-                onChange={(event) => updateGuideState({ alpn: event.target.value })}
-                placeholder="h3"
-              />
-            </Field>
-            <Field label="Skip Verify">
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={guideState.insecure}
-                  onChange={(event) => updateGuideState({ insecure: event.target.checked })}
-                />
-                <span>写入 `params.insecure = true`</span>
-              </label>
-            </Field>
-          </>
-        ) : (
-          <Field label={preset === 'trojan' ? 'Password' : 'UUID'}>
-            <input
-              value={guideState.primaryCredential}
-              onChange={(event) => updateGuideState({ primaryCredential: event.target.value })}
-              placeholder={preset === 'trojan' ? 'replace-me' : '11111111-1111-1111-1111-111111111111'}
-            />
-          </Field>
-        )}
-        {preset === 'vmess' ? (
-          <Field label="Alter ID">
-            <input
-              type="number"
-              value={guideState.alterId}
-              onChange={(event) => updateGuideState({ alterId: event.target.value })}
-              placeholder="0"
-            />
-          </Field>
-        ) : null}
-        {(preset === 'vless' || preset === 'vmess') ? (
-          <Field label="Network">
-            <select
-              value={guideState.network}
-              onChange={(event) => updateGuideState({ network: event.target.value })}
-            >
-              <option value="">未设置</option>
-              <option value="ws">ws</option>
-              <option value="tcp">tcp</option>
-              <option value="grpc">grpc</option>
-              <option value="http">http</option>
-            </select>
-          </Field>
-        ) : null}
-        {(preset === 'vless' || preset === 'vmess') ? (
-          <Field label="Server Name">
-            <input
-              value={guideState.servername}
-              onChange={(event) => updateGuideState({ servername: event.target.value })}
-              placeholder="sub.example.com"
-            />
-          </Field>
-        ) : null}
-        {(preset === 'vless' || preset === 'vmess') ? (
-          <Field label="Path">
-            <input
-              value={guideState.path}
-              onChange={(event) => updateGuideState({ path: event.target.value })}
-              placeholder={preset === 'vmess' ? '/vmess' : '/ws'}
-            />
-          </Field>
-        ) : null}
-        {preset === 'trojan' ? (
-          <Field label="SNI">
-            <input
-              value={guideState.sni}
-              onChange={(event) => updateGuideState({ sni: event.target.value })}
-              placeholder="sub.example.com"
-            />
-          </Field>
-        ) : null}
-        {(preset === 'trojan' || preset === 'vless' || preset === 'vmess') ? (
-          <label className="checkbox-row assistant-checkbox">
-            <input
-              type="checkbox"
-              checked={guideState.tls}
-              onChange={(event) => updateGuideState({ tls: event.target.checked })}
-            />
-            <span>启用 TLS</span>
-          </label>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 function Field(props: { label: string; children: ReactNode; full?: boolean }): JSX.Element {
   return (

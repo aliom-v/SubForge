@@ -1,20 +1,15 @@
 import type {
   NodeSourceType,
   RemoteSubscriptionSourceRecord,
-  RuleSourceFormat,
-  RuleSourceRecord,
   SubscriptionTarget,
-  SyncLogRecord,
   TemplateRecord,
   UserNodeBinding,
   NodeRecord,
   AdminRecord,
-  AuditLogRecord,
   JsonValue,
   UserRecord
 } from '@subforge/shared';
-import type { SubscriptionCompileInput, SubscriptionNode, SubscriptionRuleSet, SubscriptionTemplate } from '@subforge/core';
-import { sanitizeAuditPayload } from './audit';
+import type { SubscriptionCompileInput, SubscriptionNode, SubscriptionTemplate } from '@subforge/core';
 import { createId, createRandomToken } from './security';
 
 interface Row {
@@ -54,54 +49,6 @@ function parseJsonObject(value: unknown): Record<string, JsonValue> | undefined 
 
 function serializeJsonObject(value: Record<string, unknown> | null | undefined): string | null {
   return value == null ? null : JSON.stringify(value);
-}
-
-function readRecordString(record: Record<string, unknown>, key: string): string | null {
-  const value = record[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function mapAuditRequestMeta(payload?: Record<string, JsonValue> | null): AuditLogRecord['requestMeta'] | undefined {
-  if (!payload || typeof payload._request !== 'object' || payload._request === null || Array.isArray(payload._request)) {
-    return undefined;
-  }
-
-  const requestMeta = payload._request as Record<string, unknown>;
-  const ip = readRecordString(requestMeta, 'ip');
-  const country = readRecordString(requestMeta, 'country');
-  const colo = readRecordString(requestMeta, 'colo');
-  const userAgent = readRecordString(requestMeta, 'userAgent');
-  const method = readRecordString(requestMeta, 'method');
-  const path = readRecordString(requestMeta, 'path');
-  const rayId = readRecordString(requestMeta, 'rayId');
-
-  if (!ip && !country && !colo && !userAgent && !method && !path && !rayId) {
-    return undefined;
-  }
-
-  return {
-    ...(ip ? { ip } : {}),
-    ...(country ? { country } : {}),
-    ...(colo ? { colo } : {}),
-    ...(userAgent ? { userAgent } : {}),
-    ...(method ? { method } : {}),
-    ...(path ? { path } : {}),
-    ...(rayId ? { rayId } : {})
-  };
-}
-
-function readAuditTargetDisplayName(row: Row, payload?: Record<string, JsonValue> | null): string | null {
-  const joinedDisplayName = asNullableString(row.target_display_name);
-
-  if (joinedDisplayName) {
-    return joinedDisplayName;
-  }
-
-  if (!payload) {
-    return null;
-  }
-
-  return readRecordString(payload, 'name') ?? readRecordString(payload, 'sourceUrl');
 }
 
 function mapAdmin(row: Row): AdminRecord {
@@ -168,36 +115,6 @@ function mapTemplate(row: Row): TemplateRecord {
     status: asBoolean(row.enabled) ? 'enabled' : 'disabled',
     createdAt: asString(row.created_at),
     updatedAt: asString(row.updated_at)
-  };
-}
-
-function mapRuleSource(row: Row): RuleSourceRecord {
-  const lastSyncAt = asNullableString(row.last_sync_at);
-  const lastSyncStatus = asNullableString(row.last_sync_status);
-
-  return {
-    id: asString(row.id),
-    name: asString(row.name),
-    sourceUrl: asString(row.source_url),
-    format: asString(row.format) as RuleSourceFormat,
-    enabled: asBoolean(row.enabled),
-    failureCount: asNumber(row.failure_count),
-    createdAt: asString(row.created_at),
-    updatedAt: asString(row.updated_at),
-    ...(lastSyncAt !== null ? { lastSyncAt } : {}),
-    ...(lastSyncStatus !== null
-      ? { lastSyncStatus: lastSyncStatus as Exclude<RuleSourceRecord['lastSyncStatus'], null | undefined> }
-      : {})
-  };
-}
-
-function mapRuleSet(row: Row): SubscriptionRuleSet {
-  return {
-    id: asString(row.id),
-    name: asString(row.name),
-    format: asString(row.format) as RuleSourceFormat,
-    content: asString(row.content),
-    sourceId: asString(row.rule_source_id)
   };
 }
 
@@ -700,82 +617,6 @@ export async function deleteTemplate(db: D1Database, id: string): Promise<boolea
   return true;
 }
 
-export async function listRuleSources(db: D1Database): Promise<RuleSourceRecord[]> {
-  const rows = await all(db, 'SELECT * FROM rule_sources ORDER BY created_at DESC');
-  return rows.map(mapRuleSource);
-}
-
-export async function getRuleSourceById(db: D1Database, id: string): Promise<RuleSourceRecord | null> {
-  const row = await first(db, 'SELECT * FROM rule_sources WHERE id = ? LIMIT 1', [id]);
-  return row ? mapRuleSource(row) : null;
-}
-
-export async function createRuleSource(
-  db: D1Database,
-  input: {
-    name: string;
-    sourceUrl: string;
-    format: RuleSourceFormat;
-    enabled?: boolean | undefined;
-  }
-): Promise<RuleSourceRecord> {
-  const id = createId('rs');
-  const now = new Date().toISOString();
-
-  await db
-    .prepare(
-      'INSERT INTO rule_sources (id, name, source_url, format, enabled, last_sync_at, last_sync_status, failure_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    )
-    .bind(id, input.name, input.sourceUrl, input.format, input.enabled === false ? 0 : 1, null, null, 0, now, now)
-    .run();
-
-  return (await getRuleSourceById(db, id)) as RuleSourceRecord;
-}
-
-export async function updateRuleSource(
-  db: D1Database,
-  id: string,
-  input: {
-    name?: string | undefined;
-    sourceUrl?: string | undefined;
-    format?: RuleSourceFormat | undefined;
-    enabled?: boolean | undefined;
-  }
-): Promise<RuleSourceRecord | null> {
-  const current = await getRuleSourceById(db, id);
-
-  if (!current) {
-    return null;
-  }
-
-  await db
-    .prepare(
-      'UPDATE rule_sources SET name = ?, source_url = ?, format = ?, enabled = ?, updated_at = ? WHERE id = ?'
-    )
-    .bind(
-      input.name ?? current.name,
-      input.sourceUrl ?? current.sourceUrl,
-      input.format ?? current.format,
-      input.enabled === undefined ? (current.enabled ? 1 : 0) : input.enabled ? 1 : 0,
-      new Date().toISOString(),
-      id
-    )
-    .run();
-
-  return getRuleSourceById(db, id);
-}
-
-export async function deleteRuleSource(db: D1Database, id: string): Promise<boolean> {
-  const current = await getRuleSourceById(db, id);
-
-  if (!current) {
-    return false;
-  }
-
-  await db.prepare('DELETE FROM rule_sources WHERE id = ?').bind(id).run();
-  return true;
-}
-
 export async function listRemoteSubscriptionSources(db: D1Database): Promise<RemoteSubscriptionSourceRecord[]> {
   const rows = await all(db, 'SELECT * FROM remote_subscription_sources ORDER BY created_at DESC');
   return rows.map(mapRemoteSubscriptionSource);
@@ -868,51 +709,12 @@ export async function deleteRemoteSubscriptionSource(db: D1Database, id: string)
   return true;
 }
 
-export async function recordRuleSourceSync(
-  db: D1Database,
-  sourceId: string,
-  status: SyncLogRecord['status'],
-  message: string,
-  details?: Record<string, unknown> | null
-): Promise<RuleSourceRecord | null> {
-  const now = new Date().toISOString();
-  const current = await getRuleSourceById(db, sourceId);
-
-  if (!current) {
-    return null;
-  }
-
-  await db
-    .prepare(
-      'UPDATE rule_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?'
-    )
-    .bind(now, status, status === 'failed' ? current.failureCount + 1 : 0, now, sourceId)
-    .run();
-
-  await db
-    .prepare(
-      'INSERT INTO sync_logs (id, source_type, source_id, status, message, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    )
-    .bind(
-      createId('sync'),
-      'rule_source',
-      sourceId,
-      status,
-      message,
-      details ? JSON.stringify(details) : null,
-      now
-    )
-    .run();
-
-  return getRuleSourceById(db, sourceId);
-}
-
 export async function recordRemoteSubscriptionSourceSync(
   db: D1Database,
   sourceId: string,
-  status: SyncLogRecord['status'],
-  message: string,
-  details?: Record<string, unknown> | null
+  status: Exclude<RemoteSubscriptionSourceRecord['lastSyncStatus'], null | undefined>,
+  _message: string,
+  _details?: Record<string, unknown> | null
 ): Promise<RemoteSubscriptionSourceRecord | null> {
   const now = new Date().toISOString();
   const current = await getRemoteSubscriptionSourceById(db, sourceId);
@@ -926,21 +728,6 @@ export async function recordRemoteSubscriptionSourceSync(
       'UPDATE remote_subscription_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?'
     )
     .bind(now, status, status === 'failed' ? current.failureCount + 1 : 0, now, sourceId)
-    .run();
-
-  await db
-    .prepare(
-      'INSERT INTO sync_logs (id, source_type, source_id, status, message, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    )
-    .bind(
-      createId('sync'),
-      'remote_subscription_source',
-      sourceId,
-      status,
-      message,
-      details ? JSON.stringify(details) : null,
-      now
-    )
     .run();
 
   return getRemoteSubscriptionSourceById(db, sourceId);
@@ -982,25 +769,6 @@ export async function getSubscriptionCompileInputByUserId(
     [userId]
   );
 
-  const snapshotRows = await all(
-    db,
-    `SELECT rs.id, rs.rule_source_id, rs.content_hash, rs.content, rs.created_at, rsrc.name, rsrc.format
-     FROM rule_snapshots rs
-     INNER JOIN rule_sources rsrc ON rsrc.id = rs.rule_source_id
-     WHERE rsrc.enabled = 1
-     ORDER BY rs.created_at DESC`
-  );
-
-  const latestSnapshots = new Map<string, SubscriptionRuleSet>();
-
-  for (const row of snapshotRows) {
-    const ruleSourceId = asString(row.rule_source_id);
-
-    if (!latestSnapshots.has(ruleSourceId)) {
-      latestSnapshots.set(ruleSourceId, mapRuleSet(row));
-    }
-  }
-
   return {
     target,
     user: {
@@ -1011,77 +779,9 @@ export async function getSubscriptionCompileInputByUserId(
       ...(user.expiresAt ? { expiresAt: user.expiresAt } : {})
     },
     nodes: nodeRows.map(mapNode).map(mapNodeForSubscription),
-    ruleSets: [...latestSnapshots.values()],
+    ruleSets: [],
     template: mapTemplateForSubscription(template)
   };
-}
-
-function mapSyncLog(row: Row): SyncLogRecord {
-  const sourceId = asNullableString(row.source_id);
-  const message = asNullableString(row.message);
-  const details = parseJsonObject(row.details_json) as SyncLogRecord['details'];
-
-  return {
-    id: asString(row.id),
-    sourceType: asString(row.source_type),
-    status: asString(row.status) as SyncLogRecord['status'],
-    createdAt: asString(row.created_at),
-    ...(sourceId !== null ? { sourceId } : {}),
-    ...(message !== null ? { message } : {}),
-    ...(details ? { details } : {})
-  };
-}
-
-export async function listSyncLogs(db: D1Database, limit = 50): Promise<SyncLogRecord[]> {
-  const rows = await all(
-    db,
-    'SELECT * FROM sync_logs ORDER BY created_at DESC LIMIT ?',
-    [limit]
-  );
-  return rows.map(mapSyncLog);
-}
-
-export async function listEnabledRuleSources(db: D1Database): Promise<RuleSourceRecord[]> {
-  const rows = await all(
-    db,
-    'SELECT * FROM rule_sources WHERE enabled = 1 ORDER BY created_at DESC'
-  );
-  return rows.map(mapRuleSource);
-}
-
-export async function getLatestRuleSnapshotBySourceId(
-  db: D1Database,
-  sourceId: string
-): Promise<{ id: string; ruleSourceId: string; contentHash: string; content: string; createdAt: string } | null> {
-  const row = await first(
-    db,
-    'SELECT * FROM rule_snapshots WHERE rule_source_id = ? ORDER BY created_at DESC LIMIT 1',
-    [sourceId]
-  );
-
-  if (!row) {
-    return null;
-  }
-
-  return {
-    id: asString(row.id),
-    ruleSourceId: asString(row.rule_source_id),
-    contentHash: asString(row.content_hash),
-    content: asString(row.content),
-    createdAt: asString(row.created_at)
-  };
-}
-
-export async function insertRuleSnapshot(
-  db: D1Database,
-  input: { ruleSourceId: string; contentHash: string; content: string }
-): Promise<void> {
-  await db
-    .prepare(
-      'INSERT INTO rule_snapshots (id, rule_source_id, content_hash, content, created_at) VALUES (?, ?, ?, ?, ?)'
-    )
-    .bind(createId('snap'), input.ruleSourceId, input.contentHash, input.content, new Date().toISOString())
-    .run();
 }
 
 export async function listUserNodeBindings(
@@ -1101,27 +801,6 @@ export async function listUserNodeBindings(
     enabled: asBoolean(row.enabled),
     createdAt: asString(row.created_at)
   }));
-}
-
-function mapAuditLog(row: Row): AuditLogRecord {
-  const targetId = asNullableString(row.target_id);
-  const payload = sanitizeAuditPayload(parseJsonObject(row.payload_json)) as AuditLogRecord['payload'];
-  const actorAdminUsername = asNullableString(row.actor_admin_username);
-  const targetDisplayName = readAuditTargetDisplayName(row, payload);
-  const requestMeta = mapAuditRequestMeta(payload);
-
-  return {
-    id: asString(row.id),
-    actorAdminId: asString(row.actor_admin_id),
-    action: asString(row.action),
-    targetType: asString(row.target_type),
-    createdAt: asString(row.created_at),
-    ...(actorAdminUsername !== null ? { actorAdminUsername } : {}),
-    ...(targetId !== null ? { targetId } : {}),
-    ...(targetDisplayName !== null ? { targetDisplayName } : {}),
-    ...(requestMeta ? { requestMeta } : {}),
-    ...(payload ? { payload } : {})
-  };
 }
 
 export async function createAuditLog(
@@ -1148,37 +827,6 @@ export async function createAuditLog(
       new Date().toISOString()
     )
     .run();
-}
-
-export async function listAuditLogs(db: D1Database, limit = 50): Promise<AuditLogRecord[]> {
-  const rows = await all(
-    db,
-    `SELECT
-       audit_logs.*,
-       admins.username AS actor_admin_username,
-       CASE
-         WHEN audit_logs.target_type = 'user' THEN users.name
-         WHEN audit_logs.target_type = 'node' THEN nodes.name
-         WHEN audit_logs.target_type = 'template' THEN templates.name
-         WHEN audit_logs.target_type = 'rule_source' THEN rule_sources.name
-         WHEN audit_logs.target_type = 'remote_subscription_source' THEN remote_subscription_sources.name
-         ELSE NULL
-       END AS target_display_name
-     FROM audit_logs
-     LEFT JOIN admins ON admins.id = audit_logs.actor_admin_id
-     LEFT JOIN users ON audit_logs.target_type = 'user' AND users.id = audit_logs.target_id
-     LEFT JOIN nodes ON audit_logs.target_type = 'node' AND nodes.id = audit_logs.target_id
-     LEFT JOIN templates ON audit_logs.target_type = 'template' AND templates.id = audit_logs.target_id
-     LEFT JOIN rule_sources ON audit_logs.target_type = 'rule_source' AND rule_sources.id = audit_logs.target_id
-     LEFT JOIN remote_subscription_sources
-       ON audit_logs.target_type = 'remote_subscription_source'
-      AND remote_subscription_sources.id = audit_logs.target_id
-     ORDER BY audit_logs.created_at DESC
-     LIMIT ?`,
-    [limit]
-  );
-
-  return rows.map(mapAuditLog);
 }
 
 export async function listUserCacheRefs(db: D1Database): Promise<Array<{ id: string; token: string }>> {

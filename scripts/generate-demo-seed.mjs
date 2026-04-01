@@ -51,8 +51,6 @@ const templateSingbox = {
   targetType: 'singbox',
   content: '{\n  "outbounds": {{outbounds}},\n  "route": {\n    "rules": {{rules}}\n  }\n}'
 };
-const ruleSource = { id: createId('rs'), name: 'Demo Rules', sourceUrl: 'https://example.com/rules.txt', format: 'text' };
-const ruleSnapshot = { id: createId('snap'), ruleSourceId: ruleSource.id, contentHash: createRandomToken(24), content: 'MATCH,DIRECT' };
 const bindingA = { id: createId('unm'), userId: userA.id, nodeId: nodeA.id };
 const bindingB = { id: createId('unm'), userId: userA.id, nodeId: nodeB.id };
 const bindingC = { id: createId('unm'), userId: userB.id, nodeId: nodeB.id };
@@ -64,8 +62,6 @@ const statements = [
   insert('nodes', ['id', 'name', 'protocol', 'server', 'port', 'credentials_json', 'params_json', 'source_type', 'source_id', 'enabled', 'last_sync_at', 'created_at', 'updated_at'], [nodeB.id, nodeB.name, nodeB.protocol, nodeB.server, nodeB.port, JSON.stringify({ password: 'demo-password' }), JSON.stringify({ sni: 'subforge.example.com' }), 'manual', null, '1', null, now, now]),
   insert('templates', ['id', 'name', 'target_type', 'content', 'version', 'is_default', 'enabled', 'created_at', 'updated_at'], [templateMihomo.id, templateMihomo.name, templateMihomo.targetType, templateMihomo.content, '1', '1', '1', now, now]),
   insert('templates', ['id', 'name', 'target_type', 'content', 'version', 'is_default', 'enabled', 'created_at', 'updated_at'], [templateSingbox.id, templateSingbox.name, templateSingbox.targetType, templateSingbox.content, '1', '1', '1', now, now]),
-  insert('rule_sources', ['id', 'name', 'source_url', 'format', 'enabled', 'last_sync_at', 'last_sync_status', 'failure_count', 'created_at', 'updated_at'], [ruleSource.id, ruleSource.name, ruleSource.sourceUrl, ruleSource.format, '1', now, 'success', '0', now, now]),
-  insert('rule_snapshots', ['id', 'rule_source_id', 'content_hash', 'content', 'created_at'], [ruleSnapshot.id, ruleSnapshot.ruleSourceId, ruleSnapshot.contentHash, ruleSnapshot.content, now]),
   insert('user_node_map', ['id', 'user_id', 'node_id', 'enabled', 'created_at'], [bindingA.id, bindingA.userId, bindingA.nodeId, '1', now]),
   insert('user_node_map', ['id', 'user_id', 'node_id', 'enabled', 'created_at'], [bindingB.id, bindingB.userId, bindingB.nodeId, '1', now]),
   insert('user_node_map', ['id', 'user_id', 'node_id', 'enabled', 'created_at'], [bindingC.id, bindingC.userId, bindingC.nodeId, '1', now])

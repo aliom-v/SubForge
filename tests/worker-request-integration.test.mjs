@@ -532,8 +532,8 @@ function createEnv({
   nodes = [createNodeRow()],
   userNodeMap = [{ user_id: 'usr_demo', node_id: 'node_hk_01', enabled: 1 }],
   remoteSubscriptionSources = [],
-  ruleSources = [createRuleSourceRow()],
-  snapshots = [createSnapshotRow()],
+  ruleSources = [],
+  snapshots = [],
   cacheEntries = []
 } = {}) {
   const assets = new MockAssets();
@@ -711,7 +711,7 @@ test('preview request compiles on miss, writes cache, and returns hit on the sec
   assert.equal(first.response.headers.get('x-subforge-cache-scope'), 'preview');
   assert.equal(first.payload.data.cacheKey, 'preview:mihomo:usr_demo');
   assert.match(first.payload.data.content, /HK Edge 01/);
-  assert.match(first.payload.data.content, /DOMAIN-SUFFIX,example\.com,DIRECT/);
+  assert.match(first.payload.data.content, /MATCH,DIRECT/);
   assert.equal(kv.putCalls.length, 1);
   assert.equal(kv.putCalls[0].key, 'preview:mihomo:usr_demo');
 
@@ -756,7 +756,7 @@ test('singbox preview request compiles on miss, writes cache, and returns hit on
   assert.equal(first.payload.data.cacheKey, 'preview:singbox:usr_demo');
   assert.equal(first.payload.data.mimeType, 'application/json; charset=utf-8');
   assert.match(first.payload.data.content, /"tag": "HK Edge 01"/);
-  assert.match(first.payload.data.content, /"domain_suffix": \[/);
+  assert.match(first.payload.data.content, /"rules": \[\s*\]/);
   assert.equal(kv.putCalls.length, 1);
   assert.equal(kv.putCalls[0].key, 'preview:singbox:usr_demo');
 
@@ -789,7 +789,7 @@ test('public subscription request compiles on miss, writes cache, and returns hi
   assert.equal(first.headers.get('x-subforge-cache'), 'miss');
   assert.equal(first.headers.get('x-subforge-cache-scope'), 'subscription');
   assert.match(firstBody, /HK Edge 01/);
-  assert.match(firstBody, /DOMAIN-SUFFIX,example\.com,DIRECT/);
+  assert.match(firstBody, /MATCH,DIRECT/);
   assert.equal(subscriptionCacheWrites().length, 1);
 
   const second = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/mihomo'), env);
@@ -814,7 +814,7 @@ test('singbox public subscription request compiles on miss, writes cache, and re
   assert.equal(first.headers.get('x-subforge-cache'), 'miss');
   assert.equal(first.headers.get('x-subforge-cache-scope'), 'subscription');
   assert.match(firstBody, /"tag": "HK Edge 01"/);
-  assert.match(firstBody, /"domain_suffix": \[/);
+  assert.match(firstBody, /"rules": \[\s*\]/);
   assert.equal(subscriptionCacheWrites().length, 1);
 
   const second = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/singbox'), env);
@@ -894,19 +894,7 @@ test('unknown runtime errors return a structured 500 internal error response', a
   assert.equal(payload.error.message, 'internal server error');
 });
 
-test('scheduled delegates sync work to waitUntil and processes only enabled rule sources', async () => {
-  const enabledSource = createRuleSourceRow({
-    id: 'rs_enabled',
-    name: 'Enabled Rules',
-    source_url: 'https://example.com/enabled.txt',
-    enabled: 1
-  });
-  const disabledSource = createRuleSourceRow({
-    id: 'rs_disabled',
-    name: 'Disabled Rules',
-    source_url: 'https://example.com/disabled.txt',
-    enabled: 0
-  });
+test('scheduled delegates sync work to waitUntil and processes only enabled remote subscription sources', async () => {
   const enabledRemoteSource = createRemoteSubscriptionSourceRow({
     id: 'rss_enabled',
     name: 'Enabled Remote Subscription',
@@ -921,8 +909,6 @@ test('scheduled delegates sync work to waitUntil and processes only enabled rule
   });
   const { env, db, kv } = createEnv({
     remoteSubscriptionSources: [enabledRemoteSource, disabledRemoteSource],
-    ruleSources: [enabledSource, disabledSource],
-    snapshots: [],
     cacheEntries: [
       ['sub:mihomo:tok_demo', 'cached'],
       ['preview:mihomo:usr_demo', '{"ok":true}'],
@@ -939,14 +925,10 @@ test('scheduled delegates sync work to waitUntil and processes only enabled rule
     await withMockFetch(
       async (input) => {
         requestedUrls.push(typeof input === 'string' ? input : input.url);
-        if ((typeof input === 'string' ? input : input.url).includes('subscription')) {
-          return new Response(
-            'vless://11111111-1111-1111-1111-111111111111@hk.example.com:443?security=tls&type=ws#HK',
-            { status: 200 }
-          );
-        }
-
-        return new Response('MATCH,DIRECT', { status: 200 });
+        return new Response(
+          'vless://11111111-1111-1111-1111-111111111111@hk.example.com:443?security=tls&type=ws#HK',
+          { status: 200 }
+        );
       },
       async () => {
         await worker.scheduled(
@@ -967,18 +949,9 @@ test('scheduled delegates sync work to waitUntil and processes only enabled rule
     console.log = originalLog;
   }
 
-  assert.deepEqual(requestedUrls, ['https://example.com/enabled.txt', 'https://example.com/subscription.txt']);
+  assert.deepEqual(requestedUrls, ['https://example.com/subscription.txt']);
   assert.equal(db.nodes.size, 2);
-  assert.equal(db.snapshots.length, 1);
-  assert.equal(db.syncLogs.length, 2);
-  assert.equal(db.ruleSources.get('rs_enabled')?.last_sync_status, 'success');
-  assert.equal(db.ruleSources.get('rs_disabled')?.last_sync_status, null);
   assert.equal(db.remoteSubscriptionSources.get('rss_enabled')?.last_sync_status, 'success');
   assert.equal(db.remoteSubscriptionSources.get('rss_disabled')?.last_sync_status, null);
-  assert.deepEqual(kv.deletedKeys, [
-    'sub:mihomo:tok_demo',
-    'preview:mihomo:usr_demo',
-    'sub:singbox:tok_demo',
-    'preview:singbox:usr_demo'
-  ]);
+  assert.deepEqual(kv.deletedKeys, []);
 });

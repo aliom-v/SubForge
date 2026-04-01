@@ -47,7 +47,7 @@ assertIncludes(adminSql, "'admin'", 'admin seed username');
 assertIncludes(adminSql, 'pbkdf2$', 'admin seed password hash');
 
 const demoSql = await captureModuleOutput('scripts/generate-demo-seed.mjs');
-for (const tableName of ['users', 'nodes', 'templates', 'rule_sources', 'rule_snapshots', 'user_node_map']) {
+for (const tableName of ['users', 'nodes', 'templates', 'user_node_map']) {
   assertIncludes(demoSql, `INSERT INTO ${tableName}`, 'demo seed output');
 }
 assertIncludes(demoSql, '-- Demo tokens', 'demo seed tokens header');
@@ -289,7 +289,7 @@ assertIncludes(openapiContractScript, 'should be public', 'openapi contract publ
 const openapiSpec = readFileSync('openapi.yaml', 'utf8');
 assertIncludes(openapiSpec, 'openapi: 3.1.0', 'openapi version');
 assertIncludes(openapiSpec, '/api/users:', 'openapi users path');
-assertIncludes(openapiSpec, '/api/rule-sources/{ruleSourceId}/sync:', 'openapi rule source sync path');
+assertIncludes(openapiSpec, '/api/remote-subscription-sources/{sourceId}/sync:', 'openapi remote subscription sync path');
 assertIncludes(openapiSpec, '/api/preview/{userId}/{target}:', 'openapi preview path');
 assertIncludes(openapiSpec, '/s/{token}/{target}:', 'openapi public subscription path');
 assertIncludes(openapiSpec, 'bearerAuth', 'openapi bearer auth');
@@ -306,7 +306,7 @@ assertIncludes(openapiSpec, 'loginSuccess', 'openapi login success example');
 assertIncludes(openapiSpec, 'createUserRequest', 'openapi create user request example');
 assertIncludes(openapiSpec, 'wrappedNodeImportPayload', 'openapi node import payload example');
 assertIncludes(openapiSpec, 'templateCreated', 'openapi template success example');
-assertIncludes(openapiSpec, 'ruleSourceSyncUpdated', 'openapi rule source sync success example');
+assertIncludes(openapiSpec, 'remoteSubscriptionSourceSyncUpdated', 'openapi remote subscription sync success example');
 assertIncludes(openapiSpec, 'previewMiss', 'openapi preview success example');
 assertIncludes(openapiSpec, 'mihomoSubscription', 'openapi public yaml example');
 assertIncludes(openapiSpec, 'PreviewMetadata:', 'openapi preview metadata schema');
@@ -318,9 +318,7 @@ assertIncludes(architectureGuide, 'apps/web', 'architecture guide web layer');
 assertIncludes(architectureGuide, 'apps/worker', 'architecture guide worker layer');
 assertIncludes(architectureGuide, 'SUB_CACHE', 'architecture guide kv cache');
 assertIncludes(architectureGuide, 'GitHub Actions', 'architecture guide backup plane');
-assertIncludes(architectureGuide, 'rule_snapshots', 'architecture guide rule snapshots entity');
 assertIncludes(architectureGuide, 'remote_subscription_sources', 'architecture guide remote subscription sources entity');
-assertIncludes(architectureGuide, 'idx_rule_snapshots_hash', 'architecture guide rule snapshot index docs');
 assertIncludes(architectureGuide, 'user_node_map', 'architecture guide user node mapping');
 assertIncludes(architectureGuide, 'erDiagram', 'architecture guide er diagram');
 assertIncludes(architectureGuide, 'flowchart LR', 'architecture guide runtime diagram');
@@ -458,12 +456,12 @@ assertIncludes(rateLimit, 'peekAdminLoginRateLimit', 'worker admin login rate li
 assertIncludes(rateLimit, 'consumeSubscriptionRateLimit', 'worker subscription rate limit helper');
 
 const sharedDomain = readFileSync('packages/shared/src/domain.ts', 'utf8');
-assertIncludes(sharedDomain, 'targetDisplayName?: string | null;', 'shared audit target display field');
-assertIncludes(sharedDomain, 'requestMeta?: AuditRequestMeta | null;', 'shared audit request meta field');
+assertIncludes(sharedDomain, 'export interface RemoteSubscriptionSourceRecord extends TimestampedRecord {', 'shared remote subscription record');
+assertIncludes(sharedDomain, 'lastSyncStatus?: SyncLogStatus | null;', 'shared remote subscription sync status field');
 
 const workerRepository = readFileSync('apps/worker/src/repository.ts', 'utf8');
-assertIncludes(workerRepository, 'target_display_name', 'worker audit target display query');
-assertIncludes(workerRepository, 'mapAuditRequestMeta', 'worker audit request meta mapping');
+assertIncludes(workerRepository, 'recordRemoteSubscriptionSourceSync', 'worker remote subscription sync status persistence');
+assertIncludes(workerRepository, 'ruleSets: []', 'worker subscription compile input should not depend on rule snapshots');
 
 const webApp = readFileSync('apps/web/src/App.tsx', 'utf8');
 assertIncludes(webApp, '使用当前启用节点生成托管 URL', 'web single-user hosted generation action');
@@ -471,15 +469,10 @@ assertIncludes(webApp, '重置当前托管链接', 'web hosted token reset actio
 assertIncludes(webApp, '保存为自动同步源', 'web remote subscription source action');
 assertIncludes(webApp, '链式代理拓扑', 'web node topology panel');
 
-const workerSyncDiagnostics = readFileSync('apps/worker/src/rule-sync-diagnostics.ts', 'utf8');
-assertIncludes(workerSyncDiagnostics, 'operatorHint', 'worker sync operator hint field');
-assertIncludes(workerSyncDiagnostics, 'contentPreview', 'worker sync content preview field');
-
 const workerSync = readFileSync('apps/worker/src/sync.ts', 'utf8');
 assertIncludes(workerSync, 'FETCH_TIMEOUT', 'worker sync timeout grading');
-assertIncludes(workerSync, 'UNSUPPORTED_JSON_SHAPE', 'worker sync json shape grading');
-assertIncludes(workerSync, 'duplicateRuleCount', 'worker sync parse metrics');
-assertIncludes(workerSync, 'buildRuleSourceSyncDiagnostics', 'worker sync diagnostics helper usage');
+assertIncludes(workerSync, 'FETCH_NETWORK_ERROR', 'worker sync network grading');
+assertIncludes(workerSync, 'upstream request timed out after', 'worker sync timeout message');
 
 const webSync = readFileSync('apps/web/src/App.tsx', 'utf8');
 assertIncludes(webSync, 'className="page auth-page"', 'web auth view should render the auth-page layout');

@@ -49,28 +49,6 @@ CREATE TABLE IF NOT EXISTS templates (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS rule_sources (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  source_url TEXT NOT NULL,
-  format TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  last_sync_at TEXT,
-  last_sync_status TEXT,
-  failure_count INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS rule_snapshots (
-  id TEXT PRIMARY KEY,
-  rule_source_id TEXT NOT NULL,
-  content_hash TEXT NOT NULL,
-  content TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (rule_source_id) REFERENCES rule_sources(id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS user_node_map (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -80,16 +58,6 @@ CREATE TABLE IF NOT EXISTS user_node_map (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE,
   UNIQUE (user_id, node_id)
-);
-
-CREATE TABLE IF NOT EXISTS sync_logs (
-  id TEXT PRIMARY KEY,
-  source_type TEXT NOT NULL,
-  source_id TEXT,
-  status TEXT NOT NULL,
-  message TEXT,
-  details_json TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -110,12 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_nodes_protocol ON nodes(protocol);
 CREATE INDEX IF NOT EXISTS idx_nodes_source ON nodes(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_templates_target_enabled ON templates(target_type, enabled);
 CREATE INDEX IF NOT EXISTS idx_templates_target_default ON templates(target_type, is_default);
-CREATE INDEX IF NOT EXISTS idx_rule_sources_enabled ON rule_sources(enabled);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_rule_snapshots_hash ON rule_snapshots(rule_source_id, content_hash);
-CREATE INDEX IF NOT EXISTS idx_rule_snapshots_source_created ON rule_snapshots(rule_source_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_node_map_user_id ON user_node_map(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_node_map_node_id ON user_node_map(node_id);
-CREATE INDEX IF NOT EXISTS idx_sync_logs_source_type ON sync_logs(source_type);
-CREATE INDEX IF NOT EXISTS idx_sync_logs_created_at ON sync_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_admin_id ON audit_logs(actor_admin_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON audit_logs(target_type, target_id);

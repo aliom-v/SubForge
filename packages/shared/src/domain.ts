@@ -67,17 +67,6 @@ export interface TemplateRecord extends TimestampedRecord {
   status: TemplateStatus;
 }
 
-export interface RuleSourceRecord extends TimestampedRecord {
-  id: string;
-  name: string;
-  sourceUrl: string;
-  format: RuleSourceFormat;
-  enabled: boolean;
-  lastSyncAt?: string | null;
-  lastSyncStatus?: SyncLogStatus | null;
-  failureCount: number;
-}
-
 export interface RemoteSubscriptionSourceRecord extends TimestampedRecord {
   id: string;
   name: string;
@@ -88,51 +77,10 @@ export interface RemoteSubscriptionSourceRecord extends TimestampedRecord {
   failureCount: number;
 }
 
-export interface RuleSnapshotRecord {
-  id: string;
-  ruleSourceId: string;
-  contentHash: string;
-  content: string;
-  createdAt: string;
-}
-
 export interface UserNodeBinding {
   id: string;
   userId: string;
   nodeId: string;
   enabled: boolean;
-  createdAt: string;
-}
-
-export interface SyncLogRecord {
-  id: string;
-  sourceType: string;
-  sourceId?: string | null;
-  status: SyncLogStatus;
-  message?: string | null;
-  details?: Record<string, JsonValue> | null;
-  createdAt: string;
-}
-
-export interface AuditRequestMeta {
-  ip?: string | null;
-  country?: string | null;
-  colo?: string | null;
-  userAgent?: string | null;
-  method?: string | null;
-  path?: string | null;
-  rayId?: string | null;
-}
-
-export interface AuditLogRecord {
-  id: string;
-  actorAdminId: string;
-  actorAdminUsername?: string | null;
-  action: string;
-  targetType: string;
-  targetId?: string | null;
-  targetDisplayName?: string | null;
-  requestMeta?: AuditRequestMeta | null;
-  payload?: Record<string, JsonValue> | null;
   createdAt: string;
 }

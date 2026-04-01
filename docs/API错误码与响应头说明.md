@@ -117,7 +117,7 @@ Authorization: Bearer <admin-session-token>
 | 登录与管理员会话 | `POST /api/admin/login`、`GET /api/admin/me`、`POST /api/admin/logout` | `x-subforge-rate-limit-scope: admin_login`、`x-subforge-rate-limit-cleared: true`、`x-subforge-rate-limit-limit`、`x-subforge-rate-limit-remaining`、`x-subforge-rate-limit-reset`、`retry-after` | `POST /api/admin/logout` 当前会返回 `loggedOut`、`serverRevocation`、`mode` 与可选 `revokedAt` |
 | 预览接口 | `GET /api/preview/:userId/:target` | `x-subforge-preview-cache: hit|miss`、`x-subforge-cache-key`、`x-subforge-cache-scope: preview` | 返回 JSON 包裹，`data` 中带 `cacheKey`、`mimeType`、`content`、`metadata` |
 | 公开订阅接口 | `GET /s/:token/:target` | `x-subforge-cache: hit|miss`、`x-subforge-cache-key`、`x-subforge-cache-scope: subscription`、`x-subforge-rate-limit-scope: subscription`、`x-subforge-rate-limit-limit`、`x-subforge-rate-limit-remaining`、`x-subforge-rate-limit-reset`、`retry-after` | 返回订阅原文，频控检查发生在缓存读取前 |
-| 其余管理资源接口 | `/api/users`、`/api/nodes`、`/api/templates`、`/api/rule-sources`、`/api/sync-logs`、`/api/audit-logs`、`/api/cache/rebuild` | 无固定专属头；重点看 HTTP 状态码、`error.code` 与结构化 `details` | 写操作通常会带来审计日志或缓存失效副作用 |
+| 其余管理资源接口 | `/api/users`、`/api/nodes`、`/api/templates`、`/api/remote-subscription-sources` | 无固定专属头；重点看 HTTP 状态码、`error.code` 与结构化 `details` | 写操作通常会带来审计日志或缓存失效副作用 |
 
 限流统计维度、默认阈值与调参建议见 `docs/限流与安全策略.md`。
 

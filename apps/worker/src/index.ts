@@ -15,14 +15,12 @@ import {
   createAppError,
   HEALTH_ENDPOINT,
   NODE_SOURCE_TYPES,
-  RULE_SOURCE_FORMATS,
   SUBSCRIPTION_TARGETS,
   USER_STATUSES,
   type AdminRecord,
   type AppErrorShape,
   type JsonValue,
   type NodeSourceType,
-  type RuleSourceFormat,
   type SubscriptionTarget,
   type UserRecord,
   type UserStatus
@@ -34,11 +32,9 @@ import {
   createAdmin,
   createNode,
   createRemoteSubscriptionSource,
-  createRuleSource,
   createTemplate,
   createUser,
   deleteRemoteSubscriptionSource,
-  deleteRuleSource,
   deleteTemplate,
   deleteUser,
   deleteNode,
@@ -49,19 +45,15 @@ import {
   getNodeById,
   getRemoteSubscriptionSourceById,
   getRemoteSubscriptionSourceByUrl,
-  getRuleSourceById,
   getTemplateById,
   getSubscriptionCompileInputByToken,
   getSubscriptionCompileInputByUserId,
   revokeAdminSessions,
   getUserById,
   getUserByToken,
-  listAuditLogs,
   listNodes,
   listNodesBySource,
   listRemoteSubscriptionSources,
-  listRuleSources,
-  listSyncLogs,
   listTemplates,
   listUserNodeBindings,
   listUsers,
@@ -72,7 +64,6 @@ import {
   setDefaultTemplate,
   updateNode,
   updateRemoteSubscriptionSource,
-  updateRuleSource,
   updateTemplate,
   updateUser
 } from './repository';
@@ -81,8 +72,7 @@ import {
   invalidateAllUserCaches,
   invalidateNodeAffectedCaches,
   invalidateUserCaches,
-  invalidateUsersCaches,
-  rebuildSubscriptionCaches
+  invalidateUsersCaches
 } from './cache';
 import {
   clearAdminLoginRateLimit,
@@ -100,7 +90,7 @@ import {
   runEnabledRemoteSubscriptionSourceSync,
   syncRemoteSubscriptionSourceNow
 } from './remote-subscription-sync';
-import { fetchText, runEnabledRuleSourceSync, syncRuleSourceNow, toFetchTextValidationError } from './sync';
+import { fetchText, toFetchTextValidationError } from './sync';
 
 const NODE_IMPORT_LIMIT = 200;
 
@@ -138,10 +128,6 @@ function isUserStatus(value: string): value is UserStatus {
 
 function isNodeSourceType(value: string): value is NodeSourceType {
   return NODE_SOURCE_TYPES.includes(value as NodeSourceType);
-}
-
-function isRuleSourceFormat(value: string): value is RuleSourceFormat {
-  return RULE_SOURCE_FORMATS.includes(value as RuleSourceFormat);
 }
 
 function isValidPort(value: number | undefined): value is number {
@@ -588,20 +574,6 @@ function buildTemplateAuditPayload(template: {
     ...(template.version !== undefined ? { version: template.version } : {}),
     ...(template.status ? { status: template.status } : {}),
     ...(template.isDefault !== undefined ? { isDefault: template.isDefault } : {})
-  };
-}
-
-function buildRuleSourceAuditPayload(ruleSource: {
-  name: string;
-  sourceUrl: string;
-  format: RuleSourceFormat;
-  enabled?: boolean;
-}): Record<string, JsonValue> {
-  return {
-    name: ruleSource.name,
-    sourceUrl: ruleSource.sourceUrl,
-    format: ruleSource.format,
-    ...(ruleSource.enabled !== undefined ? { enabled: ruleSource.enabled } : {})
   };
 }
 
@@ -1786,168 +1758,6 @@ async function handleRemoteSubscriptionSourceById(
   return notFound(`/api/remote-subscription-sources/${remoteSubscriptionSourceId}`);
 }
 
-async function handleRuleSources(request: Request, env: Env, adminId: string): Promise<Response> {
-  if (request.method === 'GET') {
-    return ok(await listRuleSources(env.DB));
-  }
-
-  if (request.method === 'POST') {
-    const body = await parseJsonBody(request);
-
-    if (!isRecord(body)) {
-      return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
-    }
-
-    const name = asString(body.name);
-    const sourceUrl = asString(body.sourceUrl);
-    const format = asString(body.format) as RuleSourceFormat | undefined;
-
-    if (!name || !sourceUrl || !format) {
-      return fail(createAppError('VALIDATION_FAILED', 'name, sourceUrl and format are required'), 400);
-    }
-
-    if (!isRuleSourceFormat(format)) {
-      return fail(createAppError('VALIDATION_FAILED', 'format must be text, yaml or json'), 400);
-    }
-
-    if (!isValidHttpUrl(sourceUrl)) {
-      return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http/https URL'), 400);
-    }
-
-    const enabled = asBoolean(body.enabled);
-
-    const ruleSource = await createRuleSource(env.DB, {
-      name,
-      sourceUrl,
-      format,
-      ...(enabled !== undefined ? { enabled } : {})
-    });
-
-    await writeAuditLog(request, env, {
-      actorAdminId: adminId,
-      action: 'rule_source.create',
-      targetType: 'rule_source',
-      targetId: ruleSource.id,
-      payload: buildRuleSourceAuditPayload(ruleSource)
-    });
-
-    return ok(ruleSource, { status: 201 });
-  }
-
-  return notFound('/api/rule-sources');
-}
-
-async function handleRuleSourceById(
-  request: Request,
-  env: Env,
-  adminId: string,
-  ruleSourceId: string,
-  action?: string
-): Promise<Response> {
-  if (request.method === 'PATCH' && !action) {
-    const current = await getRuleSourceById(env.DB, ruleSourceId);
-
-    if (!current) {
-      return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
-    }
-
-    const body = await parseJsonBody(request);
-
-    if (!isRecord(body)) {
-      return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
-    }
-
-    const sourceUrl = asString(body.sourceUrl);
-    const format = asString(body.format);
-
-    if (format && !isRuleSourceFormat(format)) {
-      return fail(createAppError('VALIDATION_FAILED', 'format must be text, yaml or json'), 400);
-    }
-
-    if (sourceUrl && !isValidHttpUrl(sourceUrl)) {
-      return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http/https URL'), 400);
-    }
-
-    const nextName = asString(body.name);
-    const nextEnabled = asBoolean(body.enabled);
-
-    const ruleSource = await updateRuleSource(env.DB, ruleSourceId, {
-      ...(nextName ? { name: nextName } : {}),
-      ...(sourceUrl ? { sourceUrl } : {}),
-      ...(format ? { format: format as RuleSourceFormat } : {}),
-      ...(nextEnabled !== undefined ? { enabled: nextEnabled } : {})
-    });
-
-    if (!ruleSource) {
-      return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
-    }
-
-    if (current.enabled !== ruleSource.enabled) {
-      await invalidateAllUserCaches(env);
-    }
-
-    await writeAuditLog(request, env, {
-      actorAdminId: adminId,
-      action: 'rule_source.update',
-      targetType: 'rule_source',
-      targetId: ruleSource.id,
-      payload: buildRuleSourceAuditPayload(ruleSource)
-    });
-
-    return ok(ruleSource);
-  }
-
-  if (request.method === 'POST' && action === 'sync') {
-    const current = await getRuleSourceById(env.DB, ruleSourceId);
-
-    if (!current) {
-      return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
-    }
-
-    const result = await syncRuleSourceNow(env, current);
-    await writeAuditLog(request, env, {
-      actorAdminId: adminId,
-      action: 'rule_source.sync',
-      targetType: 'rule_source',
-      targetId: current.id,
-      payload: {
-        ...buildRuleSourceAuditPayload(current),
-        status: result.status,
-        changed: result.changed,
-        ruleCount: result.ruleCount,
-        details: result.details ?? null
-      }
-    });
-    return ok(result);
-  }
-
-  if (request.method === 'DELETE' && !action) {
-    const current = await getRuleSourceById(env.DB, ruleSourceId);
-
-    if (!current) {
-      return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
-    }
-
-    const deleted = await deleteRuleSource(env.DB, ruleSourceId);
-
-    if (!deleted) {
-      return fail(createAppError('NOT_FOUND', 'rule source not found'), 404);
-    }
-
-    await invalidateAllUserCaches(env);
-    await writeAuditLog(request, env, {
-      actorAdminId: adminId,
-      action: 'rule_source.delete',
-      targetType: 'rule_source',
-      targetId: ruleSourceId,
-      payload: { name: current.name, format: current.format }
-    });
-    return ok({ deleted: true, ruleSourceId });
-  }
-
-  return notFound(`/api/rule-sources/${ruleSourceId}`);
-}
-
 async function handlePreview(env: Env, userId: string, targetRaw: string): Promise<Response> {
   if (!isSubscriptionTarget(targetRaw)) {
     return fail(createAppError('UNSUPPORTED_TARGET', 'unsupported subscription target'), 400);
@@ -2076,35 +1886,6 @@ async function handlePublicSubscription(
   });
 }
 
-async function handleSyncLogs(env: Env): Promise<Response> {
-  return ok(await listSyncLogs(env.DB));
-}
-
-async function handleAuditLogs(env: Env): Promise<Response> {
-  return ok(await listAuditLogs(env.DB));
-}
-
-async function handleCacheRebuild(request: Request, env: Env, adminId: string): Promise<Response> {
-  if (request.method !== 'POST') {
-    return notFound('/api/cache/rebuild');
-  }
-
-  const result = await rebuildSubscriptionCaches(env);
-
-  await writeAuditLog(request, env, {
-    actorAdminId: adminId,
-    action: 'cache.rebuild',
-    targetType: 'cache',
-    payload: {
-      userCount: result.userCount,
-      targets: result.targets,
-      keysRequested: result.keysRequested
-    }
-  });
-
-  return ok(result);
-}
-
 async function handleApiRequest(request: Request, env: Env, segments: string[]): Promise<Response> {
   const [resource, resourceId, action] = segments;
 
@@ -2178,32 +1959,12 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
     return handleTemplateById(request, env, auth.admin.id, resourceId, action);
   }
 
-  if (resource === 'rule-sources' && !resourceId) {
-    return handleRuleSources(request, env, auth.admin.id);
-  }
-
-  if (resource === 'rule-sources' && resourceId) {
-    return handleRuleSourceById(request, env, auth.admin.id, resourceId, action);
-  }
-
   if (resource === 'remote-subscription-sources' && !resourceId) {
     return handleRemoteSubscriptionSources(request, env, auth.admin.id);
   }
 
   if (resource === 'remote-subscription-sources' && resourceId) {
     return handleRemoteSubscriptionSourceById(request, env, auth.admin.id, resourceId, action);
-  }
-
-  if (resource === 'cache' && resourceId === 'rebuild' && !action) {
-    return handleCacheRebuild(request, env, auth.admin.id);
-  }
-
-  if (resource === 'sync-logs' && !resourceId && request.method === 'GET') {
-    return handleSyncLogs(env);
-  }
-
-  if (resource === 'audit-logs' && !resourceId && request.method === 'GET') {
-    return handleAuditLogs(env);
   }
 
   if (resource === 'preview' && resourceId && action) {
@@ -2258,13 +2019,11 @@ export default {
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      Promise.all([runEnabledRuleSourceSync(env), runEnabledRemoteSubscriptionSourceSync(env)]).then(
-        ([ruleResults, remoteSubscriptionResults]) => {
+      runEnabledRemoteSubscriptionSourceSync(env).then((remoteSubscriptionResults) => {
         console.log(
-            `[${APP_NAME}] cron trigger fired at ${controller.scheduledTime} in ${env.APP_ENV} with ${ruleResults.length} rule source(s) and ${remoteSubscriptionResults.length} remote subscription source(s)`
+          `[${APP_NAME}] cron trigger fired at ${controller.scheduledTime} in ${env.APP_ENV} with ${remoteSubscriptionResults.length} remote subscription source(s)`
         );
-        }
-      )
+      })
     );
   }
 };
