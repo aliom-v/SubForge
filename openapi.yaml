@@ -28,7 +28,7 @@ tags:
   - name: Users
     description: 用户与用户节点绑定管理
   - name: Nodes
-    description: 节点 CRUD 与批量导入
+    description: 节点 CRUD、批量导入与批量操作
   - name: Templates
     description: 订阅模板管理
   - name: RemoteSubscriptionSources
@@ -674,6 +674,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/NodeImportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/nodes/batch:
+    post:
+      tags: [Nodes]
+      summary: 批量修改节点
+      description: 批量启用、禁用或删除节点。提交前会校验节点存在性，并阻止会破坏链式代理引用关系的变更。
+      operationId: mutateNodesBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeBatchMutationRequest'
+            examples:
+              disableNodes:
+                summary: 批量禁用节点
+                value:
+                  action: set_enabled
+                  nodeIds:
+                    - node_hk_01
+                    - node_sg_01
+                  enabled: false
+              deleteNodes:
+                summary: 批量删除节点
+                value:
+                  action: delete
+                  nodeIds:
+                    - node_hk_01
+                    - node_sg_01
+      responses:
+        '200':
+          description: 批量变更结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeBatchMutationResponse'
         '400':
           $ref: '#/components/responses/BadRequestError'
         '401':
@@ -2007,6 +2051,62 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/NodeImportResult'
+    NodeBatchMutationAction:
+      type: string
+      enum: [set_enabled, delete]
+    NodeBatchNodeIds:
+      type: array
+      minItems: 1
+      items:
+        type: string
+    NodeBatchSetEnabledRequest:
+      type: object
+      required: [action, nodeIds, enabled]
+      properties:
+        action:
+          type: string
+          enum: [set_enabled]
+        nodeIds:
+          $ref: '#/components/schemas/NodeBatchNodeIds'
+        enabled:
+          type: boolean
+    NodeBatchDeleteRequest:
+      type: object
+      required: [action, nodeIds]
+      properties:
+        action:
+          type: string
+          enum: [delete]
+        nodeIds:
+          $ref: '#/components/schemas/NodeBatchNodeIds'
+    NodeBatchMutationRequest:
+      oneOf:
+        - $ref: '#/components/schemas/NodeBatchSetEnabledRequest'
+        - $ref: '#/components/schemas/NodeBatchDeleteRequest'
+    NodeBatchMutationResult:
+      type: object
+      required: [action, nodeIds, affectedCount, changedCount]
+      properties:
+        action:
+          $ref: '#/components/schemas/NodeBatchMutationAction'
+        nodeIds:
+          $ref: '#/components/schemas/NodeBatchNodeIds'
+        enabled:
+          type: boolean
+          description: 仅在 action 为 set_enabled 时返回
+        affectedCount:
+          type: integer
+          minimum: 0
+        changedCount:
+          type: integer
+          minimum: 0
+    NodeBatchMutationResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/NodeBatchMutationResult'
     ImportedNodePreviewItem:
       type: object
       required: [name, protocol, server, port, source]

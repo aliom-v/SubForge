@@ -167,6 +167,47 @@ h2 {
   align-items: start;
 }
 
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.tab-button {
+  display: grid;
+  gap: 4px;
+  min-width: 132px;
+  padding: 12px 14px;
+  border: 1px solid rgba(124, 184, 255, 0.18);
+  background: rgba(124, 184, 255, 0.08);
+  color: #d9e9f9;
+  text-align: left;
+}
+
+.tab-button small {
+  color: #9db8d4;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, #2f81f7, #59b0ff);
+  color: #041220;
+}
+
+.tab-button.active small {
+  color: rgba(4, 18, 32, 0.78);
+}
+
 .metadata-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -333,6 +374,16 @@ h2 {
   padding: 16px 18px 18px;
 }
 
+.compact-disclosure > summary {
+  padding: 12px 14px;
+  font-size: 14px;
+}
+
+.compact-disclosure .disclosure-body {
+  gap: 12px;
+  padding: 14px;
+}
+
 .import-errors {
   display: grid;
   gap: 10px;
@@ -353,6 +404,86 @@ h2 {
 
 .table-wrap {
   overflow: auto;
+}
+
+.node-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 180px auto auto;
+  gap: 12px;
+  align-items: center;
+  margin: 12px 0 16px;
+}
+
+.node-toolbar-search {
+  min-width: 0;
+}
+
+.node-toolbar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #9db8d4;
+  font-size: 13px;
+}
+
+.node-bulk-bar {
+  margin-bottom: 16px;
+}
+
+.selection-cell {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 2px;
+}
+
+.selection-checkbox {
+  width: 18px;
+  height: 18px;
+}
+
+.table-cell-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.table-primary {
+  color: #eef6ff;
+}
+
+.table-subtle {
+  color: #9db8d4;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.inline-details {
+  margin-top: 8px;
+}
+
+.inline-details > summary {
+  cursor: pointer;
+  color: #8fc5ff;
+  font-size: 13px;
+}
+
+.inline-details-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.inline-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.inline-issue-list {
+  display: grid;
+  gap: 10px;
 }
 
 table {
@@ -396,6 +527,10 @@ pre {
   font-size: 13px;
 }
 
+.top-gap {
+  margin-top: 16px;
+}
+
 @media (min-width: 1100px) {
   .main-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -417,6 +552,19 @@ pre {
 
   .hero-row {
     flex-direction: column;
+  }
+
+  .panel-header {
+    flex-direction: column;
+  }
+
+  .section-tabs {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .node-toolbar {
+    grid-template-columns: 1fr;
   }
 
   table {
@@ -458,4 +606,70 @@ pre {
   color: #d9e9f9;
   font-weight: 700;
   text-decoration: none;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(2, 7, 15, 0.68);
+  backdrop-filter: blur(6px);
+}
+
+.drawer-panel {
+  width: min(760px, 100vw);
+  height: 100vh;
+  padding: 24px;
+  border-left: 1px solid rgba(124, 184, 255, 0.16);
+  background: rgba(10, 20, 36, 0.96);
+  box-shadow: -20px 0 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.drawer-form {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 16px;
+  height: calc(100vh - 96px);
+}
+
+.drawer-body {
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.drawer-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  border-top: 1px solid rgba(124, 184, 255, 0.12);
+}
+
+.drawer-close {
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .drawer-panel {
+    width: 100vw;
+    padding: 20px;
+    border-left: 0;
+  }
+
+  .drawer-header {
+    flex-direction: column;
+  }
 }

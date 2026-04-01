@@ -2932,6 +2932,126 @@ test('updating a node still allows unrelated changes when another historical bad
   assert.equal(auditAction(db.auditLogs[0]), 'node.update');
 });
 
+test('batch enabling dependent nodes succeeds when the whole chain becomes valid together', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_hk_01', {
+        name: 'HK Edge 01',
+        server: 'hk-01.example.com',
+        enabled: 0
+      }),
+      createNodeRow('node_sg_01', {
+        name: 'SG Edge 01',
+        server: 'sg-01.example.com',
+        enabled: 0,
+        params_json: JSON.stringify({
+          tls: true,
+          upstreamProxy: 'HK Edge 01'
+        })
+      })
+    ],
+    userNodeMap: [
+      { id: 'unm_1', user_id: 'usr_demo', node_id: 'node_hk_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' },
+      { id: 'unm_2', user_id: 'usr_demo', node_id: 'node_sg_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }
+    ],
+    cacheEntries: [
+      ['sub:mihomo:tok_demo', 'cached'],
+      ['preview:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:singbox:tok_demo', 'cached'],
+      ['preview:singbox:usr_demo', '{"cached":true}']
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/batch',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        action: 'set_enabled',
+        nodeIds: ['node_hk_01', 'node_sg_01'],
+        enabled: true
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.data, {
+    action: 'set_enabled',
+    nodeIds: ['node_hk_01', 'node_sg_01'],
+    enabled: true,
+    affectedCount: 2,
+    changedCount: 2
+  });
+  assert.equal(db.nodes.get('node_hk_01').enabled, 1);
+  assert.equal(db.nodes.get('node_sg_01').enabled, 1);
+  assert.deepEqual(kv.deletedKeys, [
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo',
+    'sub:singbox:tok_demo',
+    'preview:singbox:usr_demo',
+    'sub:mihomo:tok_demo',
+    'preview:mihomo:usr_demo',
+    'sub:singbox:tok_demo',
+    'preview:singbox:usr_demo'
+  ]);
+  assert.equal(db.auditLogs.length, 1);
+  assert.equal(auditAction(db.auditLogs[0]), 'node.batch_set_enabled');
+  assert.equal(parseAuditPayload(db.auditLogs[0]).changedCount, 2);
+});
+
+test('batch deleting nodes rejects broken downstream chains without mutating state', async () => {
+  const { env, kv, db } = createEnv({
+    nodes: [
+      createNodeRow('node_hk_01', { name: 'HK Edge 01', server: 'hk-01.example.com' }),
+      createNodeRow('node_sg_01', {
+        name: 'SG Edge 01',
+        server: 'sg-01.example.com',
+        params_json: JSON.stringify({
+          tls: true,
+          upstreamProxy: 'HK Edge 01'
+        })
+      })
+    ]
+  });
+  const adminToken = await createAdminToken(env);
+  const initialState = captureWriteState(db);
+
+  const { response, payload } = await requestJson(
+    'http://127.0.0.1:8787/api/nodes/batch',
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        action: 'delete',
+        nodeIds: ['node_hk_01']
+      })
+    },
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'VALIDATION_FAILED');
+  assert.equal(payload.error.message, 'node chain validation failed');
+  assert.equal(payload.error.details.scope, 'node_chain');
+  assert.equal(payload.error.details.operation, 'node.batch_delete');
+  assert.equal(payload.error.details.issues[0].kind, 'missing_reference');
+  assert.equal(payload.error.details.issues[0].nodeId, 'node_sg_01');
+  assert.equal(db.nodes.has('node_hk_01'), true);
+  assert.deepEqual(captureWriteState(db), initialState);
+  assert.deepEqual(kv.deletedKeys, []);
+});
+
 test('deleting a node invalidates affected caches, writes audit log, and leaves the user without available nodes', async () => {
   const { env, kv, db } = createEnv({
     nodes: [createNodeRow('node_hk_01', { name: 'HK Edge 01', server: 'hk-01.example.com' })],

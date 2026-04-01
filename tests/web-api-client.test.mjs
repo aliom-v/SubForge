@@ -12,6 +12,7 @@ const {
   fetchSetupStatus,
   fetchPreview,
   isAppApiError,
+  mutateNodesBatch,
   previewNodeImportFromUrl,
   resetHostedSubscriptionToken,
   syncRemoteSubscriptionSource
@@ -135,6 +136,14 @@ test('web api client uses centralized route definitions for active single-user o
           nodes: [],
           errors: []
         };
+      } else if (pathname === WEB_API_ROUTES.batchNodes.buildPath()) {
+        data = {
+          action: 'set_enabled',
+          nodeIds: ['node_demo', 'node_demo_2'],
+          enabled: false,
+          affectedCount: 2,
+          changedCount: 2
+        };
       } else if (pathname === WEB_API_ROUTES.deleteNode.buildPath('node_demo')) {
         data = { deleted: true, nodeId: 'node_demo' };
       } else if (pathname === WEB_API_ROUTES.createRemoteSubscriptionSource.buildPath()) {
@@ -199,6 +208,11 @@ test('web api client uses centralized route definitions for active single-user o
     },
     async () => {
       await previewNodeImportFromUrl('demo-token', 'https://example.com/sub.txt');
+      await mutateNodesBatch('demo-token', {
+        action: 'set_enabled',
+        nodeIds: ['node_demo', 'node_demo_2'],
+        enabled: false
+      });
       await deleteNode('demo-token', 'node_demo');
       await createRemoteSubscriptionSource('demo-token', {
         name: '上游订阅',
@@ -215,6 +229,7 @@ test('web api client uses centralized route definitions for active single-user o
     calls.map(({ method, pathname }) => [method, pathname]),
     [
       [WEB_API_ROUTES.previewNodeImport.method, WEB_API_ROUTES.previewNodeImport.buildPath()],
+      [WEB_API_ROUTES.batchNodes.method, WEB_API_ROUTES.batchNodes.buildPath()],
       [WEB_API_ROUTES.deleteNode.method, WEB_API_ROUTES.deleteNode.buildPath('node_demo')],
       [WEB_API_ROUTES.createRemoteSubscriptionSource.method, WEB_API_ROUTES.createRemoteSubscriptionSource.buildPath()],
       [WEB_API_ROUTES.syncRemoteSubscriptionSource.method, WEB_API_ROUTES.syncRemoteSubscriptionSource.buildPath('src_demo')],
@@ -223,18 +238,29 @@ test('web api client uses centralized route definitions for active single-user o
     ]
   );
 
-  assert.deepEqual(calls.map(({ authorization }) => authorization), Array(6).fill('Bearer demo-token'));
+  assert.deepEqual(calls.map(({ authorization }) => authorization), Array(7).fill('Bearer demo-token'));
   assert.equal(calls[0].body, JSON.stringify({ sourceUrl: 'https://example.com/sub.txt' }));
-  assert.equal(calls[1].body, null);
+  assert.equal(
+    calls[1].body,
+    JSON.stringify({
+      action: 'set_enabled',
+      nodeIds: ['node_demo', 'node_demo_2'],
+      enabled: false
+    })
+  );
   assert.equal(
     calls[2].body,
+    null
+  );
+  assert.equal(
+    calls[3].body,
     JSON.stringify({
       name: '上游订阅',
       sourceUrl: 'https://example.com/sub.txt',
       enabled: true
     })
   );
-  assert.equal(calls[3].body, null);
   assert.equal(calls[4].body, null);
   assert.equal(calls[5].body, null);
+  assert.equal(calls[6].body, null);
 });

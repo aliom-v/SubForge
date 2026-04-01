@@ -9,7 +9,10 @@ import { getDefaultTemplateByTarget } from './repository';
 export type NodeChainValidationOperation =
   | 'node.create'
   | 'node.update'
+  | 'node.delete'
   | 'node.import'
+  | 'node.batch_set_enabled'
+  | 'node.batch_delete'
   | 'remote_subscription_source.sync';
 
 function buildNodeChainIssueKey(

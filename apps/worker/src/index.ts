@@ -1310,6 +1310,158 @@ async function handleNodeImport(request: Request, env: Env, adminId: string): Pr
   return ok(payload, { status: payload.changed ? 201 : 200 });
 }
 
+async function handleNodeBatch(request: Request, env: Env, adminId: string): Promise<Response> {
+  if (request.method !== 'POST') {
+    return notFound('/api/nodes/batch');
+  }
+
+  const body = await parseJsonBody(request);
+
+  if (!isRecord(body)) {
+    return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
+  }
+
+  const action = asString(body.action);
+
+  if (action !== 'set_enabled' && action !== 'delete') {
+    return fail(createAppError('VALIDATION_FAILED', 'action must be set_enabled or delete'), 400);
+  }
+
+  if (!Array.isArray(body.nodeIds)) {
+    return fail(createAppError('VALIDATION_FAILED', 'nodeIds must be an array'), 400);
+  }
+
+  const nodeIds = [...new Set(body.nodeIds.filter((value): value is string => typeof value === 'string' && value.length > 0))];
+
+  if (nodeIds.length === 0) {
+    return fail(createAppError('VALIDATION_FAILED', 'nodeIds must contain at least one node id'), 400);
+  }
+
+  const currentNodes = await listNodes(env.DB);
+  const currentNodeMap = new Map(currentNodes.map((node) => [node.id, node]));
+  const missingNodeIds = nodeIds.filter((nodeId) => !currentNodeMap.has(nodeId));
+
+  if (missingNodeIds.length > 0) {
+    return fail(
+      createAppError('VALIDATION_FAILED', `nodeIds must reference existing nodes: ${missingNodeIds.join(', ')}`),
+      400
+    );
+  }
+
+  const targetNodes = nodeIds.map((nodeId) => currentNodeMap.get(nodeId)).filter((node): node is NodeRecord => Boolean(node));
+
+  if (action === 'set_enabled') {
+    const enabled = asBoolean(body.enabled);
+
+    if (enabled === undefined) {
+      return fail(createAppError('VALIDATION_FAILED', 'enabled must be provided for set_enabled'), 400);
+    }
+
+    const replacements = targetNodes
+      .filter((node) => node.enabled !== enabled)
+      .map((node) =>
+        createPendingNodeRecord({
+          ...node,
+          enabled
+        })
+      );
+
+    if (replacements.length > 0) {
+      const introducedIssues = await findIntroducedNodeChainIssues(
+        env.DB,
+        currentNodes,
+        mergeNodeRecords(currentNodes, {
+          replacements
+        })
+      );
+
+      if (introducedIssues.length > 0) {
+        return fail(createNodeChainValidationError(introducedIssues, 'node.batch_set_enabled'), 400);
+      }
+    }
+
+    const changedNodeIds: string[] = [];
+
+    for (const node of targetNodes) {
+      if (node.enabled === enabled) {
+        continue;
+      }
+
+      const updatedNode = await updateNode(env.DB, node.id, { enabled });
+
+      if (updatedNode) {
+        changedNodeIds.push(updatedNode.id);
+      }
+    }
+
+    if (changedNodeIds.length > 0) {
+      await invalidateNodeCachesByIds(env, changedNodeIds);
+    }
+
+    await writeAuditLog(request, env, {
+      actorAdminId: adminId,
+      action: 'node.batch_set_enabled',
+      targetType: 'node',
+      payload: {
+        nodeIds,
+        enabled,
+        affectedCount: nodeIds.length,
+        changedCount: changedNodeIds.length,
+        names: targetNodes.slice(0, 20).map((node) => node.name)
+      }
+    });
+
+    return ok({
+      action,
+      nodeIds,
+      enabled,
+      affectedCount: nodeIds.length,
+      changedCount: changedNodeIds.length
+    });
+  }
+
+  const deletedNodeIdSet = new Set(nodeIds);
+  const introducedIssues = await findIntroducedNodeChainIssues(
+    env.DB,
+    currentNodes,
+    currentNodes.filter((node) => !deletedNodeIdSet.has(node.id))
+  );
+
+  if (introducedIssues.length > 0) {
+    return fail(createNodeChainValidationError(introducedIssues, 'node.batch_delete'), 400);
+  }
+
+  const affectedUsers = await listUsersByNodeIds(env, nodeIds);
+
+  for (const nodeId of nodeIds) {
+    await deleteNode(env.DB, nodeId);
+  }
+
+  if (affectedUsers.length > 0) {
+    await invalidateUsersCaches(env, affectedUsers);
+  }
+
+  await writeAuditLog(request, env, {
+    actorAdminId: adminId,
+    action: 'node.batch_delete',
+    targetType: 'node',
+    payload: {
+      nodeIds,
+      affectedCount: nodeIds.length,
+      changedCount: nodeIds.length,
+      affectedUserCount: affectedUsers.length,
+      names: targetNodes.slice(0, 20).map((node) => node.name)
+    }
+  });
+
+  return ok({
+    action,
+    nodeIds,
+    affectedCount: nodeIds.length,
+    changedCount: nodeIds.length
+  });
+}
+
 async function handleNodeById(request: Request, env: Env, adminId: string, nodeId: string): Promise<Response> {
   if (request.method === 'PATCH') {
     const body = await parseJsonBody(request);
@@ -2058,6 +2210,10 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
 
   if (resource === 'nodes' && resourceId === 'import' && !action) {
     return handleNodeImport(request, env, auth.admin.id);
+  }
+
+  if (resource === 'nodes' && resourceId === 'batch' && !action) {
+    return handleNodeBatch(request, env, auth.admin.id);
   }
 
   if (resource === 'nodes' && resourceId) {

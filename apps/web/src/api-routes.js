@@ -22,6 +22,7 @@ export const WEB_API_ROUTES = Object.freeze({
   fetchNodes: createRoute('GET', '/api/nodes'),
   createNode: createRoute('POST', '/api/nodes'),
   importNodes: createRoute('POST', '/api/nodes/import'),
+  batchNodes: createRoute('POST', '/api/nodes/batch'),
   updateNode: createRoute('PATCH', '/api/nodes/{nodeId}', (nodeId) => `/api/nodes/${nodeId}`),
   deleteNode: createRoute('DELETE', '/api/nodes/{nodeId}', (nodeId) => `/api/nodes/${nodeId}`),
   fetchTemplates: createRoute('GET', '/api/templates'),

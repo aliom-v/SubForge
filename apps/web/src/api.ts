@@ -114,6 +114,20 @@ export interface NodeImportPayload {
   changed?: boolean;
 }
 
+export interface NodeBatchMutationPayload {
+  action: 'set_enabled' | 'delete';
+  nodeIds: string[];
+  enabled?: boolean;
+}
+
+export interface NodeBatchMutationResult {
+  action: 'set_enabled' | 'delete';
+  nodeIds: string[];
+  changedCount: number;
+  affectedCount: number;
+  enabled?: boolean;
+}
+
 interface SuccessEnvelope<T> {
   ok: true;
   data: T;
@@ -344,6 +358,17 @@ export async function importNodes(token: string, input: NodeImportInput[]): Prom
   return request(
     WEB_API_ROUTES.importNodes.buildPath(),
     { method: WEB_API_ROUTES.importNodes.method, body: JSON.stringify({ nodes: input }) },
+    token
+  );
+}
+
+export async function mutateNodesBatch(
+  token: string,
+  input: NodeBatchMutationPayload
+): Promise<NodeBatchMutationResult> {
+  return request(
+    WEB_API_ROUTES.batchNodes.buildPath(),
+    { method: WEB_API_ROUTES.batchNodes.method, body: JSON.stringify(input) },
     token
   );
 }

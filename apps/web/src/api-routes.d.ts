@@ -20,6 +20,7 @@ export declare const WEB_API_ROUTES: {
   fetchNodes: WebApiRoute;
   createNode: WebApiRoute;
   importNodes: WebApiRoute;
+  batchNodes: WebApiRoute;
   updateNode: WebApiRoute;
   deleteNode: WebApiRoute;
   fetchTemplates: WebApiRoute;
