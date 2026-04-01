@@ -2,10 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadTsModule } from './helpers/load-ts-module.mjs';
 
-const {
-  buildMihomoProxyGroupTopologyRows,
-  buildNodeChainSummaries
-} = await loadTsModule('apps/web/src/mihomo-topology.ts');
+const { buildNodeChainSummaries } = await loadTsModule('apps/web/src/mihomo-topology.ts');
 
 test('buildNodeChainSummaries expands group-level upstream into the final node chain', () => {
   const summaries = buildNodeChainSummaries(
@@ -55,29 +52,4 @@ test('buildNodeChainSummaries expands group-level upstream into the final node c
       issue: null
     }
   );
-});
-
-test('buildMihomoProxyGroupTopologyRows keeps provider-only groups visible', () => {
-  const rows = buildMihomoProxyGroupTopologyRows(
-    [
-      {
-        name: 'provider-only',
-        type: 'select',
-        use: ['remote-us']
-      }
-    ],
-    ['dmit-reality'],
-    ['remote-us']
-  );
-
-  assert.deepEqual(rows, [
-    {
-      groupName: 'provider-only',
-      groupType: 'select',
-      references: [],
-      providers: ['remote-us'],
-      resolution: '[provider] remote-us',
-      issue: null
-    }
-  ]);
 });

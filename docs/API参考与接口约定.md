@@ -26,7 +26,7 @@
 
 ## 2. 统一约定
 
-### 2.1 管理端 JSON 包络
+### 2.1 受保护 API JSON 包络
 
 大多数 `/api/*` 接口都返回 JSON，成功和失败统一为：
 
@@ -387,7 +387,7 @@ Authorization: Bearer <token>
 
 ## 5. 预览与公开订阅
 
-### 5.1 后台预览
+### 5.1 受保护预览
 
 - `GET /api/preview/:userId/:target`
   - 需要 Bearer token
@@ -592,7 +592,7 @@ proxies:
 
 ### 7.4 `/s/:token/:target` 成功时是纯文本
 
-这条路由不是给后台页面消费的 JSON API，而是给客户端直接拉订阅。
+这条路由不是给前端主界面消费的 JSON API，而是给客户端直接拉订阅。
 
 ### 7.5 `hy2` 会统一按 `hysteria2` 处理
 

@@ -69,9 +69,9 @@ npm run test:smoke
 建议最少验证以下 5 点：
 
 1. `GET /health` 返回 `200`
-2. 后台页面能正常打开
+2. 前端主界面能正常打开
 3. `GET /api/setup/status` 能返回 JSON
-4. 管理员能登录并进入后台
+4. 管理员能登录并进入管理入口
 5. 任意一个公开订阅 token 能返回订阅原文
 
 如果涉及 `staging -> production` 提升或需要紧急回滚，继续看第 8 节。
@@ -122,7 +122,7 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
 | --- | --- | --- |
 | `/health` 非 `200` | 最近部署、D1 / KV 绑定、环境变量、Worker 是否为最新版本 | `docs/部署指南.md` |
 | `/api/*` 返回 HTML 或出现 `Unexpected token '<'` | `run_worker_first = true`、响应 `content-type`、静态资源回退是否误命中 | `docs/排障与常见问题.md` |
-| 后台登录异常（`401` / `429`） | `ADMIN_JWT_SECRET`、管理员记录、`retry-after`、`x-subforge-rate-limit-remaining` | `docs/排障与常见问题.md` |
+| 管理员登录异常（`401` / `429`） | `ADMIN_JWT_SECRET`、管理员记录、`retry-after`、`x-subforge-rate-limit-remaining` | `docs/排障与常见问题.md` |
 | 公开订阅异常（`404` / `429` / 旧数据） | `x-subforge-cache-key`、`x-subforge-rate-limit-reset`、用户 / 模板 / 节点状态 | `docs/排障与常见问题.md` |
 | 规则源同步持续失败 | `sync_logs.details_json`、`errorCode`、`upstreamStatus`、最近成功快照 | `docs/排障与常见问题.md` |
 
@@ -182,7 +182,7 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
 1. 确认是否触发登录 / 订阅频控
 2. 必要时重置泄漏用户的 token
 3. 必要时临时收紧频控阈值
-4. 如果后台暴露风险较高，优先考虑 Cloudflare Access / Zero Trust / WAF 规则
+4. 如果管理入口暴露风险较高，优先考虑 Cloudflare Access / Zero Trust / WAF 规则
 
 ## 8. 发布与回滚流程
 
@@ -219,7 +219,7 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
 
 - **何时必须备份**
   - 执行 production migration 前
-  - 批量导入节点、手工 SQL 修数或高风险后台操作前
+  - 批量导入节点、手工 SQL 修数或高风险管理操作前
   - 准备做数据回滚前，先保留当前故障现场
 
 - **最常用命令**

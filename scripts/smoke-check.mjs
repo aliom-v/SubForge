@@ -269,7 +269,7 @@ assertIncludes(troubleshootingGuide, '429', 'troubleshooting guide rate limit do
 assertIncludes(troubleshootingGuide, 'npm ci', 'troubleshooting guide npm ci docs');
 assertIncludes(troubleshootingGuide, 'x-subforge-cache-key', 'troubleshooting guide cache header docs');
 assertIncludes(troubleshootingGuide, 'libvips', 'troubleshooting guide sharp libvips docs');
-assertIncludes(troubleshootingGuide, '页面还是旧后台', 'troubleshooting guide stale admin ui docs');
+assertIncludes(troubleshootingGuide, '页面还是旧界面', 'troubleshooting guide stale admin ui docs');
 assertIncludes(troubleshootingGuide, 'x-subforge-asset-cache', 'troubleshooting guide asset cache marker docs');
 
 const apiReferenceGuide = readFileSync('docs/API参考与接口约定.md', 'utf8');

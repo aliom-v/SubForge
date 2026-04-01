@@ -30,7 +30,7 @@
 
 ```mermaid
 flowchart LR
-  Admin["管理员浏览器<br/>后台 SPA"]
+  Admin["管理员浏览器<br/>前端 SPA"]
   Subscriber["公开订阅客户端<br/>Mihomo / sing-box"]
   GHA["GitHub Actions<br/>CI / Deploy / D1 Backup"]
   External["外部上游<br/>规则源 / 远程节点源"]
@@ -68,7 +68,7 @@ flowchart LR
 ### 3.2 分层说明
 
 - `apps/web`
-  - 管理后台单页应用
+  - 单用户前端单页应用
   - 通过 `apps/web/src/api.ts` 调用 Worker API
   - 不直接访问 D1 / KV
 - `apps/worker`
@@ -89,7 +89,7 @@ flowchart LR
 
 ## 4. 关键数据流
 
-### 4.1 管理后台请求流
+### 4.1 前端管理请求流
 
 ```mermaid
 sequenceDiagram
@@ -99,7 +99,7 @@ sequenceDiagram
   participant DB as D1
   participant KV as SUB_CACHE
 
-  A->>W: 打开后台 / 提交表单
+  A->>W: 打开前端主界面 / 提交表单
   W->>API: Bearer 调用 /api/*
   API->>API: 鉴权 + 参数校验
   API->>DB: 查询或写入源数据
@@ -295,7 +295,7 @@ erDiagram
 
 其中：
 
-- `admins` 负责后台管理员账号
+- `admins` 负责管理员账号
 - `users` 负责订阅用户与公开 token
 - `nodes` 负责节点元数据
 - `templates` 负责目标类型模板
@@ -337,7 +337,7 @@ erDiagram
 
 用途：
 
-- 存储后台管理员账号
+- 存储管理员账号
 - 登录时按 `username` 查询
 - 会话 token 的 `sub` 指向管理员 `id`
 
@@ -551,7 +551,7 @@ erDiagram
 
 用途：
 
-- 记录管理员的后台操作审计日志
+- 记录管理员操作审计日志
 
 主要字段：
 

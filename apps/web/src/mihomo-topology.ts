@@ -8,15 +8,6 @@ export interface NodeChainSummary {
   issue: string | null;
 }
 
-export interface MihomoProxyGroupTopologyRow {
-  groupName: string;
-  groupType: string;
-  references: string[];
-  providers: string[];
-  resolution: string;
-  issue: string | null;
-}
-
 interface MihomoProxyGroupEntry {
   name: string;
   type: string;
@@ -62,108 +53,6 @@ export function buildNodeChainSummaries(
       nodeName: node.name,
       upstreamProxy,
       chain: [node.name, ...resolved.segments].join(' -> '),
-      issue: resolved.issue
-    };
-  });
-}
-
-export function buildMihomoProxyGroupTopologyRows(
-  proxyGroups: Array<Record<string, unknown>>,
-  availableNodeNames: string[],
-  proxyProviders: string[]
-): MihomoProxyGroupTopologyRow[] {
-  const nodes = availableNodeNames.map((name, index) => ({
-    id: `template-node-${index}`,
-    name,
-    protocol: 'unknown',
-    server: '',
-    port: 0,
-    sourceType: 'manual',
-    enabled: true,
-    createdAt: '',
-    params: {}
-  } satisfies NodeRecord));
-  const context = createResolutionContext(nodes, proxyGroups, proxyProviders);
-  const groups = normalizeProxyGroups(proxyGroups);
-
-  return groups.map((group) => {
-    const references = group.proxies;
-    const providers = group.providers;
-    const candidates = [
-      ...references,
-      ...providers.map((provider) => `[provider] ${provider}`)
-    ];
-
-    if (references.length === 0 && providers.length === 0) {
-      return {
-        groupName: group.name,
-        groupType: group.type,
-        references,
-        providers,
-        resolution: '空代理组',
-        issue: '未配置 proxies 或 use'
-      };
-    }
-
-    if (references.length === 0 && providers.length === 1) {
-      const providerName = providers[0];
-
-      if (!providerName) {
-        return {
-          groupName: group.name,
-          groupType: group.type,
-          references,
-          providers,
-          resolution: '[provider]',
-          issue: `代理组引用了空 provider：${group.name}`
-        };
-      }
-
-      return {
-        groupName: group.name,
-        groupType: group.type,
-        references,
-        providers,
-        resolution: `[provider] ${providerName}`,
-        issue: context.providerNames.has(providerName) ? null : `模板里未声明 provider：${providerName}`
-      };
-    }
-
-    if (candidates.length > 1) {
-      return {
-        groupName: group.name,
-        groupType: group.type,
-        references,
-        providers,
-        resolution: candidates.join(' | '),
-        issue: `代理组包含多个候选：${group.name}`
-      };
-    }
-
-    const onlyReference = references[0];
-
-    if (!onlyReference) {
-      return {
-        groupName: group.name,
-        groupType: group.type,
-        references,
-        providers,
-        resolution: candidates.join(' | '),
-        issue: null
-      };
-    }
-
-    const resolved = resolveReferenceChain(context, onlyReference, {
-      visitedNodeIds: new Set(),
-      visitedGroupNames: new Set([group.name])
-    });
-
-    return {
-      groupName: group.name,
-      groupType: group.type,
-      references,
-      providers,
-      resolution: resolved.segments.join(' -> '),
       issue: resolved.issue
     };
   });

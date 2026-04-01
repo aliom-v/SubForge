@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: SubForge API
   version: 0.1.0
-  summary: SubForge 管理后台与公开订阅接口规范
+  summary: SubForge 管理员接口与公开订阅接口规范
   description: |
     这是 SubForge 当前 Worker 暴露的正式 OpenAPI 规范入口。
 
@@ -40,7 +40,7 @@ tags:
   - name: Cache
     description: 缓存清理与重建
   - name: Preview
-    description: 后台订阅预览接口
+    description: 受保护的订阅预览接口
   - name: Subscription
     description: 公开订阅输出接口
 paths:
@@ -1430,7 +1430,7 @@ paths:
   /api/preview/{userId}/{target}:
     get:
       tags: [Preview]
-      summary: 获取后台订阅预览
+      summary: 获取受保护的订阅预览
       description: 返回 JSON 包裹，而不是直接返回订阅原文。
       operationId: getPreview
       parameters:

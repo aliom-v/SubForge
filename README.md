@@ -31,7 +31,7 @@ scripts/       初始化脚本
 
 - 首次安装向导、管理员登录、同域部署
 - 节点页只保留三个主入口：`节点文本导入`、`订阅 URL 解析`、`导入完整配置`
-- 节点页支持 JSON 批量导入和完整配置导入；更通用的远程 JSON 节点源同步仅保留为后台高级接口
+- 节点页支持 JSON 批量导入和完整配置导入；更通用的远程 JSON 节点源同步仅保留为后端高级接口
 - 支持 `vless` / `trojan` / `vmess` / `ss` / `ssr` / `tuic` / `hysteria2` 分享链接、Base64 订阅文本、JSON 节点清单、完整 Mihomo / Clash YAML、完整 sing-box JSON
 - 导入后可按当前启用节点统一生成 `/s/:token/mihomo` 与 `/s/:token/singbox`
 - 上游订阅 URL 现在可以保存为自动同步源，并按当前 Cron 配置定时同步
@@ -45,7 +45,7 @@ scripts/       初始化脚本
 - 多用户、计费、复杂权限、规则集/模板手工运营都不是当前主路径
 - 规则源支持 `text` / `yaml` / `json`，但这条链路当前只是保留能力，不是单用户模式的首要使用方式
 - 更通用的远程 JSON 节点源同步仍只保留为高级手动接口，不单独建模为可定时同步对象
-- 规则源同步和更多后台对象仍保留在代码与数据层，但不再作为单用户模式的首要使用方式
+- 规则源同步和更多后端高级能力仍保留在代码与数据层，但不再作为单用户模式的首要使用方式
 
 ## 快速开始
 
@@ -53,7 +53,7 @@ scripts/       初始化脚本
 2. 执行一键初始化：`npm run init:local`
 3. 启动 Worker：`npm run dev:worker`
 4. 启动 Web：`npm run dev:web`
-5. 打开后台，完成首次安装向导或使用已导入的管理员登录
+5. 打开前端主界面，完成首次安装向导或使用已导入的管理员登录
 
 运行时建议：
 
@@ -97,7 +97,7 @@ npm run test:unit
 
 ## 初始化管理员
 
-优先推荐直接打开后台完成首次安装向导。
+优先推荐直接打开前端主界面完成首次安装向导。
 
 如果想把 migration、管理员导入和 demo 数据导入收敛为一条命令，优先使用：
 
@@ -132,7 +132,7 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 - 或导入完整 Mihomo / sing-box 配置
 - 然后生成一份可托管的订阅 URL
 
-现在优先直接用后台 `节点` 页的三个主入口：
+现在优先直接用前端主界面的 `节点` 页三个主入口：
 
 - `节点文本导入`
 - `订阅 URL 解析`
@@ -156,7 +156,7 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 
 - `节点` 页仍是默认主入口
 - 托管 URL 展示、链式代理拓扑与节点列表仍保留
-- 用户、模板、绑定与预览这些底层对象仍由系统自动维护，但前端默认不再单独暴露对应后台页
+- 用户、模板、绑定与预览这些底层对象仍由系统自动维护，但前端默认不再单独暴露对应独立页面
 
 ## 关键环境变量
 
@@ -174,9 +174,9 @@ npm run seed:demo | npx wrangler d1 execute subforge --local --file=-
 
 - 当前仓库默认走 **单 Worker + 静态资源** 部署，所有请求会先进 Worker，再由 Worker 把非 API 请求回退到 `apps/web/dist`
 - `wrangler.toml` 显式维护 production / staging 的 D1 与 KV 资源 ID，并启用 `run_worker_first = true`；仓库当前随依赖安装 `wrangler@4.77.0`，这样 GitHub Actions 与本地 CLI 在执行远端 migration / deploy 时能稳定定位目标资源
-- 根 `package.json` 中 `npm run build` 只构建前端；`npm run deploy` / `npm run deploy:staging` 与直接执行 `deploy:worker*` 前都会先刷新 `apps/web/dist`，避免把旧后台静态资源一并发到 Cloudflare
+- 根 `package.json` 中 `npm run build` 只构建前端；`npm run deploy` / `npm run deploy:staging` 与直接执行 `deploy:worker*` 前都会先刷新 `apps/web/dist`，避免把旧前端静态资源一并发到 Cloudflare
 - 如需把远端构建、部署和首轮数据初始化收敛成单条命令，可执行 `npm run init:remote -- --admin-user admin --admin-password your-password`
-- 首次部署后可直接通过后台首次安装向导创建管理员，无需先跑 `seed:admin`
+- 首次部署后可直接通过前端首次安装向导创建管理员，无需先跑 `seed:admin`
 - 如果需要完整的 Cloudflare UI / Git 导入、绑定清单、GitHub Actions、D1 备份 / 恢复 SOP、部署后验收与首轮排障步骤，请看 `docs/部署指南.md`
 
 ## 自动化

@@ -30,8 +30,8 @@
 2. 静态资源与前端页面
    - 由 Worker 回退到 `ASSETS` 提供
    - 不走统一 JSON 包裹
-   - 后台 HTML 壳（例如 `/`、`/dashboard`）会额外返回 `cache-control: no-store, max-age=0, must-revalidate`、`pragma: no-cache`、`expires: 0` 与 `x-subforge-asset-cache: html-no-store`
-   - 这样做是为了避免发布后浏览器继续复用旧后台入口 HTML；带哈希的 JS / CSS / 图片资源仍可保留各自的静态资源缓存策略
+   - 前端入口 HTML 壳（例如 `/`、`/dashboard`）会额外返回 `cache-control: no-store, max-age=0, must-revalidate`、`pragma: no-cache`、`expires: 0` 与 `x-subforge-asset-cache: html-no-store`
+   - 这样做是为了避免发布后浏览器继续复用旧前端入口 HTML；带哈希的 JS / CSS / 图片资源仍可保留各自的静态资源缓存策略
 
 ### 2.1 CORS 约定
 
@@ -43,14 +43,14 @@
 
 因此：
 
-- 后台接口支持通过 `authorization` 头传 Bearer token
+- 管理接口支持通过 `authorization` 头传 Bearer token
 - 浏览器预检请求会由 `OPTIONS` 统一响应 `204`
 
 ## 3. 鉴权边界
 
 ### 3.1 需要 Bearer 的接口
 
-除初始化和登录相关接口外，后台 API 统一要求：
+除初始化和登录相关接口外，管理 API 统一要求：
 
 ```http
 Authorization: Bearer <admin-session-token>
@@ -117,7 +117,7 @@ Authorization: Bearer <admin-session-token>
 | 登录与管理员会话 | `POST /api/admin/login`、`GET /api/admin/me`、`POST /api/admin/logout` | `x-subforge-rate-limit-scope: admin_login`、`x-subforge-rate-limit-cleared: true`、`x-subforge-rate-limit-limit`、`x-subforge-rate-limit-remaining`、`x-subforge-rate-limit-reset`、`retry-after` | `POST /api/admin/logout` 当前会返回 `loggedOut`、`serverRevocation`、`mode` 与可选 `revokedAt` |
 | 预览接口 | `GET /api/preview/:userId/:target` | `x-subforge-preview-cache: hit|miss`、`x-subforge-cache-key`、`x-subforge-cache-scope: preview` | 返回 JSON 包裹，`data` 中带 `cacheKey`、`mimeType`、`content`、`metadata` |
 | 公开订阅接口 | `GET /s/:token/:target` | `x-subforge-cache: hit|miss`、`x-subforge-cache-key`、`x-subforge-cache-scope: subscription`、`x-subforge-rate-limit-scope: subscription`、`x-subforge-rate-limit-limit`、`x-subforge-rate-limit-remaining`、`x-subforge-rate-limit-reset`、`retry-after` | 返回订阅原文，频控检查发生在缓存读取前 |
-| 其余后台资源接口 | `/api/users`、`/api/nodes`、`/api/templates`、`/api/rule-sources`、`/api/sync-logs`、`/api/audit-logs`、`/api/cache/rebuild` | 无固定专属头；重点看 HTTP 状态码、`error.code` 与结构化 `details` | 写操作通常会带来审计日志或缓存失效副作用 |
+| 其余管理资源接口 | `/api/users`、`/api/nodes`、`/api/templates`、`/api/rule-sources`、`/api/sync-logs`、`/api/audit-logs`、`/api/cache/rebuild` | 无固定专属头；重点看 HTTP 状态码、`error.code` 与结构化 `details` | 写操作通常会带来审计日志或缓存失效副作用 |
 
 限流统计维度、默认阈值与调参建议见 `docs/限流与安全策略.md`。
 
@@ -279,7 +279,7 @@ content-type: application/json; charset=utf-8
 - `admin session has been revoked`
   - 已执行过 `POST /api/admin/logout`
 - `admin account is unavailable`
-  - 管理员被禁用，或后台账号当前不可用
+  - 管理员被禁用，或管理员账号当前不可用
 
 ### 8.2 用户、节点与协议字段类
 
@@ -370,7 +370,7 @@ content-type: application/json; charset=utf-8
 
 ### 9.4 `GET /api/preview/:userId/:target`
 
-这是后台预览接口，会返回 JSON，并带：
+这是管理员预览接口，会返回 JSON，并带：
 
 - `x-subforge-preview-cache: hit | miss`
 
@@ -393,7 +393,7 @@ content-type: application/json; charset=utf-8
 
 - 不是 OpenAPI / Swagger 规范文件
 - 不展开限流统计维度、默认阈值和调参建议
-- 不枚举每个后台 CRUD 接口的完整字段 schema
+- 不枚举每个管理 CRUD 接口的完整字段 schema
 - 重点放在错误码、鉴权、缓存头、限流头这些最容易影响联调的问题上
 
 如果后续要开放给第三方更稳定对接，建议再补：
