@@ -77,7 +77,7 @@ Authorization: Bearer <token>
 - `user.status`: `active` | `disabled`
 - `admin.status`: `active` | `disabled`
 - `ruleSource.format`: `text` | `yaml` | `json`
-- `node.sourceType`: 普通创建 / 更新接口当前只允许 `manual`；`remote` 仅由远程节点源手动同步链路写入
+- `node.sourceType`: 普通创建 / 更新接口当前只允许 `manual`；`remote` 仅由自动同步源写入的远程节点使用
 
 ### 2.5 按资源分组的状态码速查
 
@@ -241,7 +241,7 @@ Authorization: Bearer <token>
     - `contentEncoding`
     - `nodes`
     - `errors`
-  - 这只是一次性预览，不会创建节点、不持久化远程来源、也不等于远程节点源同步
+  - 这只是一次性预览，不会创建节点、不持久化来源、也不等于自动同步源同步
 
 ### 4.3 节点
 

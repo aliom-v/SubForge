@@ -293,7 +293,6 @@ const requiredOperations = [
   'GET /api/nodes',
   'POST /api/nodes',
   'POST /api/nodes/import',
-  'POST /api/nodes/import/remote',
   'PATCH /api/nodes/{nodeId}',
   'DELETE /api/nodes/{nodeId}',
   'GET /api/templates',

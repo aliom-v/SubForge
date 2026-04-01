@@ -33,7 +33,7 @@ flowchart LR
   Admin["管理员浏览器<br/>前端 SPA"]
   Subscriber["公开订阅客户端<br/>Mihomo / sing-box"]
   GHA["GitHub Actions<br/>CI / Deploy / D1 Backup"]
-  External["外部上游<br/>规则源 / 远程节点源"]
+  External["外部上游<br/>规则源 / 远程订阅源"]
   ObjectStorage["对象存储<br/>S3 / R2 / MinIO"]
 
   subgraph Repo[Monorepo]
@@ -139,7 +139,7 @@ sequenceDiagram
 flowchart TD
   Cron[Cron Trigger] --> Sync[Worker scheduled()]
   Manual[管理员手动同步] --> Sync
-  Sync --> Fetch[拉取规则源 / 远程节点源]
+  Sync --> Fetch[拉取规则源 / 远程订阅源]
   Fetch --> Normalize[解析 / 归一化 / 去重]
   Normalize --> D1Write[写入 rule_sources / rule_snapshots / nodes]
   D1Write --> Logs[写入 sync_logs / audit_logs]
@@ -152,8 +152,8 @@ flowchart TD
 
 说明：
 
-- Cron 当前负责启用中的规则源同步和远程订阅自动同步源；更通用的远程 JSON 节点源同步仍以手动触发为主
-- 远程规则源 / 远程订阅源 / 远程节点源都属于“外部输入”，写库前会做解析和校验
+- Cron 当前负责启用中的规则源同步和远程订阅自动同步源
+- 远程规则源和远程订阅源都属于“外部输入”，写库前会做解析和校验
 - 备份链路不参与在线请求，但属于同一套数据平面的保护能力
 
 ## 5. ER 图
@@ -596,7 +596,7 @@ erDiagram
   - 会写入 `nodes` 和 `sync_logs`，但没有额外专用映射表
 - `nodes.source_type + source_id`
   - 这对字段把“手动节点”和“远程节点”统一进一张表
-  - 远程节点同步时会按来源 URL 规划更新 / 禁用逻辑
+  - 自动同步源写入远程节点时会按来源 ID 规划更新 / 禁用逻辑
 
 ### 7.3 派生层不进入 ER 图
 

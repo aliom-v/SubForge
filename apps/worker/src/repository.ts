@@ -946,29 +946,6 @@ export async function recordRemoteSubscriptionSourceSync(
   return getRemoteSubscriptionSourceById(db, sourceId);
 }
 
-export async function recordNodeSourceSync(
-  db: D1Database,
-  sourceId: string,
-  status: SyncLogRecord['status'],
-  message: string,
-  details?: Record<string, unknown>
-): Promise<void> {
-  await db
-    .prepare(
-      'INSERT INTO sync_logs (id, source_type, source_id, status, message, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    )
-    .bind(
-      createId('sync'),
-      'node_source',
-      sourceId,
-      status,
-      message,
-      details ? JSON.stringify(details) : null,
-      new Date().toISOString()
-    )
-    .run();
-}
-
 export async function getSubscriptionCompileInputByToken(
   db: D1Database,
   token: string,

@@ -66,7 +66,6 @@ import {
   listUserNodeBindings,
   listUsers,
   listUsersByNodeId,
-  recordNodeSourceSync,
   replaceUserNodes,
   createAuditLog,
   resetUserToken,
@@ -95,7 +94,6 @@ import {
 import {
   normalizeImportedNodes,
   planNodeImport,
-  planRemoteNodeSync,
   type ImportedNodeInput
 } from './node-source';
 import {
@@ -303,69 +301,6 @@ async function replaceSourceBindingsForUsers(
     ];
 
     await replaceUserNodes(env.DB, user.id, [...new Set(nextNodeIds)]);
-  }
-}
-
-async function fetchRemoteNodeImportBody(
-  sourceUrl: string,
-  timeoutMs: number
-): Promise<{ body: unknown; status: number; durationMs: number; fetchedBytes: number; contentType?: string }> {
-  const startedAt = Date.now();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(sourceUrl, {
-      signal: controller.signal,
-      headers: {
-        accept: 'application/json, text/plain;q=0.9, */*;q=0.1'
-      }
-    });
-    const textBody = await response.text();
-    const durationMs = Date.now() - startedAt;
-    const fetchedBytes = new TextEncoder().encode(textBody).length;
-    const contentType = response.headers.get('content-type') ?? undefined;
-
-    if (!response.ok) {
-      throw createAppError('VALIDATION_FAILED', `remote node source returned status ${response.status}`, {
-        sourceUrl,
-        upstreamStatus: response.status,
-        durationMs,
-        fetchedBytes,
-        contentType
-      });
-    }
-
-    try {
-      return {
-        body: JSON.parse(textBody) as unknown,
-        status: response.status,
-        durationMs,
-        fetchedBytes,
-        ...(contentType ? { contentType } : {})
-      };
-    } catch {
-      throw createAppError('VALIDATION_FAILED', 'remote node source must return valid JSON', {
-        sourceUrl,
-        upstreamStatus: response.status,
-        durationMs,
-        fetchedBytes,
-        contentType
-      });
-    }
-  } catch (error) {
-    if (isAppErrorShape(error)) {
-      throw error;
-    }
-
-    const message = error instanceof Error && error.name === 'AbortError' ? 'remote node source request timed out' : 'remote node source request failed';
-
-    throw createAppError('VALIDATION_FAILED', message, {
-      sourceUrl,
-      durationMs: Date.now() - startedAt
-    });
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -1339,127 +1274,6 @@ async function handleNodeImport(request: Request, env: Env, adminId: string): Pr
   return ok(payload, { status: payload.changed ? 201 : 200 });
 }
 
-async function handleRemoteNodeImport(request: Request, env: Env, adminId: string): Promise<Response> {
-  if (request.method !== 'POST') {
-    return notFound('/api/nodes/import/remote');
-  }
-
-  const body = await parseJsonBody(request);
-
-  if (!isRecord(body)) {
-    return fail(createAppError('VALIDATION_FAILED', 'request body must be a JSON object'), 400);
-  }
-
-  const sourceUrl = asString(body.sourceUrl);
-
-  if (!isValidHttpUrl(sourceUrl)) {
-    return fail(createAppError('VALIDATION_FAILED', 'sourceUrl must be a valid http or https URL'), 400);
-  }
-
-  const canonicalSourceUrl = new URL(sourceUrl).toString();
-  const startedAt = Date.now();
-
-  try {
-    const upstream = await fetchRemoteNodeImportBody(
-      canonicalSourceUrl,
-      Number(env.SYNC_HTTP_TIMEOUT_MS || '10000')
-    );
-    const rawNodes = getRawNodeImportItems(upstream.body);
-    const importedNodes = parseImportedNodeInputs(rawNodes);
-    const importedAt = new Date().toISOString();
-    const { nodes: dedupedNodes, duplicateCount } = normalizeImportedNodes(importedNodes, 'remote', canonicalSourceUrl);
-    const existingRemoteNodes = await listNodesBySource(env.DB, 'remote', canonicalSourceUrl);
-    const plan = planRemoteNodeSync(existingRemoteNodes, dedupedNodes);
-    const staleToDisable = plan.stale.filter((node) => node.enabled);
-
-    for (const node of plan.created) {
-      await createNode(env.DB, {
-        ...node,
-        lastSyncAt: importedAt
-      });
-    }
-
-    for (const update of plan.updated) {
-      await updateNode(env.DB, update.current.id, {
-        ...update.next,
-        lastSyncAt: importedAt
-      });
-    }
-
-    for (const staleNode of staleToDisable) {
-      await updateNode(env.DB, staleNode.id, {
-        enabled: false,
-        lastSyncAt: importedAt
-      });
-    }
-
-    await invalidateNodeCachesByIds(
-      env,
-      [...plan.updated.map((update) => update.current.id), ...staleToDisable.map((node) => node.id)]
-    );
-
-    const payload = buildNodeImportPayload({
-      importedAt,
-      importedCount: dedupedNodes.length,
-      createdCount: plan.created.length,
-      updatedCount: plan.updated.length,
-      unchangedCount: plan.unchanged.length,
-      duplicateCount,
-      disabledCount: staleToDisable.length,
-      sourceType: 'remote',
-      sourceId: canonicalSourceUrl
-    });
-
-    const details = {
-      sourceUrl: canonicalSourceUrl,
-      upstreamStatus: upstream.status,
-      fetchedBytes: upstream.fetchedBytes,
-      durationMs: Date.now() - startedAt,
-      ...(upstream.contentType ? { contentType: upstream.contentType } : {}),
-      importedCount: payload.importedCount,
-      createdCount: payload.createdCount,
-      updatedCount: payload.updatedCount,
-      unchangedCount: payload.unchangedCount,
-      duplicateCount: payload.duplicateCount,
-      disabledCount: payload.disabledCount
-    };
-    const status = payload.changed ? 'success' : 'skipped';
-    const message = payload.changed
-      ? `remote node source synced (${payload.importedCount} nodes)`
-      : `remote node source unchanged (${payload.importedCount} nodes)`;
-
-    await recordNodeSourceSync(env.DB, canonicalSourceUrl, status, message, details);
-    await writeAuditLog(request, env, {
-      actorAdminId: adminId,
-      action: 'node.import_remote',
-      targetType: 'node',
-      payload: {
-        sourceUrl: canonicalSourceUrl,
-        importedCount: payload.importedCount,
-        createdCount: payload.createdCount,
-        updatedCount: payload.updatedCount,
-        unchangedCount: payload.unchangedCount,
-        duplicateCount: payload.duplicateCount,
-        disabledCount: payload.disabledCount
-      }
-    });
-
-    return ok(payload, { status: payload.changed ? 201 : 200 });
-  } catch (error) {
-    const appError = isAppErrorShape(error)
-      ? error
-      : createAppError('VALIDATION_FAILED', error instanceof Error ? error.message : 'remote node source sync failed');
-
-    const details = isRecord(appError.details)
-      ? { sourceUrl: canonicalSourceUrl, durationMs: Date.now() - startedAt, ...appError.details }
-      : { sourceUrl: canonicalSourceUrl, durationMs: Date.now() - startedAt };
-
-    await recordNodeSourceSync(env.DB, canonicalSourceUrl, 'failed', appError.message, details);
-
-    return fail({ ...appError, details }, getErrorStatus(appError.code));
-  }
-}
-
 async function handleNodeById(request: Request, env: Env, adminId: string, nodeId: string): Promise<Response> {
   if (request.method === 'PATCH') {
     const body = await parseJsonBody(request);
@@ -2350,10 +2164,6 @@ async function handleApiRequest(request: Request, env: Env, segments: string[]):
 
   if (resource === 'nodes' && resourceId === 'import' && !action) {
     return handleNodeImport(request, env, auth.admin.id);
-  }
-
-  if (resource === 'nodes' && resourceId === 'import' && action === 'remote') {
-    return handleRemoteNodeImport(request, env, auth.admin.id);
   }
 
   if (resource === 'nodes' && resourceId) {
