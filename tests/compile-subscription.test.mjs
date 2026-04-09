@@ -91,6 +91,34 @@ test('compileSubscription returns compiled mihomo content for active users', () 
   assert.doesNotMatch(result.data.content, /Disabled Edge/);
 });
 
+test('compileSubscription strips stale proxy-group references from dynamic mihomo templates before rendering', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      template: {
+        content: `proxies:
+{{proxies}}
+proxy-groups:
+  - name: Auto
+    type: select
+    proxies:
+      - Legacy Static
+      - HK Edge 01
+rules:
+  - MATCH,DIRECT`
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /HK Edge 01/);
+  assert.doesNotMatch(result.data.content, /Legacy Static/);
+});
+
 test('compileSubscription rejects disabled users', () => {
   const result = compileSubscription(
     createCompileInput({

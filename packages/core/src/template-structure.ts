@@ -11,6 +11,7 @@ export interface MihomoTemplateStructure {
   useDynamicProxies: boolean;
   useDynamicProxyGroups: boolean;
   useDynamicRules: boolean;
+  staticProxies: Array<Record<string, unknown>>;
   proxyGroups: Array<Record<string, unknown>>;
   proxyProviders: string[];
   rules: string[];
@@ -113,12 +114,26 @@ function parseMihomoTemplateDocument(content: string): ParsedMihomoTemplateDocum
   }
 
   const warnings: string[] = [];
+  const staticProxies: Array<Record<string, unknown>> = [];
   const proxyGroups: Array<Record<string, unknown>> = [];
   const proxyProviders: string[] = [];
   const rules: string[] = [];
+  const proxiesValue = parsed.proxies;
   const proxyGroupsValue = parsed['proxy-groups'];
   const proxyProvidersValue = parsed['proxy-providers'];
   const rulesValue = parsed.rules;
+
+  if (Array.isArray(proxiesValue)) {
+    for (const item of proxiesValue) {
+      if (isObjectRecord(item)) {
+        staticProxies.push(cloneJsonLike(item));
+      } else {
+        warnings.push('检测到无法识别的 proxy 条目，结构化助手已忽略该条目。');
+      }
+    }
+  } else if (proxiesValue !== undefined && proxiesValue !== MIHOMO_PROXIES_MARKER) {
+    warnings.push('当前模板的 proxies 不是列表结构，结构化助手不会改写这部分内容。');
+  }
 
   if (Array.isArray(proxyGroupsValue)) {
     for (const item of proxyGroupsValue) {
@@ -164,6 +179,7 @@ function parseMihomoTemplateDocument(content: string): ParsedMihomoTemplateDocum
       useDynamicProxies: content.includes('{{proxies}}'),
       useDynamicProxyGroups: content.includes('{{proxy_groups}}'),
       useDynamicRules: content.includes('{{rules}}'),
+      staticProxies,
       proxyGroups,
       proxyProviders,
       rules,
@@ -251,6 +267,18 @@ function parseSingboxTemplateDocument(content: string): ParsedSingboxTemplateDoc
 
 export function parseMihomoTemplateStructure(content: string): MihomoTemplateStructure {
   return parseMihomoTemplateDocument(content).structure;
+}
+
+export function normalizeManagedMihomoTemplateContent(content: string): string {
+  const parsed = parseMihomoTemplateDocument(content).structure;
+
+  return updateMihomoTemplateStructure(content, {
+    useDynamicProxies: true,
+    useDynamicProxyGroups: parsed.useDynamicProxyGroups,
+    useDynamicRules: parsed.useDynamicRules,
+    proxyGroups: parsed.proxyGroups,
+    rules: parsed.rules
+  });
 }
 
 export function updateMihomoTemplateStructure(

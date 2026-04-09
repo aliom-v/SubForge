@@ -3,6 +3,7 @@ import test from 'node:test';
 import { loadTsModule } from './helpers/load-ts-module.mjs';
 
 const {
+  normalizeManagedMihomoTemplateContent,
   parseMihomoTemplateStructure,
   parseSingboxTemplateStructure,
   updateMihomoTemplateStructure,
@@ -63,6 +64,33 @@ rules:
 
   assert.deepEqual(parsed.proxyProviders, ['remote-us', 'remote-hk']);
   assert.equal(parsed.proxyGroups.length, 1);
+});
+
+test('normalizeManagedMihomoTemplateContent strips static proxies and keeps dynamic proxy slot', () => {
+  const template = `proxies:
+  - name: Legacy Node
+    type: trojan
+    server: legacy.example.com
+    port: 443
+    password: replace-me
+proxy-groups:
+  - name: Auto
+    type: select
+    proxies:
+      - Legacy Node
+rules:
+  - MATCH,DIRECT
+`;
+  const parsedBefore = parseMihomoTemplateStructure(template);
+  const normalized = normalizeManagedMihomoTemplateContent(template);
+  const parsedAfter = parseMihomoTemplateStructure(normalized);
+
+  assert.equal(parsedBefore.staticProxies.length, 1);
+  assert.equal(parsedAfter.useDynamicProxies, true);
+  assert.equal(parsedAfter.staticProxies.length, 0);
+  assert.match(normalized, /proxies:\n\{\{proxies\}\}/);
+  assert.match(normalized, /proxy-groups:/);
+  assert.match(normalized, /rules:/);
 });
 
 test('updateSingboxTemplateStructure can combine static blocks with dynamic placeholders', () => {

@@ -14,6 +14,10 @@
 
 如果你在排查具体症状，例如 `Unexpected token '<'`、`401`、`429`、缓存命中异常或订阅返回旧数据，请优先看 `docs/排障与常见问题.md`。
 
+如果你只是想先读懂自动同步源状态字段，再看：
+
+- `docs/自动同步源状态与错误说明.md`
+
 ## 2. 当前运行面
 
 当前线上 / 本地运行面可以概括为：
@@ -22,7 +26,7 @@
 - Worker 静态资源回退（`ASSETS`）
 - D1 主数据库（`DB`）
 - KV 缓存（`SUB_CACHE`）
-- Cron 规则源同步
+- Cron 自动同步源同步
 
 对应关键配置：
 
@@ -81,11 +85,12 @@ npm run test:smoke
 建议关注：
 
 - `/health` 是否持续正常
-- 最近同步日志是否持续成功
-- 最近审计日志是否出现异常高频操作
 - 登录 `429` 与公开订阅 `429` 是否异常激增
-- 规则源是否长期停留在 `failed`
-- 规则数是否突然大幅下降或归零
+- 自动同步源最近一次状态是否长期停留在 `failed`
+- `failure_count` 是否持续上升
+- `last_sync_message` / `last_sync_details_json` 是否反复出现同一类错误
+- 自动同步导入节点数是否突然下降或归零
+- 如已自建 D1 观测，再额外看 `audit_logs` 是否出现异常高频写入
 
 ## 4. 关键检查命令
 
@@ -143,15 +148,14 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
 
 ### 6.2 中优先级告警
 
-- 审计日志出现异常高频 token 重置
-- 审计日志出现异常高频缓存重建
-- 某个规则源长期 `skipped`，但业务侧确认上游其实已变化
+- 某个自动同步源长期 `skipped`，但业务侧确认上游其实已变化
 - D1 / KV 绑定缺失导致功能部分失效
+- 如果你自己做了 D1 侧观测，可额外关注 `audit_logs` 中异常高频 token 重置或批量节点写入
 
 ### 6.3 低优先级提示
 
 - 订阅缓存命中率持续偏低
-- 规则源同步耗时持续增长
+- 自动同步源同步耗时持续增长
 - 单个 token 的请求频率明显高于平时
 
 ## 7. 建议的响应流程
@@ -171,8 +175,8 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
 建议顺序：
 
 1. 先确认是不是缓存问题
-2. 再确认用户、节点、模板、规则源当前数据
-3. 再看最近同步日志与审计日志
+2. 再确认用户、节点、模板、自动同步源当前数据
+3. 再看同步源最近状态、失败次数与详情
 4. 最后再检查编译链路与模板内容
 
 ### 7.3 安全或滥用问题
@@ -190,12 +194,12 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
   - 在待发布 commit 上执行 `npm run ci:verify`；如需额外确认预发布配置，可补执行 `npm run build:worker:staging`
   - 如涉及 D1 migration、批量导入、手工 SQL 或人工修数，先按第 9 节导出 D1 备份
   - 确认 GitHub Secrets / Cloudflare 绑定齐全：`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`、`ADMIN_JWT_SECRET`，以及目标环境对应的 D1 / KV；如接了外部通知，再确认 `FAILURE_WEBHOOK_URL`
-  - 准备好验收样本：`/health`、`/api/setup/status`、管理员账号、可用订阅 token、至少一个可手动同步的规则源或自动同步源
+  - 准备好验收样本：`/health`、`/api/setup/status`、管理员账号、可用订阅 token、至少一个可手动同步的自动同步源
 
 - **staging 发布**
   - 常规路径：合入 `release/*` 分支，等待 Deploy workflow 自动执行 `npm run deploy:staging`
   - 补发或重放：手动触发 `.github/workflows/deploy.yml`，选择 `target_environment=staging`，并显式填写待发布的 `git_ref`
-  - 发布完成后，至少执行第 3.2 节的 5 项验收，并补看一次同步日志 / 审计日志
+  - 发布完成后，至少执行第 3.2 节的 5 项验收，并补看一次自动同步源状态与详情
 
 - **production 发布**
   - 只提升已经在 `staging` 验收通过的 commit；高风险变更建议从 `main` 分支上下文手动触发 `workflow_dispatch`
@@ -204,7 +208,7 @@ curl -i http://127.0.0.1:8787/s/<token>/mihomo
 
 - **回滚触发条件**
   - `GET /health` 持续失败，或 `/api/*` 返回 HTML / `Unexpected token '<'`
-  - 管理员登录异常、公开订阅大面积失效、规则 / 节点同步普遍失败
+  - 管理员登录异常、公开订阅大面积失效、自动同步源 / 节点同步普遍失败
   - 发布后出现明显数据错乱、D1 migration 不符合预期，或 failure alert 持续触发
 
 - **回滚操作**

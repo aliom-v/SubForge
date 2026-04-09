@@ -5,7 +5,11 @@ import type {
   SubscriptionRenderContext,
   SubscriptionRuleSet
 } from './models';
-import { parseMihomoTemplateStructure, updateMihomoTemplateStructure } from './template-structure';
+import {
+  normalizeManagedMihomoTemplateContent,
+  parseMihomoTemplateStructure,
+  updateMihomoTemplateStructure
+} from './template-structure';
 
 export interface SubscriptionRenderer {
   target: SubscriptionTarget;
@@ -666,10 +670,16 @@ const mihomoBuiltinReferences = new Set(['DIRECT', 'REJECT', 'REJECT-DROP', 'PAS
 
 function sanitizeStaticMihomoTemplate(content: string, nodeNames: string[]): string {
   try {
-    const parsed = parseMihomoTemplateStructure(content);
+    let nextContent = content;
+    let parsed = parseMihomoTemplateStructure(nextContent);
+
+    if (parsed.useDynamicProxies && parsed.staticProxies.length > 0) {
+      nextContent = normalizeManagedMihomoTemplateContent(nextContent);
+      parsed = parseMihomoTemplateStructure(nextContent);
+    }
 
     if (parsed.useDynamicProxyGroups || parsed.proxyGroups.length === 0) {
-      return content;
+      return nextContent;
     }
 
     const groupNames = new Set(
@@ -714,10 +724,10 @@ function sanitizeStaticMihomoTemplate(content: string, nodeNames: string[]): str
     });
 
     if (JSON.stringify(nextProxyGroups) === JSON.stringify(parsed.proxyGroups)) {
-      return content;
+      return nextContent;
     }
 
-    return updateMihomoTemplateStructure(content, {
+    return updateMihomoTemplateStructure(nextContent, {
       useDynamicProxies: parsed.useDynamicProxies,
       useDynamicProxyGroups: parsed.useDynamicProxyGroups,
       useDynamicRules: parsed.useDynamicRules,

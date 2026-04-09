@@ -30,7 +30,7 @@
 
 - Web 组件级测试
 - 真实 D1 / KV / Cron 集成测试
-- 远程规则源同步的端到端网络测试
+- 真实外部自动同步源的端到端网络测试
 - 覆盖率门槛与测试报告平台接入
 
 ---
@@ -84,7 +84,7 @@
 - `mihomo` / `singbox` 的公开订阅在缓存命中但用户已过期时返回 `400`，并清理旧缓存
 - `mihomo` / `singbox` 的公开订阅在缓存命中且用户有效时直接返回缓存内容，并保持 target 对应的 `content-type`
 - `mihomo` / `singbox` 的 preview/public `miss -> hit` 请求级链路
-- 节点 / 绑定 / 模板 / 规则源 / 自动同步源变化后的 preview/public 一致性与缓存失效
+- 节点 / 绑定 / 模板 / 自动同步源变化后的 preview/public 一致性与缓存失效
 - 登录 / 登出 / 会话撤销 / 写接口边界拒绝等关键请求语义
 
 说明：
@@ -126,7 +126,7 @@
 当前已经稳定收敛出的结果可以概括为：
 
 - 缓存失效 helper、公开订阅关键路径、管理员鉴权、登出服务端撤销、审计脱敏与 setup/bootstrap 边界都已落到请求级回归
-- `mihomo` / `singbox` 的 preview/public `miss -> hit`、token 重置、节点 / 绑定 / 模板 / 规则源 / 自动同步源变化后的结果一致性已经纳入当前验证基线
+- `mihomo` / `singbox` 的 preview/public `miss -> hit`、token 重置、节点 / 绑定 / 模板 / 自动同步源变化后的结果一致性已经纳入当前验证基线
 - create/update/delete/bind 四类现有写接口、模板默认语义、节点 metadata 收紧语义与本地部署前 smoke 配置断言已经收敛
 - Web 侧协议向导、分享链接导入、远程预览导入、Base64 解包与单用户主流程编排 helper 测试已经落地
 - `ss` / `ssr` / `tuic` / `hysteria2` 的导入、完整配置矩阵与 preview/public 长链路回归已经进入当前默认验证面
@@ -141,8 +141,7 @@
 - 已新增用户节点绑定变更后的 preview/public 一致性请求级回归，覆盖发布前检查清单中的同对象一致性与公开订阅变化
 - 已新增默认模板切换后的 preview/public 请求级回归，覆盖发布前检查清单中的“切换默认模板后结果反映新模板”
 - 已把 `node.update` 长链路回归扩到 preview 侧，覆盖发布前检查清单中的“修改节点后再次请求预览”
-- 已新增规则源启停后的请求级长链路回归，并补到 `singbox` 后续输出断言，覆盖发布前检查清单中的“规则源启停后再次请求订阅”
-- 已新增规则源同步后的请求级长链路回归，并补到 `singbox` 后续输出断言，覆盖发布前检查清单中的“规则源同步后再次请求订阅”
+- 已新增自动同步源导入 / 删除 / 手动同步后的请求级长链路回归，覆盖发布前检查清单中的“同步源变化后再次请求订阅”
 - 已新增 `singbox` target 的 preview/public `miss -> hit` 请求级回归，并把 `ssr` / `tuic` 的 share-link import -> create -> bind -> preview/public 长链路扩到 `singbox`
 - 已新增 `hysteria2` 复杂 share-link 回归，覆盖 `userinfo user:pass` 与 `hop-interval/up/down/upmbps/downmbps` 参数保留语义
 

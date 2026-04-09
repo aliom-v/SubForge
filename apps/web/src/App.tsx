@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
-import { getServiceMetadata } from '@subforge/core';
+import {
+  getServiceMetadata,
+  normalizeManagedMihomoTemplateContent
+} from '@subforge/core';
 import {
   SUBSCRIPTION_TARGETS,
   type SubscriptionTarget,
@@ -48,11 +51,13 @@ import {
   AUTO_HOSTED_TEMPLATE_NAMES,
   AUTO_HOSTED_USER_NAME,
   AUTO_HOSTED_USER_REMARK,
+  buildHostedSubscriptionDiagnostics,
   buildHostedSubscriptionUrl,
   findAutoHostedTemplate,
   findAutoHostedUser,
   getHostedSubscriptionSyncStatus,
   resolveCurrentHostedSubscriptionResult,
+  type HostedSubscriptionDiagnostics,
   type HostedSubscriptionResult,
   type HostedSubscriptionTargetState
 } from './hosted-state';
@@ -205,6 +210,10 @@ export function App(): JSX.Element {
   );
   const hostedSubscriptionSyncStatus = useMemo(
     () => getHostedSubscriptionSyncStatus(hostedSubscriptionResult, resources.nodes),
+    [hostedSubscriptionResult, resources.nodes]
+  );
+  const hostedSubscriptionDiagnostics = useMemo<HostedSubscriptionDiagnostics | null>(
+    () => buildHostedSubscriptionDiagnostics(hostedSubscriptionResult, resources.nodes),
     [hostedSubscriptionResult, resources.nodes]
   );
   const latestPersistedRemoteSyncSource = useMemo(
@@ -614,14 +623,18 @@ export function App(): JSX.Element {
             target,
             url,
             ok: true,
-            detail: `${previewResult.metadata.nodeCount} 个节点，托管输出检查通过`
+            detail: `${previewResult.metadata.nodeCount} 个节点，托管输出检查通过`,
+            previewNodeCount: previewResult.metadata.nodeCount,
+            templateName: previewResult.metadata.templateName
           };
         } catch (caughtError) {
           return {
             target,
             url,
             ok: false,
-            detail: getErrorMessage(caughtError)
+            detail: getErrorMessage(caughtError),
+            previewNodeCount: null,
+            templateName: null
           };
         }
       })
@@ -634,6 +647,9 @@ export function App(): JSX.Element {
       sourceLabel: input.sourceLabel,
       nodeCount: boundNodeIds.length,
       boundNodeIds,
+      effectiveBoundNodeIds: boundNodeIds,
+      unresolvedBoundNodeIds: [],
+      bindingError: null,
       targets
     };
   }
@@ -1145,6 +1161,7 @@ export function App(): JSX.Element {
           enabledNodeCount={enabledNodeCount}
           autoHostedUserName={autoHostedUser?.name ?? null}
           hostedSubscriptionResult={hostedSubscriptionResult}
+          hostedSubscriptionDiagnostics={hostedSubscriptionDiagnostics}
           hostedSubscriptionSyncStatus={hostedSubscriptionSyncStatus}
           enabledNodeWarnings={enabledNodeWarnings}
           onGenerate={() => void handleGenerateHostedFromEnabledNodes()}
@@ -1236,14 +1253,29 @@ function buildAutoHostedTemplateContent(
   importedConfig?: ImportedConfigPayload | null
 ): string {
   if (importedConfig?.targetType === target) {
-    return importedConfig.templateContent;
+    return normalizeManagedAutoHostedTemplateContent(target, importedConfig.templateContent);
   }
 
   if (existingTemplate?.content.trim()) {
-    return existingTemplate.content;
+    return normalizeManagedAutoHostedTemplateContent(target, existingTemplate.content);
   }
 
   return target === 'mihomo'
     ? AUTO_HOSTED_MIHOMO_TEMPLATE
     : AUTO_HOSTED_SINGBOX_TEMPLATE;
+}
+
+function normalizeManagedAutoHostedTemplateContent(
+  target: SubscriptionTarget,
+  content: string
+): string {
+  if (target !== 'mihomo') {
+    return content;
+  }
+
+  try {
+    return normalizeManagedMihomoTemplateContent(content);
+  } catch {
+    return AUTO_HOSTED_MIHOMO_TEMPLATE;
+  }
 }
