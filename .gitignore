@@ -15,6 +15,7 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+.codex
 
 .omx/context/
 .omx/logs/

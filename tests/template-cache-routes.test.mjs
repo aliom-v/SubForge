@@ -31,11 +31,10 @@ class MockPreparedStatement {
 }
 
 class MockDatabase {
-  constructor({ adminsById, users, templates, ruleSources }) {
+  constructor({ adminsById, users, templates }) {
     this.adminsById = new Map(adminsById);
     this.users = users.map((user) => ({ ...user }));
     this.templates = new Map([...templates.entries()].map(([id, row]) => [id, { ...row }]));
-    this.ruleSources = new Map([...ruleSources.entries()].map(([id, row]) => [id, { ...row }]));
     this.auditLogs = [];
   }
 
@@ -65,11 +64,7 @@ class MockDatabase {
       return candidates[0] ?? null;
     }
 
-    if (sql.includes('SELECT * FROM rule_sources WHERE id = ? LIMIT 1')) {
-      return this.ruleSources.get(bindings[0]) ?? null;
-    }
-
-    throw new Error(`Unexpected first query in template/rule route test: ${sql}`);
+    throw new Error(`Unexpected first query in template route test: ${sql}`);
   }
 
   async all(sql) {
@@ -77,7 +72,7 @@ class MockDatabase {
       return this.users;
     }
 
-    throw new Error(`Unexpected all query in template/rule route test: ${sql}`);
+    throw new Error(`Unexpected all query in template route test: ${sql}`);
   }
 
   async run(sql, bindings) {
@@ -126,33 +121,12 @@ class MockDatabase {
       return { success: true };
     }
 
-    if (sql.startsWith('UPDATE rule_sources SET name = ?, source_url = ?, format = ?, enabled = ?, updated_at = ? WHERE id = ?')) {
-      const [name, sourceUrl, format, enabled, updatedAt, id] = bindings;
-      const ruleSource = this.ruleSources.get(id);
-
-      if (ruleSource) {
-        ruleSource.name = name;
-        ruleSource.source_url = sourceUrl;
-        ruleSource.format = format;
-        ruleSource.enabled = enabled;
-        ruleSource.updated_at = updatedAt;
-      }
-
-      return { success: true };
-    }
-
-    if (sql.startsWith('DELETE FROM rule_sources WHERE id = ?')) {
-      const [id] = bindings;
-      this.ruleSources.delete(id);
-      return { success: true };
-    }
-
     if (sql.startsWith('INSERT INTO audit_logs')) {
       this.auditLogs.push(bindings);
       return { success: true };
     }
 
-    throw new Error(`Unexpected run query in template/rule route test: ${sql}`);
+    throw new Error(`Unexpected run query in template route test: ${sql}`);
   }
 }
 
@@ -200,28 +174,12 @@ function createTemplateRow(id, overrides = {}) {
   };
 }
 
-function createRuleSourceRow(id, overrides = {}) {
-  return {
-    id,
-    name: id,
-    source_url: 'https://example.com/rules.txt',
-    format: 'text',
-    enabled: 1,
-    last_sync_at: null,
-    last_sync_status: null,
-    failure_count: 0,
-    created_at: '2026-03-08T00:00:00.000Z',
-    updated_at: '2026-03-08T00:00:00.000Z',
-    ...overrides
-  };
-}
-
 async function createRouteHarness() {
   const admin = createAdminRow();
   const env = {
     ASSETS: {
       async fetch() {
-        throw new Error('ASSETS.fetch should not be called in template/rule route tests');
+        throw new Error('ASSETS.fetch should not be called in template route tests');
       }
     },
     DB: new MockDatabase({
@@ -231,9 +189,6 @@ async function createRouteHarness() {
         ['tpl_default', createTemplateRow('tpl_default', { is_default: 1, version: 1 })],
         ['tpl_alt', createTemplateRow('tpl_alt', { is_default: 0, version: 2 })],
         ['tpl_other', createTemplateRow('tpl_other', { target_type: 'singbox', is_default: 1 })]
-      ]),
-      ruleSources: new Map([
-        ['rs_1', createRuleSourceRow('rs_1', { enabled: 1 })]
       ])
     }),
     SUB_CACHE: new MockKvNamespace(),
