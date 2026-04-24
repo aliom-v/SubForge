@@ -704,6 +704,57 @@ rules:
   assert.doesNotMatch(result.data.content, /Stale Edge 01/);
 });
 
+test('compileSubscription strips mixed static proxies before injecting mihomo nodes', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_legacy',
+          name: 'Legacy Node',
+          protocol: 'trojan',
+          server: 'current.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            password: 'current-pass'
+          }
+        }
+      ],
+      template: {
+        id: 'tpl_mihomo_mixed_static',
+        name: 'Imported Mixed Mihomo',
+        target: 'mihomo',
+        content: `proxies:
+  - name: Legacy Node
+    type: trojan
+    server: stale.example.com
+    port: 443
+    password: stale-pass
+{{proxies}}
+proxy-groups:
+  - name: Auto
+    type: select
+    proxies:
+      - Legacy Node
+rules:
+{{rules}}`,
+        version: 1,
+        isDefault: true
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /current\.example\.com/);
+  assert.doesNotMatch(result.data.content, /stale\.example\.com/);
+  assert.equal([...result.data.content.matchAll(/name: "?Legacy Node"?/g)].length, 1);
+});
+
 test('compileSubscription maps hysteria2 tls and obfs fields for sing-box templates', () => {
   const result = compileSubscription(
     createCompileInput({

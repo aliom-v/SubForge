@@ -80,7 +80,10 @@ function toParseableMihomoTemplate(content: string): string {
   return content
     .replace(/^([ \t]*proxies:)\s*\n[ \t]*\{\{proxies\}\}\s*$/m, `$1 "${MIHOMO_PROXIES_MARKER}"`)
     .replace(/^([ \t]*proxy-groups:)\s*\n[ \t]*\{\{proxy_groups\}\}\s*$/m, `$1 "${MIHOMO_PROXY_GROUPS_MARKER}"`)
-    .replace(/^([ \t]*rules:)\s*\n[ \t]*\{\{rules\}\}\s*$/m, `$1 "${MIHOMO_RULES_MARKER}"`);
+    .replace(/^([ \t]*rules:)\s*\n[ \t]*\{\{rules\}\}\s*$/m, `$1 "${MIHOMO_RULES_MARKER}"`)
+    .replace(/^[ \t]*\{\{proxies\}\}\s*$/m, `  - "${MIHOMO_PROXIES_MARKER}"`)
+    .replace(/^[ \t]*\{\{proxy_groups\}\}\s*$/m, `  - "${MIHOMO_PROXY_GROUPS_MARKER}"`)
+    .replace(/^[ \t]*\{\{rules\}\}\s*$/m, `  - "${MIHOMO_RULES_MARKER}"`);
 }
 
 function createPlaceholderRecord(value: string): Record<string, string> {
@@ -125,7 +128,9 @@ function parseMihomoTemplateDocument(content: string): ParsedMihomoTemplateDocum
 
   if (Array.isArray(proxiesValue)) {
     for (const item of proxiesValue) {
-      if (isObjectRecord(item)) {
+      if (item === MIHOMO_PROXIES_MARKER) {
+        continue;
+      } else if (isObjectRecord(item)) {
         staticProxies.push(cloneJsonLike(item));
       } else {
         warnings.push('检测到无法识别的 proxy 条目，结构化助手已忽略该条目。');
@@ -137,7 +142,9 @@ function parseMihomoTemplateDocument(content: string): ParsedMihomoTemplateDocum
 
   if (Array.isArray(proxyGroupsValue)) {
     for (const item of proxyGroupsValue) {
-      if (isObjectRecord(item)) {
+      if (item === MIHOMO_PROXY_GROUPS_MARKER) {
+        continue;
+      } else if (isObjectRecord(item)) {
         proxyGroups.push(cloneJsonLike(item));
       } else {
         warnings.push('检测到无法识别的 proxy-group 条目，结构化助手已忽略该条目。');
@@ -159,7 +166,9 @@ function parseMihomoTemplateDocument(content: string): ParsedMihomoTemplateDocum
 
   if (Array.isArray(rulesValue)) {
     for (const item of rulesValue) {
-      if (typeof item === 'string' && item.trim()) {
+      if (item === MIHOMO_RULES_MARKER) {
+        continue;
+      } else if (typeof item === 'string' && item.trim()) {
         rules.push(item.trim());
       } else if (item != null) {
         warnings.push('检测到非字符串的 Mihomo rule，结构化助手已忽略该条目。');

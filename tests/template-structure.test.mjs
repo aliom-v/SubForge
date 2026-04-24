@@ -93,6 +93,31 @@ rules:
   assert.match(normalized, /rules:/);
 });
 
+test('normalizeManagedMihomoTemplateContent strips static proxies from mixed dynamic proxy blocks', () => {
+  const template = `proxies:
+  - name: Legacy Node
+    type: trojan
+    server: legacy.example.com
+    port: 443
+    password: replace-me
+{{proxies}}
+proxy-groups:
+  - name: Auto
+    type: select
+    proxies:
+      - Legacy Node
+rules:
+{{rules}}
+`;
+  const normalized = normalizeManagedMihomoTemplateContent(template);
+  const parsed = parseMihomoTemplateStructure(normalized);
+
+  assert.equal(parsed.useDynamicProxies, true);
+  assert.equal(parsed.staticProxies.length, 0);
+  assert.match(normalized, /proxies:\n\{\{proxies\}\}/);
+  assert.doesNotMatch(normalized, /legacy\.example\.com/);
+});
+
 test('updateSingboxTemplateStructure can combine static blocks with dynamic placeholders', () => {
   const template = `{
   "outbounds": [
