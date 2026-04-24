@@ -1,6 +1,6 @@
 const supportedNodeMajorMin = 20;
 const supportedNodeMajorMaxExclusive = 25;
-const pinnedNodeMajor = 20;
+const pinnedNodeMajor = 24;
 
 const args = new Set(process.argv.slice(2));
 const printPolicyOnly = args.has('--print-policy');

@@ -2,7 +2,6 @@ import type {
   AppErrorShape,
   ApiResult,
   JsonValue,
-  RuleSourceFormat,
   SubscriptionTarget,
   UserStatus
 } from '@subforge/shared';
@@ -26,14 +25,6 @@ export interface SubscriptionNode {
   params?: Record<string, JsonValue>;
 }
 
-export interface SubscriptionRuleSet {
-  id: string;
-  name: string;
-  format: RuleSourceFormat;
-  content: string;
-  sourceId?: string | null;
-}
-
 export interface SubscriptionTemplate {
   id: string;
   name: string;
@@ -48,7 +39,6 @@ export interface SubscriptionRenderContext {
   generatedAt: string;
   user: SubscriptionUser;
   nodes: SubscriptionNode[];
-  ruleSets: SubscriptionRuleSet[];
   template: SubscriptionTemplate;
 }
 
@@ -61,7 +51,6 @@ export interface CompiledSubscription {
   metadata: {
     userId: string;
     nodeCount: number;
-    ruleSetCount: number;
     templateName: string;
   };
 }
@@ -70,7 +59,6 @@ export interface SubscriptionCompileInput {
   target: SubscriptionTarget;
   user: SubscriptionUser;
   nodes: SubscriptionNode[];
-  ruleSets: SubscriptionRuleSet[];
   template: SubscriptionTemplate;
 }
 

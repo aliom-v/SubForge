@@ -70,7 +70,6 @@ test('hosted state resolver rebuilds current hosted URLs from saved resources an
         metadata: {
           userId,
           nodeCount: 1,
-          ruleSetCount: 0,
           templateName: `Auto ${target}`
         }
       };

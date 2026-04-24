@@ -13,14 +13,6 @@ export function buildDefaultTemplateCacheKey(target: SubscriptionTarget): string
   return `${CACHE_KEY_PREFIXES.templateDefault}:${target}`;
 }
 
-export function buildRuleSnapshotCacheKey(sourceId: string): string {
-  return `${CACHE_KEY_PREFIXES.ruleSnapshot}:${sourceId}`;
-}
-
-export function buildActiveRulesCacheKey(target: SubscriptionTarget): string {
-  return `${CACHE_KEY_PREFIXES.ruleActive}:${target}`;
-}
-
 export function buildAdminLoginRateLimitKey(clientKey: string, username: string): string {
   return `${CACHE_KEY_PREFIXES.adminLoginRateLimit}:${clientKey}:${username}`;
 }

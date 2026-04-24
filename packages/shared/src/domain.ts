@@ -2,9 +2,7 @@ import {
   ADMIN_ROLES,
   ADMIN_STATUSES,
   NODE_SOURCE_TYPES,
-  RULE_SOURCE_FORMATS,
   SUBSCRIPTION_TARGETS,
-  SYNC_LOG_STATUSES,
   TEMPLATE_STATUSES,
   USER_STATUSES
 } from './constants';
@@ -15,8 +13,7 @@ export type AdminStatus = (typeof ADMIN_STATUSES)[number];
 export type AdminRole = (typeof ADMIN_ROLES)[number];
 export type NodeSourceType = (typeof NODE_SOURCE_TYPES)[number];
 export type TemplateStatus = (typeof TEMPLATE_STATUSES)[number];
-export type RuleSourceFormat = (typeof RULE_SOURCE_FORMATS)[number];
-export type SyncLogStatus = (typeof SYNC_LOG_STATUSES)[number];
+export type RemoteSubscriptionSyncStatus = 'success' | 'failed' | 'skipped';
 
 export type Primitive = string | number | boolean | null;
 export type JsonValue = Primitive | JsonValue[] | { [key: string]: JsonValue };
@@ -73,7 +70,7 @@ export interface RemoteSubscriptionSourceRecord extends TimestampedRecord {
   sourceUrl: string;
   enabled: boolean;
   lastSyncAt?: string | null;
-  lastSyncStatus?: SyncLogStatus | null;
+  lastSyncStatus?: RemoteSubscriptionSyncStatus | null;
   lastSyncMessage?: string | null;
   lastSyncDetails?: Record<string, JsonValue> | null;
   failureCount: number;

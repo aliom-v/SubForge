@@ -138,7 +138,6 @@ export function compileSubscription(input: SubscriptionCompileInput): Subscripti
     generatedAt: new Date().toISOString(),
     user: input.user,
     nodes: input.nodes.filter((node) => node.enabled),
-    ruleSets: input.ruleSets,
     template: input.template
   };
 
@@ -151,7 +150,6 @@ export function compileSubscription(input: SubscriptionCompileInput): Subscripti
     metadata: {
       userId: input.user.id,
       nodeCount: context.nodes.length,
-      ruleSetCount: context.ruleSets.length,
       templateName: input.template.name
     }
   };

@@ -182,7 +182,6 @@ test('web api client uses centralized route definitions for active single-user o
           metadata: {
             userId: 'user_demo',
             nodeCount: 2,
-            ruleSetCount: 0,
             templateName: 'auto-mihomo'
           }
         };

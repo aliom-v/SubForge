@@ -48,7 +48,6 @@ export interface PreviewPayload {
   metadata: {
     userId: string;
     nodeCount: number;
-    ruleSetCount: number;
     templateName: string;
   };
 }

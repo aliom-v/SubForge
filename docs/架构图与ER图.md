@@ -135,8 +135,8 @@ sequenceDiagram
 
 补充说明：
 
-- 当前 `getSubscriptionCompileInputByUserId()` 会把 `ruleSets` 固定为空数组
-- 公开订阅是否可用，核心取决于用户状态、绑定节点、模板骨架与渲染器兜底
+- 当前 `getSubscriptionCompileInputByUserId()` 只组装用户、绑定节点和默认模板
+- 公开订阅是否可用，核心取决于用户状态、绑定节点、模板骨架与渲染器默认规则兜底
 
 ### 4.3 同步与运维流
 
@@ -296,14 +296,14 @@ erDiagram
 - `TemplateStatus`
   - `enabled`
   - `disabled`
-- `SyncLogStatus`
+- `RemoteSubscriptionSyncStatus`
   - `success`
   - `failed`
   - `skipped`
 
 补充说明：
 
-- `SyncLogStatus` 仍用于 `remote_subscription_sources.last_sync_status`
+- `RemoteSubscriptionSyncStatus` 用于 `remote_subscription_sources.last_sync_status`
 - 当前没有独立的 `sync_logs` 表，也没有单独的 `RuleSourceRecord / RuleSnapshotRecord`
 
 ### 6.3 表结构速览
@@ -578,7 +578,7 @@ erDiagram
 - `apps/worker/src/remote-subscription-sync.ts`
   - 负责自动同步源抓取、解析、去重、链式代理校验、节点 upsert 与状态详情写回
 - `packages/core/src/compile.ts`
-  - 负责把“用户 + 节点 + 模板 + 空 ruleSets”编译成目标订阅
+  - 负责把“用户 + 节点 + 模板”编译成目标订阅
 - `packages/core/src/renderers.ts` / `packages/core/src/template-structure.ts`
   - 负责目标格式输出与 Mihomo 模板净化
 

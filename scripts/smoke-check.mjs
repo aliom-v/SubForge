@@ -6,6 +6,10 @@ function assertIncludes(content, expected, label) {
   assert.ok(content.includes(expected), `${label} should include: ${expected}`);
 }
 
+function assertExcludes(content, unexpected, label) {
+  assert.ok(!content.includes(unexpected), `${label} should not include: ${unexpected}`);
+}
+
 async function captureModuleOutput(relativePath, argv = []) {
   const logs = [];
   const originalArgv = process.argv;
@@ -61,7 +65,7 @@ assertIncludes(initHelp, 'npm run init:remote', 'init script help remote example
 
 const runtimePolicy = await captureModuleOutput('scripts/check-runtime.mjs', ['--print-policy']);
 assertIncludes(runtimePolicy, 'supported Node.js: >=20 <25', 'runtime policy node range');
-assertIncludes(runtimePolicy, 'pinned Node.js in repo: 20', 'runtime policy pinned node');
+assertIncludes(runtimePolicy, 'pinned Node.js in repo: 24', 'runtime policy pinned node');
 
 const d1BackupHelp = await captureModuleOutput('scripts/d1-backup.mjs', ['--help']);
 assertIncludes(d1BackupHelp, 'npm run backup:d1', 'd1 backup help root command');
@@ -100,8 +104,8 @@ const gitignore = readFileSync('.gitignore', 'utf8');
 assertIncludes(gitignore, 'backups/d1/', 'gitignore d1 backup artifacts');
 
 assert.equal(readFileSync('.npmrc', 'utf8').trim(), 'engine-strict=true', 'repo should enforce engine-strict installs');
-assert.equal(readFileSync('.nvmrc', 'utf8').trim(), '20', 'repo should pin Node.js 20 via .nvmrc');
-assert.equal(readFileSync('.node-version', 'utf8').trim(), '20', 'repo should pin Node.js 20 via .node-version');
+assert.equal(readFileSync('.nvmrc', 'utf8').trim(), '24', 'repo should pin Node.js 24 via .nvmrc');
+assert.equal(readFileSync('.node-version', 'utf8').trim(), '24', 'repo should pin Node.js 24 via .node-version');
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
 assert.equal(packageJson.engines?.node, '>=20.0.0 <25.0.0', 'root node engine range');
@@ -212,7 +216,7 @@ assertIncludes(deployGuide, '绑定 / Secret / 调度对照', 'deploy guide bind
 assertIncludes(deployGuide, '部署后首轮排障观察点', 'deploy guide first-troubleshooting docs');
 assertIncludes(deployGuide, '节点 JSON 批量导入', 'deploy guide node import docs');
 assertIncludes(deployGuide, '自动同步源', 'deploy guide remote sync docs');
-assertIncludes(deployGuide, 'Node.js `20`', 'deploy guide pinned node docs');
+assertIncludes(deployGuide, 'Node.js `24`', 'deploy guide pinned node docs');
 assertIncludes(deployGuide, 'Node.js 25+', 'deploy guide unsupported runtime docs');
 assertIncludes(deployGuide, 'last_sync_message', 'deploy guide sync error details docs');
 assertIncludes(deployGuide, 'errorSummary', 'deploy guide sync summary docs');
@@ -463,7 +467,8 @@ assertIncludes(rateLimit, 'consumeSubscriptionRateLimit', 'worker subscription r
 
 const sharedDomain = readFileSync('packages/shared/src/domain.ts', 'utf8');
 assertIncludes(sharedDomain, 'export interface RemoteSubscriptionSourceRecord extends TimestampedRecord {', 'shared remote subscription record');
-assertIncludes(sharedDomain, 'lastSyncStatus?: SyncLogStatus | null;', 'shared remote subscription sync status field');
+assertIncludes(sharedDomain, "export type RemoteSubscriptionSyncStatus = 'success' | 'failed' | 'skipped';", 'shared remote subscription sync status type');
+assertIncludes(sharedDomain, 'lastSyncStatus?: RemoteSubscriptionSyncStatus | null;', 'shared remote subscription sync status field');
 assertIncludes(sharedDomain, 'lastSyncMessage?: string | null;', 'shared remote subscription sync message field');
 assertIncludes(sharedDomain, 'lastSyncDetails?: Record<string, JsonValue> | null;', 'shared remote subscription sync details field');
 
@@ -471,13 +476,22 @@ const workerRepository = readFileSync('apps/worker/src/repository.ts', 'utf8');
 assertIncludes(workerRepository, 'recordRemoteSubscriptionSourceSync', 'worker remote subscription sync status persistence');
 assertIncludes(workerRepository, 'last_sync_message', 'worker remote subscription sync message persistence');
 assertIncludes(workerRepository, 'last_sync_details_json', 'worker remote subscription sync details persistence');
-assertIncludes(workerRepository, 'ruleSets: []', 'worker subscription compile input should not depend on rule snapshots');
+assertExcludes(workerRepository, 'ruleSets:', 'worker subscription compile input should not depend on rule snapshots');
 
 const webApp = readFileSync('apps/web/src/App.tsx', 'utf8');
 assertIncludes(webApp, '使用当前启用节点生成托管 URL', 'web single-user hosted generation action');
 assertIncludes(webApp, '重置当前托管链接', 'web hosted token reset action');
 assertIncludes(webApp, '保存为自动同步源', 'web remote subscription source action');
 assertIncludes(webApp, '链式代理拓扑', 'web node topology panel');
+assert.ok(
+  webApp.indexOf('<NodeImportSection') < webApp.indexOf('<NodeManagementSection') &&
+    webApp.indexOf('<NodeManagementSection') < webApp.indexOf('<HostedSubscriptionSection'),
+  'web main flow should order import, node management, then hosted subscription generation'
+);
+
+const hostedSubscriptionSection = readFileSync('apps/web/src/components/HostedSubscriptionSection.tsx', 'utf8');
+assertIncludes(hostedSubscriptionSection, '订阅 URL', 'hosted subscription direct URL card label');
+assertIncludes(hostedSubscriptionSection, '查看托管诊断', 'hosted subscription diagnostics disclosure');
 
 const workerSync = readFileSync('apps/worker/src/sync.ts', 'utf8');
 assertIncludes(workerSync, 'FETCH_TIMEOUT', 'worker sync timeout grading');

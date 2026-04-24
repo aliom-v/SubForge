@@ -60,8 +60,35 @@ export function HostedSubscriptionSection(props: {
         </div>
       ) : null}
       {props.hostedSubscriptionResult ? (
+        <div className="metadata-grid top-gap">
+          {props.hostedSubscriptionResult.targets.map((target) => (
+            <div className="result-card" key={target.target}>
+              <strong>{target.target} 订阅 URL</strong>
+              <a className="result-link" href={target.url} target="_blank" rel="noreferrer">
+                {target.url}
+              </a>
+              <span>
+                {target.ok
+                  ? `输出检查通过${target.previewNodeCount != null ? `，预览 ${target.previewNodeCount} 个节点` : ''}`
+                  : '输出检查失败'}
+              </span>
+              {target.ok && target.templateName ? <span>模板：{target.templateName}</span> : null}
+              <span>{target.detail}</span>
+              <div className="inline-actions">
+                <button type="button" className="secondary" onClick={() => props.onCopyHostedUrl(target.url, target.target)}>
+                  复制 URL
+                </button>
+                <a className="button-link" href={target.url} target="_blank" rel="noreferrer">
+                  打开
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {props.hostedSubscriptionResult ? (
         <details className="disclosure top-gap">
-          <summary>查看当前托管 URL 与诊断（{props.hostedSubscriptionResult.targets.length}）</summary>
+          <summary>查看托管诊断（{props.hostedSubscriptionResult.targets.length} 个目标）</summary>
           <div className="disclosure-body">
             <p className="helper">
               当前状态：{props.hostedSubscriptionResult.sourceLabel}
@@ -94,31 +121,6 @@ export function HostedSubscriptionSection(props: {
                 <span>{props.hostedSubscriptionDiagnostics.bindingError}</span>
               </div>
             ) : null}
-            <div className="metadata-grid">
-              {props.hostedSubscriptionResult.targets.map((target) => (
-                <div className="result-card" key={target.target}>
-                  <strong>{target.target}</strong>
-                  <a className="result-link" href={target.url} target="_blank" rel="noreferrer">
-                    {target.url}
-                  </a>
-                  <span>
-                    {target.ok
-                      ? `输出检查通过${target.previewNodeCount != null ? `，预览 ${target.previewNodeCount} 个节点` : ''}`
-                      : '输出检查失败'}
-                  </span>
-                  {target.ok && target.templateName ? <span>模板：{target.templateName}</span> : null}
-                  <span>{target.detail}</span>
-                  <div className="inline-actions">
-                    <button type="button" className="secondary" onClick={() => props.onCopyHostedUrl(target.url, target.target)}>
-                      复制 URL
-                    </button>
-                    <a className="button-link" href={target.url} target="_blank" rel="noreferrer">
-                      打开
-                    </a>
-                  </div>
-                </div>
-              ))}
-            </div>
             {props.hostedSubscriptionDiagnostics?.hasIssues ? (
               <div className="metadata-grid">
                 {props.hostedSubscriptionDiagnostics.enabledOnlyNodes.length > 0 ? (

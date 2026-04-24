@@ -1190,7 +1190,6 @@ paths:
                       metadata:
                         userId: user_01halice
                         nodeCount: 1
-                        ruleSetCount: 1
                         templateName: mihomo-default
         '400':
           $ref: '#/components/responses/BadRequestError'
@@ -1595,7 +1594,7 @@ components:
     TemplateStatus:
       type: string
       enum: [enabled, disabled]
-    SyncLogStatus:
+    RemoteSubscriptionSyncStatus:
       type: string
       enum: [success, failed, skipped]
     JsonObject:
@@ -2287,7 +2286,7 @@ components:
           format: date-time
         lastSyncStatus:
           oneOf:
-            - $ref: '#/components/schemas/SyncLogStatus'
+            - $ref: '#/components/schemas/RemoteSubscriptionSyncStatus'
             - type: 'null'
         lastSyncMessage:
           type: [string, 'null']
@@ -2463,7 +2462,7 @@ components:
           type: string
           format: uri
         status:
-          $ref: '#/components/schemas/SyncLogStatus'
+          $ref: '#/components/schemas/RemoteSubscriptionSyncStatus'
         message:
           type: string
         changed:
@@ -2509,14 +2508,11 @@ components:
               $ref: '#/components/schemas/RemoteSubscriptionSourceSyncResult'
     PreviewMetadata:
       type: object
-      required: [userId, nodeCount, ruleSetCount, templateName]
+      required: [userId, nodeCount, templateName]
       properties:
         userId:
           type: string
         nodeCount:
-          type: integer
-          minimum: 0
-        ruleSetCount:
           type: integer
           minimum: 0
         templateName:

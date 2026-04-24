@@ -2,8 +2,7 @@ import { createAppError, APP_ERROR_CODES, type SubscriptionTarget } from '@subfo
 import type {
   SubscriptionCompileInput,
   SubscriptionNode,
-  SubscriptionRenderContext,
-  SubscriptionRuleSet
+  SubscriptionRenderContext
 } from './models';
 import {
   normalizeManagedMihomoTemplateContent,
@@ -29,19 +28,6 @@ function replaceTemplateSlots(template: string, slots: Record<string, string>): 
   return Object.entries(slots).reduce((content, [key, value]) => {
     return content.replaceAll(`{{${key}}}`, value);
   }, template);
-}
-
-function stripWrappingQuotes(value: string): string {
-  const trimmed = value.trim();
-
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-
-  return trimmed;
 }
 
 function readNodeParamString(params: SubscriptionNode['params'], key: string): string | null {
@@ -115,15 +101,6 @@ function normalizeHysteria2Mport(value: string): string[] {
     .map((item) => item.replace(/^(\d+)\s*-\s*(\d+)$/, '$1:$2'));
 }
 
-function collectRuleLines(ruleSets: SubscriptionRuleSet[]): string[] {
-  return ruleSets.flatMap((ruleSet) =>
-    ruleSet.content
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-  );
-}
-
 function toMihomoProxy(node: SubscriptionNode): string {
   const entries = [`name: ${JSON.stringify(node.name)}`, `type: ${node.protocol}`, `server: ${node.server}`, `port: ${node.port}`];
   const params = node.params ?? {};
@@ -182,14 +159,8 @@ function toMihomoProxyGroup(nodes: SubscriptionNode[]): string {
   ].join('\n');
 }
 
-function toMihomoRules(ruleSets: SubscriptionRuleSet[]): string {
-  const lines = collectRuleLines(ruleSets);
-
-  if (lines.length === 0) {
-    return '  - MATCH,DIRECT';
-  }
-
-  return lines.map((line) => `  - ${line}`).join('\n');
+function toMihomoRules(): string {
+  return '  - MATCH,DIRECT';
 }
 
 function toSingboxOutbound(node: SubscriptionNode): Record<string, unknown> {
@@ -410,262 +381,6 @@ function toSingboxOutbounds(nodes: SubscriptionNode[]): string {
   return JSON.stringify(outbounds, null, 2);
 }
 
-const singboxRuleOptionTokens = new Set(['NO-RESOLVE']);
-
-function buildSingboxRuleAction(targetRaw: string): Record<string, unknown> {
-  const target = stripWrappingQuotes(targetRaw);
-  const normalized = target.toUpperCase();
-
-  if (normalized === 'REJECT') {
-    return { action: 'reject' };
-  }
-
-  if (normalized === 'REJECT-DROP') {
-    return {
-      action: 'reject',
-      method: 'drop'
-    };
-  }
-
-  if (normalized === 'REJECT-TINYGIF' || normalized === 'REJECT-UDP') {
-    return { action: 'reject' };
-  }
-
-  return {
-    action: 'route',
-    outbound: normalized === 'DIRECT' ? 'direct' : target
-  };
-}
-
-function buildStringArrayCondition(field: string, value: string): Record<string, unknown> | null {
-  const normalized = stripWrappingQuotes(value);
-
-  if (!normalized) {
-    return null;
-  }
-
-  return { [field]: [normalized] };
-}
-
-function buildLowercaseStringArrayCondition(field: string, value: string): Record<string, unknown> | null {
-  const normalized = stripWrappingQuotes(value).toLowerCase();
-
-  if (!normalized) {
-    return null;
-  }
-
-  return { [field]: [normalized] };
-}
-
-function normalizePortRange(value: string): string {
-  return value.replace(/\s+/g, '').replace('-', ':');
-}
-
-function buildPortCondition(
-  directField: string,
-  rangeField: string,
-  value: string
-): Record<string, unknown> | null {
-  const normalized = stripWrappingQuotes(value);
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized.includes('-') || normalized.includes(':')) {
-    return { [rangeField]: [normalizePortRange(normalized)] };
-  }
-
-  const parsed = Number(normalized);
-
-  if (Number.isInteger(parsed) && parsed > 0) {
-    return { [directField]: [parsed] };
-  }
-
-  return { [rangeField]: [normalized] };
-}
-
-function buildNetworkCondition(value: string): Record<string, unknown> | null {
-  const items = stripWrappingQuotes(value)
-    .split(/[|/]/)
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-
-  if (items.length === 0) {
-    return null;
-  }
-
-  return { network: items };
-}
-
-function buildClashModeCondition(value: string): Record<string, unknown> | null {
-  const normalized = stripWrappingQuotes(value).toLowerCase();
-
-  if (!normalized) {
-    return null;
-  }
-
-  return { clash_mode: normalized };
-}
-
-function buildGeoCondition(
-  field: string,
-  privateField: string,
-  value: string
-): Record<string, unknown> | null {
-  const normalized = stripWrappingQuotes(value).toLowerCase();
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized === 'private' || normalized === 'lan') {
-    return { [privateField]: true };
-  }
-
-  return { [field]: [normalized] };
-}
-
-function buildIpCidrCondition(
-  field: string,
-  privateField: string,
-  value: string
-): Record<string, unknown> | null {
-  const normalized = stripWrappingQuotes(value);
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized.toLowerCase() === 'private' || normalized.toLowerCase() === 'lan') {
-    return { [privateField]: true };
-  }
-
-  return { [field]: [normalized] };
-}
-
-function buildSingboxRuleMatch(type: string, payload: string): Record<string, unknown> | null {
-  switch (type) {
-    case 'MATCH':
-    case 'FINAL':
-      return payload ? null : {};
-    case 'DOMAIN':
-      return buildStringArrayCondition('domain', payload);
-    case 'DOMAIN-SUFFIX':
-      return buildStringArrayCondition('domain_suffix', payload);
-    case 'DOMAIN-KEYWORD':
-      return buildStringArrayCondition('domain_keyword', payload);
-    case 'DOMAIN-REGEX':
-      return buildStringArrayCondition('domain_regex', payload);
-    case 'GEOSITE':
-      return buildLowercaseStringArrayCondition('geosite', payload);
-    case 'GEOIP':
-      return buildGeoCondition('geoip', 'ip_is_private', payload);
-    case 'SRC-GEOIP':
-      return buildGeoCondition('source_geoip', 'source_ip_is_private', payload);
-    case 'IP-CIDR':
-    case 'IP-CIDR6':
-      return buildIpCidrCondition('ip_cidr', 'ip_is_private', payload);
-    case 'SRC-IP-CIDR':
-      return buildIpCidrCondition('source_ip_cidr', 'source_ip_is_private', payload);
-    case 'PORT':
-    case 'DST-PORT':
-      return buildPortCondition('port', 'port_range', payload);
-    case 'SRC-PORT':
-      return buildPortCondition('source_port', 'source_port_range', payload);
-    case 'PROCESS-NAME':
-      return buildStringArrayCondition('process_name', payload);
-    case 'PROCESS-PATH':
-      return buildStringArrayCondition('process_path', payload);
-    case 'PROCESS-PATH-REGEX':
-      return buildStringArrayCondition('process_path_regex', payload);
-    case 'PACKAGE-NAME':
-      return buildStringArrayCondition('package_name', payload);
-    case 'RULE-SET':
-      return buildStringArrayCondition('rule_set', payload);
-    case 'NETWORK':
-      return buildNetworkCondition(payload);
-    case 'PROTOCOL':
-      return buildLowercaseStringArrayCondition('protocol', payload);
-    case 'CLASH-MODE':
-      return buildClashModeCondition(payload);
-    case 'INBOUND-TAG':
-      return buildStringArrayCondition('inbound', payload);
-    default:
-      return null;
-  }
-}
-
-function parseSingboxRuleLine(line: string): Record<string, unknown> | null {
-  const tokens = line
-    .split(',')
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  if (tokens.length < 2) {
-    return null;
-  }
-
-  const typeToken = tokens[0];
-
-  if (!typeToken) {
-    return null;
-  }
-
-  const type = typeToken.toUpperCase();
-  let targetIndex = tokens.length - 1;
-
-  while (targetIndex > 0) {
-    const token = tokens[targetIndex];
-
-    if (!token || !singboxRuleOptionTokens.has(token.toUpperCase())) {
-      break;
-    }
-
-    targetIndex -= 1;
-  }
-
-  if (targetIndex <= 0) {
-    return null;
-  }
-
-  const targetToken = tokens[targetIndex];
-
-  if (!targetToken) {
-    return null;
-  }
-
-  const payload = tokens.slice(1, targetIndex).join(',').trim();
-  const match = buildSingboxRuleMatch(type, payload);
-
-  if (!match) {
-    return null;
-  }
-
-  return {
-    ...match,
-    ...buildSingboxRuleAction(targetToken)
-  };
-}
-
-function toSingboxRuleObjects(ruleSets: SubscriptionRuleSet[]): Array<Record<string, unknown>> {
-  return collectRuleLines(ruleSets)
-    .map((line) => parseSingboxRuleLine(line))
-    .filter((rule): rule is Record<string, unknown> => rule !== null);
-}
-
-function toSingboxRuleItems(ruleSets: SubscriptionRuleSet[]): string {
-  return toSingboxRuleObjects(ruleSets)
-    .map((rule) => indentBlock(JSON.stringify(rule, null, 2), 8))
-    .join(',\n');
-}
-
-function toSingboxRules(ruleSets: SubscriptionRuleSet[]): string {
-  const rules = toSingboxRuleObjects(ruleSets);
-
-  return JSON.stringify(rules, null, 2);
-}
-
 const mihomoBuiltinReferences = new Set(['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'GLOBAL', 'COMPATIBLE']);
 
 function sanitizeStaticMihomoTemplate(content: string, nodeNames: string[]): string {
@@ -752,7 +467,7 @@ export const mihomoRenderer: SubscriptionRenderer = {
       : '  []';
 
     const proxyGroupsBlock = indentBlock(toMihomoProxyGroup(context.nodes), 2);
-    const rulesBlock = toMihomoRules(context.ruleSets);
+    const rulesBlock = toMihomoRules();
 
     return replaceTemplateSlots(templateContent, {
       proxies: proxiesBlock,
@@ -767,13 +482,12 @@ export const singboxRenderer: SubscriptionRenderer = {
   mimeType: 'application/json; charset=utf-8',
   render(context): string {
     const outboundItems = toSingboxOutboundItems(context.nodes);
-    const ruleItems = toSingboxRuleItems(context.ruleSets);
     return replaceTemplateSlots(context.template.content, {
       outbounds: indentBlock(toSingboxOutbounds(context.nodes), 2).trimStart(),
       outbound_items: outboundItems,
       outbound_items_with_leading_comma: outboundItems ? `,\n${outboundItems}` : '',
-      rules: indentBlock(toSingboxRules(context.ruleSets), 6).trimStart(),
-      rules_with_leading_comma: ruleItems ? `,\n${ruleItems}` : ''
+      rules: '[]',
+      rules_with_leading_comma: ''
     });
   }
 };

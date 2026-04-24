@@ -68,7 +68,7 @@
 - 禁用用户返回 `USER_DISABLED`
 - 过期用户返回 `USER_EXPIRED`
 - 无可用节点返回 `NO_NODES_AVAILABLE`
-- 空规则集时的默认规则兜底
+- 无动态规则源时的默认规则兜底
 - `ssr` / `tuic` / `hysteria2` 的 metadata 映射与模板输出矩阵
 
 ### 4.2 Worker 公开订阅关键路径

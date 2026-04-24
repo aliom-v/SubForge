@@ -1139,7 +1139,7 @@ export function App(): JSX.Element {
       <section className="panel-grid main-grid">
         <article className="panel full-width">
           <h2>节点主入口</h2>
-          <p className="helper">只保留一条主流程：导入到节点列表，统一调整，再生成托管 URL。</p>
+          <p className="helper">只保留一条主流程：导入节点，统一调整，再生成并复制托管 URL。</p>
           <div className="inline-meta">
             <span>支持分享链接 / Base64 / YAML / JSON</span>
             <span>订阅 URL 可保存为自动同步源</span>
@@ -1155,19 +1155,6 @@ export function App(): JSX.Element {
             ))}
           </div>
         </article>
-
-        <HostedSubscriptionSection
-          loading={loading}
-          enabledNodeCount={enabledNodeCount}
-          autoHostedUserName={autoHostedUser?.name ?? null}
-          hostedSubscriptionResult={hostedSubscriptionResult}
-          hostedSubscriptionDiagnostics={hostedSubscriptionDiagnostics}
-          hostedSubscriptionSyncStatus={hostedSubscriptionSyncStatus}
-          enabledNodeWarnings={enabledNodeWarnings}
-          onGenerate={() => void handleGenerateHostedFromEnabledNodes()}
-          onResetToken={() => void handleResetCurrentHostedSubscriptionToken()}
-          onCopyHostedUrl={(url, target) => void copyHostedUrl(url, target)}
-        />
 
         <NodeImportSection
           loading={loading}
@@ -1228,6 +1215,19 @@ export function App(): JSX.Element {
           onSaveNode={handleSaveNode}
           onSetNodesEnabled={handleSetNodesEnabled}
           onDeleteNodes={handleDeleteNodes}
+        />
+
+        <HostedSubscriptionSection
+          loading={loading}
+          enabledNodeCount={enabledNodeCount}
+          autoHostedUserName={autoHostedUser?.name ?? null}
+          hostedSubscriptionResult={hostedSubscriptionResult}
+          hostedSubscriptionDiagnostics={hostedSubscriptionDiagnostics}
+          hostedSubscriptionSyncStatus={hostedSubscriptionSyncStatus}
+          enabledNodeWarnings={enabledNodeWarnings}
+          onGenerate={() => void handleGenerateHostedFromEnabledNodes()}
+          onResetToken={() => void handleResetCurrentHostedSubscriptionToken()}
+          onCopyHostedUrl={(url, target) => void copyHostedUrl(url, target)}
         />
       </section>
     </main>

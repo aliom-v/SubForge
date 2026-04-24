@@ -798,7 +798,6 @@ export async function getSubscriptionCompileInputByUserId(
       ...(user.expiresAt ? { expiresAt: user.expiresAt } : {})
     },
     nodes: nodeRows.map(mapNode).map(mapNodeForSubscription),
-    ruleSets: [],
     template: mapTemplateForSubscription(template)
   };
 }

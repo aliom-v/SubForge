@@ -79,15 +79,6 @@ function createBootstrapInput(target: SubscriptionTarget): SubscriptionCompileIn
         }
       }
     ],
-    ruleSets: [
-      {
-        id: 'rules_default',
-        name: 'Default Rules',
-        format: 'text',
-        content: 'MATCH,DIRECT',
-        sourceId: 'rs_default'
-      }
-    ],
     template: {
       id: `tpl_${target}`,
       name: `${target} default template`,

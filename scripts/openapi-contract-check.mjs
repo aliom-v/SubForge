@@ -349,7 +349,7 @@ for (const operation of requiredOperations) {
 
 assert.deepEqual(
   contract.previewMetadataRequired,
-  ['userId', 'nodeCount', 'ruleSetCount', 'templateName'],
+  ['userId', 'nodeCount', 'templateName'],
   'PreviewMetadata required fields'
 );
 assert.ok(contract.previewMetadataRequired, 'PreviewMetadata schema should exist');

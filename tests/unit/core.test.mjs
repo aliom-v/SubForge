@@ -47,15 +47,6 @@ function createBaseInput(target = 'mihomo') {
         }
       }
     ],
-    ruleSets: [
-      {
-        id: 'rules_default',
-        name: 'Default Rules',
-        format: 'text',
-        content: 'DOMAIN-SUFFIX,example.com,Auto\n\nMATCH,DIRECT',
-        sourceId: 'rs_default'
-      }
-    ],
     template:
       target === 'mihomo'
         ? {
@@ -107,12 +98,10 @@ test('compileSubscription renders mihomo output and filters disabled nodes', () 
   assert.equal(result.data.mimeType, 'text/yaml; charset=utf-8');
   assert.equal(result.data.cacheKey, buildSubscriptionCacheKey('mihomo', 'demo-token'));
   assert.equal(result.data.metadata.nodeCount, 1);
-  assert.equal(result.data.metadata.ruleSetCount, 1);
   assert.equal(result.data.metadata.templateName, 'Default Mihomo');
   assert.match(result.data.generatedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(result.data.content, /name: "HK Edge 01"/);
   assert.doesNotMatch(result.data.content, /Disabled Edge/);
-  assert.match(result.data.content, /DOMAIN-SUFFIX,example.com,Auto/);
   assert.match(result.data.content, /MATCH,DIRECT/);
 });
 
@@ -131,16 +120,7 @@ test('compileSubscription renders singbox output as valid JSON', () => {
   assert.equal(payload.outbounds.length, 1);
   assert.equal(payload.outbounds[0].tag, 'HK Edge 01');
   assert.equal(payload.outbounds[0].server, 'hk-01.example.com');
-  assert.equal(payload.route.rules.length, 2);
-  assert.deepEqual(payload.route.rules[0], {
-    domain_suffix: ['example.com'],
-    action: 'route',
-    outbound: 'Auto'
-  });
-  assert.deepEqual(payload.route.rules[1], {
-    action: 'route',
-    outbound: 'direct'
-  });
+  assert.deepEqual(payload.route.rules, []);
 });
 
 test('compileSubscription returns structured validation errors', async (t) => {
