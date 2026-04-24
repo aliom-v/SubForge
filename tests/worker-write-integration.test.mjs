@@ -878,10 +878,10 @@ test('syncing a saved remote subscription source rewires bound users to the late
     .sort();
   assert.deepEqual(boundNodeIds, ['node_manual_01', activeRemoteNodes[0].id].sort());
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'remote_subscription_source.sync');
@@ -1854,10 +1854,10 @@ test('reset-token invalidates old and new caches, writes audit log, and shifts s
   const oldToken = 'tok_demo';
   const { env, kv, db } = createEnv({
     cacheEntries: [
-      [`sub:v2:mihomo:${oldToken}`, 'old-subscription'],
-      [`preview:v2:mihomo:usr_demo`, '{"cached":true}'],
-      [`sub:v2:singbox:${oldToken}`, 'old-singbox'],
-      [`preview:v2:singbox:usr_demo`, '{"cached":true}']
+      [`sub:v3:mihomo:${oldToken}`, 'old-subscription'],
+      [`preview:v3:mihomo:usr_demo`, '{"cached":true}'],
+      [`sub:v3:singbox:${oldToken}`, 'old-singbox'],
+      [`preview:v3:singbox:usr_demo`, '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -1878,14 +1878,14 @@ test('reset-token invalidates old and new caches, writes audit log, and shifts s
   assert.equal(payload.ok, true);
   assert.notEqual(payload.data.token, oldToken);
   assert.deepEqual(kv.deletedKeys, [
-    `sub:v2:mihomo:${oldToken}`,
-    'preview:v2:mihomo:usr_demo',
-    `sub:v2:singbox:${oldToken}`,
-    'preview:v2:singbox:usr_demo',
-    `sub:v2:mihomo:${payload.data.token}`,
-    'preview:v2:mihomo:usr_demo',
-    `sub:v2:singbox:${payload.data.token}`,
-    'preview:v2:singbox:usr_demo'
+    `sub:v3:mihomo:${oldToken}`,
+    'preview:v3:mihomo:usr_demo',
+    `sub:v3:singbox:${oldToken}`,
+    'preview:v3:singbox:usr_demo',
+    `sub:v3:mihomo:${payload.data.token}`,
+    'preview:v3:mihomo:usr_demo',
+    `sub:v3:singbox:${payload.data.token}`,
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'user.reset_token');
@@ -1929,10 +1929,10 @@ test('hosted-subscription reset-token rotates the internal hosted token and inva
     users: [hostedUser],
     userNodeMap: [{ id: 'unm_hosted', user_id: 'usr_hosted', node_id: 'node_hk_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }],
     cacheEntries: [
-      [`sub:v2:mihomo:${oldToken}`, 'old-subscription'],
-      ['preview:v2:mihomo:usr_hosted', '{"cached":true}'],
-      [`sub:v2:singbox:${oldToken}`, 'old-singbox'],
-      ['preview:v2:singbox:usr_hosted', '{"cached":true}']
+      [`sub:v3:mihomo:${oldToken}`, 'old-subscription'],
+      ['preview:v3:mihomo:usr_hosted', '{"cached":true}'],
+      [`sub:v3:singbox:${oldToken}`, 'old-singbox'],
+      ['preview:v3:singbox:usr_hosted', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -1953,14 +1953,14 @@ test('hosted-subscription reset-token rotates the internal hosted token and inva
   assert.equal(payload.ok, true);
   assert.notEqual(payload.data.token, oldToken);
   assert.deepEqual(kv.deletedKeys, [
-    `sub:v2:mihomo:${oldToken}`,
-    'preview:v2:mihomo:usr_hosted',
-    `sub:v2:singbox:${oldToken}`,
-    'preview:v2:singbox:usr_hosted',
-    `sub:v2:mihomo:${payload.data.token}`,
-    'preview:v2:mihomo:usr_hosted',
-    `sub:v2:singbox:${payload.data.token}`,
-    'preview:v2:singbox:usr_hosted'
+    `sub:v3:mihomo:${oldToken}`,
+    'preview:v3:mihomo:usr_hosted',
+    `sub:v3:singbox:${oldToken}`,
+    'preview:v3:singbox:usr_hosted',
+    `sub:v3:mihomo:${payload.data.token}`,
+    'preview:v3:mihomo:usr_hosted',
+    `sub:v3:singbox:${payload.data.token}`,
+    'preview:v3:singbox:usr_hosted'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'hosted_subscription.reset_token');
@@ -1995,10 +1995,10 @@ test('hosted-subscription reset-token rotates the internal hosted token and inva
 test('deleting a user invalidates caches, writes audit log, and makes the old token unreachable', async () => {
   const { env, kv, db } = createEnv({
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2018,10 +2018,10 @@ test('deleting a user invalidates caches, writes audit log, and makes the old to
   assert.equal(payload.ok, true);
   assert.equal(payload.data.deleted, true);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'user.delete');
@@ -2097,10 +2097,10 @@ test('binding nodes rejects unknown node ids before mutating state', async () =>
 test('binding new nodes invalidates caches, writes audit log, and changes subsequent preview output', async () => {
   const { env, kv, db } = createEnv({
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2124,10 +2124,10 @@ test('binding new nodes invalidates caches, writes audit log, and changes subseq
   assert.equal(payload.ok, true);
   assert.deepEqual(payload.data.nodeIds, ['node_sg_01']);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'user.bind_nodes');
@@ -2175,10 +2175,10 @@ test('binding changes keep preview and public subscription aligned for the same 
   assert.equal(payload.ok, true);
   assert.deepEqual(payload.data.nodeIds, ['node_sg_01']);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'user.bind_nodes');
@@ -2200,10 +2200,10 @@ test('share-link import -> create -> bind -> preview works for ss and hysteria2 
   const { env, kv, db } = createEnv({
     userNodeMap: [],
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2245,10 +2245,10 @@ test('share-link import -> create -> bind -> preview works for ss and hysteria2 
   assert.equal(bindResult.payload.ok, true);
   assert.deepEqual(bindResult.payload.data.nodeIds, [ssCreate.payload.data.id, hy2Create.payload.data.id]);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
 
   const preview = await requestPreview(env, adminToken);
@@ -2265,10 +2265,10 @@ test('share-link import -> create -> bind -> preview/public work for ssr and tui
   const { env, kv, db } = createEnv({
     userNodeMap: [],
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2318,10 +2318,10 @@ test('share-link import -> create -> bind -> preview/public work for ssr and tui
   assert.equal(bindResult.payload.ok, true);
   assert.deepEqual(bindResult.payload.data.nodeIds, [ssrCreate.payload.data.id, tuicCreate.payload.data.id]);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
 
   const preview = await requestPreview(env, adminToken);
@@ -2678,10 +2678,10 @@ test('updating a missing node returns 404 without writing audit logs', async () 
 test('updating a node accepts null credentials and params to clear stored metadata', async () => {
   const { env, kv, db } = createEnv({
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2710,10 +2710,10 @@ test('updating a node accepts null credentials and params to clear stored metada
   assert.equal(db.nodes.get('node_hk_01').credentials_json, null);
   assert.equal(db.nodes.get('node_hk_01').params_json, null);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'node.update');
@@ -2722,10 +2722,10 @@ test('updating a node accepts null credentials and params to clear stored metada
 test('updating a node invalidates affected caches, writes audit log, and changes subsequent preview and subscription output', async () => {
   const { env, kv, db } = createEnv({
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2750,10 +2750,10 @@ test('updating a node invalidates affected caches, writes audit log, and changes
   assert.equal(payload.ok, true);
   assert.equal(payload.data.name, 'HK Edge Updated');
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'node.update');
@@ -2786,10 +2786,10 @@ test('updating a node still allows unrelated changes when another historical bad
       })
     ],
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2814,10 +2814,10 @@ test('updating a node still allows unrelated changes when another historical bad
   assert.equal(payload.data.server, 'hk-01-updated.example.com');
   assert.equal(db.nodes.get('node_hk_01').server, 'hk-01-updated.example.com');
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'node.update');
@@ -2846,10 +2846,10 @@ test('batch enabling dependent nodes succeeds when the whole chain becomes valid
       { id: 'unm_2', user_id: 'usr_demo', node_id: 'node_sg_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }
     ],
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2883,14 +2883,14 @@ test('batch enabling dependent nodes succeeds when the whole chain becomes valid
   assert.equal(db.nodes.get('node_hk_01').enabled, 1);
   assert.equal(db.nodes.get('node_sg_01').enabled, 1);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo',
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo',
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'node.batch_set_enabled');
@@ -2948,10 +2948,10 @@ test('deleting a node invalidates affected caches, writes audit log, and leaves 
     nodes: [createNodeRow('node_hk_01', { name: 'HK Edge 01', server: 'hk-01.example.com' })],
     userNodeMap: [{ id: 'unm_1', user_id: 'usr_demo', node_id: 'node_hk_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }],
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -2971,10 +2971,10 @@ test('deleting a node invalidates affected caches, writes audit log, and leaves 
   assert.equal(payload.ok, true);
   assert.equal(payload.data.deleted, true);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo',
-    'sub:v2:singbox:tok_demo',
-    'preview:v2:singbox:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo',
+    'sub:v3:singbox:tok_demo',
+    'preview:v3:singbox:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'node.delete');
@@ -2988,10 +2988,10 @@ test('deleting a node invalidates affected caches, writes audit log, and leaves 
 test('creating a new default template invalidates target caches, writes audit log, and changes subsequent subscription output', async () => {
   const { env, kv, db } = createEnv({
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -3021,8 +3021,8 @@ test('creating a new default template invalidates target caches, writes audit lo
   assert.equal(payload.ok, true);
   assert.equal(payload.data.name, 'Mihomo New Default');
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'template.create');
@@ -3075,8 +3075,8 @@ test('setting a different default template changes subsequent preview and public
   assert.equal(payload.ok, true);
   assert.equal(payload.data.id, 'tpl_alt');
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'template.set_default');
@@ -3107,10 +3107,10 @@ test('deleting the effective template invalidates target caches, writes audit lo
       createTemplateRow('tpl_singbox', { target_type: 'singbox', is_default: 1, name: 'Singbox Default' })
     ],
     cacheEntries: [
-      ['sub:v2:mihomo:tok_demo', 'cached'],
-      ['preview:v2:mihomo:usr_demo', '{"cached":true}'],
-      ['sub:v2:singbox:tok_demo', 'cached'],
-      ['preview:v2:singbox:usr_demo', '{"cached":true}']
+      ['sub:v3:mihomo:tok_demo', 'cached'],
+      ['preview:v3:mihomo:usr_demo', '{"cached":true}'],
+      ['sub:v3:singbox:tok_demo', 'cached'],
+      ['preview:v3:singbox:usr_demo', '{"cached":true}']
     ]
   });
   const adminToken = await createAdminToken(env);
@@ -3130,8 +3130,8 @@ test('deleting the effective template invalidates target caches, writes audit lo
   assert.equal(payload.ok, true);
   assert.equal(payload.data.deleted, true);
   assert.deepEqual(kv.deletedKeys, [
-    'sub:v2:mihomo:tok_demo',
-    'preview:v2:mihomo:usr_demo'
+    'sub:v3:mihomo:tok_demo',
+    'preview:v3:mihomo:usr_demo'
   ]);
   assert.equal(db.auditLogs.length, 1);
   assert.equal(auditAction(db.auditLogs[0]), 'template.delete');

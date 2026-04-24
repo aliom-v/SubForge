@@ -92,10 +92,10 @@ test('invalidateUserCaches clears both subscription and preview caches for all t
   await invalidateUserCaches(env, { id: 'usr_1', token: 'tok_1' });
 
   assert.deepEqual(env.SUB_CACHE.deletedKeys, [
-    'sub:v2:mihomo:tok_1',
-    'preview:v2:mihomo:usr_1',
-    'sub:v2:singbox:tok_1',
-    'preview:v2:singbox:usr_1'
+    'sub:v3:mihomo:tok_1',
+    'preview:v3:mihomo:usr_1',
+    'sub:v3:singbox:tok_1',
+    'preview:v3:singbox:usr_1'
   ]);
 });
 
@@ -105,8 +105,8 @@ test('invalidateUserCaches only clears the requested target when targets are pro
   await invalidateUserCaches(env, { id: 'usr_2', token: 'tok_2' }, ['mihomo']);
 
   assert.deepEqual(env.SUB_CACHE.deletedKeys, [
-    'sub:v2:mihomo:tok_2',
-    'preview:v2:mihomo:usr_2'
+    'sub:v3:mihomo:tok_2',
+    'preview:v3:mihomo:usr_2'
   ]);
 });
 
@@ -121,10 +121,10 @@ test('invalidateAllUserCaches clears caches for every listed user', async () => 
   await invalidateAllUserCaches(env, ['singbox']);
 
   assert.deepEqual(env.SUB_CACHE.deletedKeys, [
-    'sub:v2:singbox:tok_a',
-    'preview:v2:singbox:usr_a',
-    'sub:v2:singbox:tok_b',
-    'preview:v2:singbox:usr_b'
+    'sub:v3:singbox:tok_a',
+    'preview:v3:singbox:usr_a',
+    'sub:v3:singbox:tok_b',
+    'preview:v3:singbox:usr_b'
   ]);
 });
 
@@ -144,9 +144,9 @@ test('invalidateNodeAffectedCaches clears caches for users bound to the affected
   await invalidateNodeAffectedCaches(env, 'node_1', ['mihomo']);
 
   assert.deepEqual(env.SUB_CACHE.deletedKeys, [
-    'sub:v2:mihomo:tok_x',
-    'preview:v2:mihomo:usr_x',
-    'sub:v2:mihomo:tok_y',
-    'preview:v2:mihomo:usr_y'
+    'sub:v3:mihomo:tok_x',
+    'preview:v3:mihomo:usr_x',
+    'sub:v3:mihomo:tok_y',
+    'preview:v3:mihomo:usr_y'
   ]);
 });

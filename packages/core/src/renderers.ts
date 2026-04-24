@@ -1,4 +1,5 @@
 import { createAppError, APP_ERROR_CODES, type SubscriptionTarget } from '@subforge/shared';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type {
   SubscriptionCompileInput,
   SubscriptionNode,
@@ -454,6 +455,57 @@ function sanitizeStaticMihomoTemplate(content: string, nodeNames: string[]): str
   }
 }
 
+function dedupeMihomoProxiesByName(content: string): string {
+  let parsed: unknown;
+
+  try {
+    parsed = parseYaml(content) as unknown;
+  } catch {
+    return content;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return content;
+  }
+
+  const document = parsed as Record<string, unknown>;
+  const proxies = document.proxies;
+
+  if (!Array.isArray(proxies)) {
+    return content;
+  }
+
+  const seen = new Set<string>();
+  const deduped: unknown[] = [];
+
+  for (let index = proxies.length - 1; index >= 0; index -= 1) {
+    const proxy = proxies[index];
+    const nameValue =
+      proxy && typeof proxy === 'object' && !Array.isArray(proxy)
+        ? (proxy as Record<string, unknown>).name
+        : undefined;
+    const name =
+      typeof nameValue === 'string' ? nameValue.trim() : '';
+
+    if (name && seen.has(name)) {
+      continue;
+    }
+
+    if (name) {
+      seen.add(name);
+    }
+
+    deduped.push(proxy);
+  }
+
+  if (deduped.length === proxies.length) {
+    return content;
+  }
+
+  document.proxies = deduped.reverse();
+  return stringifyYaml(document, { lineWidth: 0 });
+}
+
 export const mihomoRenderer: SubscriptionRenderer = {
   target: 'mihomo',
   mimeType: 'text/yaml; charset=utf-8',
@@ -469,11 +521,13 @@ export const mihomoRenderer: SubscriptionRenderer = {
     const proxyGroupsBlock = indentBlock(toMihomoProxyGroup(context.nodes), 2);
     const rulesBlock = toMihomoRules();
 
-    return replaceTemplateSlots(templateContent, {
+    const rendered = replaceTemplateSlots(templateContent, {
       proxies: proxiesBlock,
       proxy_groups: proxyGroupsBlock,
       rules: rulesBlock
     });
+
+    return dedupeMihomoProxiesByName(rendered);
   }
 };
 

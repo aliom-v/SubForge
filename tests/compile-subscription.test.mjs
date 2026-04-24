@@ -72,7 +72,7 @@ test('compileSubscription returns compiled mihomo content for active users', () 
   }
 
   assert.equal(result.data.mimeType, 'text/yaml; charset=utf-8');
-  assert.equal(result.data.cacheKey, 'sub:v2:mihomo:demo-token');
+  assert.equal(result.data.cacheKey, 'sub:v3:mihomo:demo-token');
   assert.equal(result.data.metadata.userId, 'usr_demo');
   assert.equal(result.data.metadata.nodeCount, 1);
   assert.match(result.data.content, /HK Edge 01/);
@@ -731,6 +731,57 @@ test('compileSubscription strips mixed static proxies before injecting mihomo no
     port: 443
     password: stale-pass
 {{proxies}}
+proxy-groups:
+  - name: Auto
+    type: select
+    proxies:
+      - Legacy Node
+rules:
+{{rules}}`,
+        version: 1,
+        isDefault: true
+      }
+    })
+  );
+
+  assert.equal(result.ok, true);
+
+  if (!result.ok) {
+    throw new Error(`expected success, received ${result.error.code}`);
+  }
+
+  assert.match(result.data.content, /current\.example\.com/);
+  assert.doesNotMatch(result.data.content, /stale\.example\.com/);
+  assert.equal([...result.data.content.matchAll(/name: "?Legacy Node"?/g)].length, 1);
+});
+
+test('compileSubscription deduplicates rendered mihomo proxies when a stale mixed block remains', () => {
+  const result = compileSubscription(
+    createCompileInput({
+      nodes: [
+        {
+          id: 'node_legacy',
+          name: 'Legacy Node',
+          protocol: 'trojan',
+          server: 'current.example.com',
+          port: 443,
+          enabled: true,
+          credentials: {
+            password: 'current-pass'
+          }
+        }
+      ],
+      template: {
+        id: 'tpl_mihomo_mixed_static_with_comment',
+        name: 'Imported Mixed Mihomo With Comment',
+        target: 'mihomo',
+        content: `proxies:
+  - name: Legacy Node
+    type: trojan
+    server: stale.example.com
+    port: 443
+    password: stale-pass
+{{proxies}} # injected nodes
 proxy-groups:
   - name: Auto
     type: select

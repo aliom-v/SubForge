@@ -236,8 +236,8 @@ test('setting a new default template invalidates caches for that target', async 
   assert.equal(payload.ok, true);
   assert.equal(payload.data.id, 'tpl_alt');
   assert.deepEqual(env.SUB_CACHE.deletedKeys, [
-    'sub:v2:mihomo:tok_1',
-    'preview:v2:mihomo:usr_1'
+    'sub:v3:mihomo:tok_1',
+    'preview:v3:mihomo:usr_1'
   ]);
 });
 
@@ -261,8 +261,8 @@ test('updating the currently effective template invalidates target caches', asyn
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
   assert.deepEqual(env.SUB_CACHE.deletedKeys, [
-    'sub:v2:mihomo:tok_1',
-    'preview:v2:mihomo:usr_1'
+    'sub:v3:mihomo:tok_1',
+    'preview:v3:mihomo:usr_1'
   ]);
 });
 
@@ -289,8 +289,8 @@ test('disabling the current default template clears its default flag and invalid
   assert.equal(payload.data.isDefault, false);
   assert.equal(payload.data.status, 'disabled');
   assert.deepEqual(env.SUB_CACHE.deletedKeys, [
-    'sub:v2:mihomo:tok_1',
-    'preview:v2:mihomo:usr_1'
+    'sub:v3:mihomo:tok_1',
+    'preview:v3:mihomo:usr_1'
   ]);
   assert.equal(env.DB.auditLogs.length, 1);
   assert.equal(env.DB.templates.get('tpl_default').enabled, 0);
@@ -433,8 +433,8 @@ test('deleting the currently effective template invalidates target caches', asyn
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
   assert.deepEqual(env.SUB_CACHE.deletedKeys, [
-    'sub:v2:mihomo:tok_1',
-    'preview:v2:mihomo:usr_1'
+    'sub:v3:mihomo:tok_1',
+    'preview:v3:mihomo:usr_1'
   ]);
 });
 
