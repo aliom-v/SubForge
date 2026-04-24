@@ -629,11 +629,11 @@ test('preview request compiles on miss, writes cache, and returns hit on the sec
   assert.equal(first.response.status, 200);
   assert.equal(first.response.headers.get('x-subforge-preview-cache'), 'miss');
   assert.equal(first.response.headers.get('x-subforge-cache-scope'), 'preview');
-  assert.equal(first.payload.data.cacheKey, 'preview:mihomo:usr_demo');
+  assert.equal(first.payload.data.cacheKey, 'preview:v2:mihomo:usr_demo');
   assert.match(first.payload.data.content, /HK Edge 01/);
   assert.match(first.payload.data.content, /MATCH,DIRECT/);
   assert.equal(kv.putCalls.length, 1);
-  assert.equal(kv.putCalls[0].key, 'preview:mihomo:usr_demo');
+  assert.equal(kv.putCalls[0].key, 'preview:v2:mihomo:usr_demo');
 
   const second = await requestJson(
     'http://127.0.0.1:8787/api/preview/usr_demo/mihomo',
@@ -648,7 +648,7 @@ test('preview request compiles on miss, writes cache, and returns hit on the sec
 
   assert.equal(second.response.status, 200);
   assert.equal(second.response.headers.get('x-subforge-preview-cache'), 'hit');
-  assert.equal(second.payload.data.cacheKey, 'preview:mihomo:usr_demo');
+  assert.equal(second.payload.data.cacheKey, 'preview:v2:mihomo:usr_demo');
   assert.equal(second.payload.data.content, first.payload.data.content);
   assert.equal(kv.putCalls.length, 1);
 });
@@ -673,12 +673,12 @@ test('singbox preview request compiles on miss, writes cache, and returns hit on
   assert.equal(first.response.status, 200);
   assert.equal(first.response.headers.get('x-subforge-preview-cache'), 'miss');
   assert.equal(first.response.headers.get('x-subforge-cache-scope'), 'preview');
-  assert.equal(first.payload.data.cacheKey, 'preview:singbox:usr_demo');
+  assert.equal(first.payload.data.cacheKey, 'preview:v2:singbox:usr_demo');
   assert.equal(first.payload.data.mimeType, 'application/json; charset=utf-8');
   assert.match(first.payload.data.content, /"tag": "HK Edge 01"/);
   assert.match(first.payload.data.content, /"rules": \[\s*\]/);
   assert.equal(kv.putCalls.length, 1);
-  assert.equal(kv.putCalls[0].key, 'preview:singbox:usr_demo');
+  assert.equal(kv.putCalls[0].key, 'preview:v2:singbox:usr_demo');
 
   const second = await requestJson(
     'http://127.0.0.1:8787/api/preview/usr_demo/singbox',
@@ -693,14 +693,14 @@ test('singbox preview request compiles on miss, writes cache, and returns hit on
 
   assert.equal(second.response.status, 200);
   assert.equal(second.response.headers.get('x-subforge-preview-cache'), 'hit');
-  assert.equal(second.payload.data.cacheKey, 'preview:singbox:usr_demo');
+  assert.equal(second.payload.data.cacheKey, 'preview:v2:singbox:usr_demo');
   assert.equal(second.payload.data.content, first.payload.data.content);
   assert.equal(kv.putCalls.length, 1);
 });
 
 test('public subscription request compiles on miss, writes cache, and returns hit on the second request', async () => {
   const { env, kv } = createEnv();
-  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:mihomo:tok_demo');
+  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:v2:mihomo:tok_demo');
 
   const first = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/mihomo'), env);
   const firstBody = await first.text();
@@ -725,7 +725,7 @@ test('singbox public subscription request compiles on miss, writes cache, and re
   const { env, kv } = createEnv({
     templates: [createTemplateRow(), createSingboxTemplateRow()]
   });
-  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:singbox:tok_demo');
+  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:v2:singbox:tok_demo');
 
   const first = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/singbox'), env);
   const firstBody = await first.text();
@@ -748,7 +748,7 @@ test('singbox public subscription request compiles on miss, writes cache, and re
 
 test('HEAD public subscription request compiles on miss, writes cache, and returns headers without falling back to assets', async () => {
   const { env, kv, assets } = createEnv();
-  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:mihomo:tok_demo');
+  const subscriptionCacheWrites = () => kv.putCalls.filter((call) => call.key === 'sub:v2:mihomo:tok_demo');
 
   const response = await worker.fetch(new Request('http://127.0.0.1:8787/s/tok_demo/mihomo', { method: 'HEAD' }), env);
 
@@ -770,7 +770,7 @@ test('health endpoint returns JSON and GET or HEAD non-api requests fall back to
   assert.equal(health.payload.ok, true);
   assert.equal(health.payload.service, 'SubForge');
   assert.equal(health.payload.env, 'test');
-  assert.equal(health.payload.cacheKeyExample, 'sub:mihomo:demo-token');
+  assert.equal(health.payload.cacheKeyExample, 'sub:v2:mihomo:demo-token');
 
   const getAsset = await worker.fetch(new Request('http://127.0.0.1:8787/dashboard'), env);
   assert.equal(getAsset.status, 200);
@@ -880,10 +880,10 @@ test('scheduled delegates sync work to waitUntil and processes only enabled remo
   const { env, db, kv } = createEnv({
     remoteSubscriptionSources: [enabledRemoteSource, disabledRemoteSource],
     cacheEntries: [
-      ['sub:mihomo:tok_demo', 'cached'],
-      ['preview:mihomo:usr_demo', '{"ok":true}'],
-      ['sub:singbox:tok_demo', 'cached'],
-      ['preview:singbox:usr_demo', '{"ok":true}']
+      ['sub:v2:mihomo:tok_demo', 'cached'],
+      ['preview:v2:mihomo:usr_demo', '{"ok":true}'],
+      ['sub:v2:singbox:tok_demo', 'cached'],
+      ['preview:v2:singbox:usr_demo', '{"ok":true}']
     ]
   });
   const waitUntilCalls = [];

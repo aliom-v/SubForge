@@ -72,7 +72,7 @@ test('compileSubscription returns compiled mihomo content for active users', () 
   }
 
   assert.equal(result.data.mimeType, 'text/yaml; charset=utf-8');
-  assert.equal(result.data.cacheKey, 'sub:mihomo:demo-token');
+  assert.equal(result.data.cacheKey, 'sub:v2:mihomo:demo-token');
   assert.equal(result.data.metadata.userId, 'usr_demo');
   assert.equal(result.data.metadata.nodeCount, 1);
   assert.match(result.data.content, /HK Edge 01/);

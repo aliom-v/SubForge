@@ -1,12 +1,12 @@
-import { CACHE_KEY_PREFIXES } from './constants';
+import { CACHE_KEY_PREFIXES, CACHE_KEY_VERSION } from './constants';
 import type { SubscriptionTarget } from './domain';
 
 export function buildSubscriptionCacheKey(target: SubscriptionTarget, token: string): string {
-  return `${CACHE_KEY_PREFIXES.subscription}:${target}:${token}`;
+  return `${CACHE_KEY_PREFIXES.subscription}:${CACHE_KEY_VERSION}:${target}:${token}`;
 }
 
 export function buildPreviewCacheKey(target: SubscriptionTarget, userId: string): string {
-  return `${CACHE_KEY_PREFIXES.preview}:${target}:${userId}`;
+  return `${CACHE_KEY_PREFIXES.preview}:${CACHE_KEY_VERSION}:${target}:${userId}`;
 }
 
 export function buildDefaultTemplateCacheKey(target: SubscriptionTarget): string {

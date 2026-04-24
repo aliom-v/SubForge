@@ -15,6 +15,8 @@ export const ADMIN_ROLES = ['admin'] as const;
 export const NODE_SOURCE_TYPES = ['manual', 'remote'] as const;
 export const TEMPLATE_STATUSES = ['enabled', 'disabled'] as const;
 
+export const CACHE_KEY_VERSION = 'v2';
+
 export const CACHE_KEY_PREFIXES = {
   subscription: 'sub',
   preview: 'preview',
