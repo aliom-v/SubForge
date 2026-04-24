@@ -38,8 +38,6 @@ class MockDatabase {
     nodes = [],
     templates = [],
     remoteSubscriptionSources = [],
-    ruleSources = [],
-    snapshots = [],
     userNodeMap = []
   } = {}) {
     this.admins = new Map(admins.map((row) => [row.id, { ...row }]));
@@ -47,8 +45,6 @@ class MockDatabase {
     this.nodes = new Map(nodes.map((row) => [row.id, { ...row }]));
     this.templates = new Map(templates.map((row) => [row.id, { ...row }]));
     this.remoteSubscriptionSources = new Map(remoteSubscriptionSources.map((row) => [row.id, { ...row }]));
-    this.ruleSources = new Map(ruleSources.map((row) => [row.id, { ...row }]));
-    this.snapshots = snapshots.map((row) => ({ ...row }));
     this.userNodeMap = userNodeMap.map((row) => ({ ...row }));
     this.auditLogs = [];
   }
@@ -84,17 +80,6 @@ class MockDatabase {
 
     if (sql.includes('SELECT * FROM templates WHERE id = ? LIMIT 1')) {
       return this.templates.get(bindings[0]) ?? null;
-    }
-
-    if (sql.includes('SELECT * FROM rule_sources WHERE id = ? LIMIT 1')) {
-      return this.ruleSources.get(bindings[0]) ?? null;
-    }
-
-    if (sql.includes('SELECT * FROM rule_snapshots WHERE rule_source_id = ? ORDER BY created_at DESC LIMIT 1')) {
-      const rows = this.snapshots
-        .filter((row) => row.rule_source_id === bindings[0])
-        .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
-      return rows[0] ?? null;
     }
 
     if (sql.includes('SELECT * FROM remote_subscription_sources WHERE id = ? LIMIT 1')) {
@@ -137,16 +122,6 @@ class MockDatabase {
       return nodeIds
         .map((nodeId) => this.nodes.get(nodeId))
         .filter((row) => row && row.enabled === 1)
-        .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
-    }
-
-    if (sql.includes('FROM rule_snapshots rs') && sql.includes('INNER JOIN rule_sources rsrc')) {
-      return this.snapshots
-        .map((snapshot) => {
-          const source = this.ruleSources.get(snapshot.rule_source_id);
-          return source && source.enabled === 1 ? { ...snapshot, name: source.name, format: source.format } : null;
-        })
-        .filter(Boolean)
         .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
     }
 
@@ -354,54 +329,6 @@ class MockDatabase {
       return { success: true };
     }
 
-    if (sql.startsWith('DELETE FROM rule_sources WHERE id = ?')) {
-      const [id] = bindings;
-      this.ruleSources.delete(id);
-      this.snapshots = this.snapshots.filter((row) => row.rule_source_id !== id);
-      return { success: true };
-    }
-
-    if (sql.startsWith('UPDATE rule_sources SET name = ?, source_url = ?, format = ?, enabled = ?, updated_at = ? WHERE id = ?')) {
-      const [name, sourceUrl, format, enabled, updatedAt, id] = bindings;
-      const ruleSource = this.ruleSources.get(id);
-
-      if (ruleSource) {
-        ruleSource.name = name;
-        ruleSource.source_url = sourceUrl;
-        ruleSource.format = format;
-        ruleSource.enabled = enabled;
-        ruleSource.updated_at = updatedAt;
-      }
-
-      return { success: true };
-    }
-
-    if (sql.startsWith('UPDATE rule_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
-      const [lastSyncAt, status, failureCount, updatedAt, id] = bindings;
-      const ruleSource = this.ruleSources.get(id);
-
-      if (ruleSource) {
-        ruleSource.last_sync_at = lastSyncAt;
-        ruleSource.last_sync_status = status;
-        ruleSource.failure_count = failureCount;
-        ruleSource.updated_at = updatedAt;
-      }
-
-      return { success: true };
-    }
-
-    if (sql.startsWith('INSERT INTO rule_snapshots')) {
-      const [id, ruleSourceId, contentHash, content, createdAt] = bindings;
-      this.snapshots.push({
-        id,
-        rule_source_id: ruleSourceId,
-        content_hash: contentHash,
-        content,
-        created_at: createdAt
-      });
-      return { success: true };
-    }
-
     if (sql.startsWith('INSERT INTO remote_subscription_sources')) {
       const [id, name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, lastSyncMessage, lastSyncDetailsJson, failureCount, createdAt, updatedAt] = bindings;
       this.remoteSubscriptionSources.set(id, {
@@ -452,10 +379,6 @@ class MockDatabase {
         source.updated_at = updatedAt;
       }
 
-      return { success: true };
-    }
-
-    if (sql.startsWith('INSERT INTO sync_logs')) {
       return { success: true };
     }
 
@@ -565,22 +488,6 @@ function createTemplateRow(id, overrides = {}) {
   };
 }
 
-function createRuleSourceRow(id, overrides = {}) {
-  return {
-    id,
-    name: id,
-    source_url: `https://example.com/${id}.txt`,
-    format: 'text',
-    enabled: 1,
-    last_sync_at: null,
-    last_sync_status: null,
-    failure_count: 0,
-    created_at: '2026-03-08T00:00:00.000Z',
-    updated_at: '2026-03-08T00:00:00.000Z',
-    ...overrides
-  };
-}
-
 function createRemoteSubscriptionSourceRow(id, overrides = {}) {
   return {
     id,
@@ -598,17 +505,6 @@ function createRemoteSubscriptionSourceRow(id, overrides = {}) {
   };
 }
 
-function createSnapshotRow(id, overrides = {}) {
-  return {
-    id,
-    rule_source_id: 'rs_demo',
-    content_hash: `hash-${id}`,
-    content: 'DOMAIN-SUFFIX,example.com,DIRECT',
-    created_at: '2026-03-08T00:00:00.000Z',
-    ...overrides
-  };
-}
-
 function createEnv({
   admins = [createAdminRow()],
   users = [createUserRow()],
@@ -622,8 +518,6 @@ function createEnv({
     createTemplateRow('tpl_singbox', { target_type: 'singbox', is_default: 1, name: 'Singbox Default' })
   ],
   remoteSubscriptionSources = [],
-  ruleSources = [],
-  snapshots = [],
   userNodeMap = [{ id: 'unm_1', user_id: 'usr_demo', node_id: 'node_hk_01', enabled: 1, created_at: '2026-03-08T00:00:00.000Z' }],
   cacheEntries = []
 } = {}) {
@@ -633,8 +527,6 @@ function createEnv({
     nodes,
     templates,
     remoteSubscriptionSources,
-    ruleSources,
-    snapshots,
     userNodeMap
   });
   const kv = new MockKvNamespace(cacheEntries);
@@ -745,7 +637,6 @@ function captureWriteState(db) {
     nodes: db.nodes.size,
     templates: db.templates.size,
     remoteSubscriptionSources: db.remoteSubscriptionSources.size,
-    ruleSources: db.ruleSources.size,
     userNodeBindings: db.userNodeMap.length,
     auditLogs: db.auditLogs.length
   };

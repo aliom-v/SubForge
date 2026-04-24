@@ -131,9 +131,9 @@ assert.equal(packageJson.scripts['d1:restore:drill'], 'node scripts/d1-restore-d
 assert.ok(packageJson.cloudflare?.bindings?.ADMIN_JWT_SECRET, 'package.json should describe Cloudflare bindings');
 
 const webPackageJson = JSON.parse(readFileSync('apps/web/package.json', 'utf8'));
-assert.equal(webPackageJson.scripts.dev, 'node ./node_modules/vite/bin/vite.js', 'web dev script');
-assert.equal(webPackageJson.scripts.build, 'node ./node_modules/vite/bin/vite.js build', 'web build script');
-assert.equal(webPackageJson.scripts.preview, 'node ./node_modules/vite/bin/vite.js preview', 'web preview script');
+assert.equal(webPackageJson.scripts.dev, 'vite', 'web dev script');
+assert.equal(webPackageJson.scripts.build, 'vite build', 'web build script');
+assert.equal(webPackageJson.scripts.preview, 'vite preview', 'web preview script');
 assert.equal(webPackageJson.dependencies['@subforge/core'], '0.1.0', 'web should use npm-compatible workspace version for core');
 assert.equal(webPackageJson.dependencies['@subforge/shared'], '0.1.0', 'web should use npm-compatible workspace version for shared');
 

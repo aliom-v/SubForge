@@ -37,9 +37,7 @@ class MockDatabase {
     templates = [],
     nodes = [],
     userNodeMap = [],
-    remoteSubscriptionSources = [],
-    ruleSources = [],
-    snapshots = []
+    remoteSubscriptionSources = []
   } = {}) {
     this.admins = new Map(admins.map((row) => [row.id, { ...row }]));
     this.users = new Map(users.map((row) => [row.id, { ...row }]));
@@ -47,9 +45,6 @@ class MockDatabase {
     this.nodes = new Map(nodes.map((row) => [row.id, { ...row }]));
     this.userNodeMap = userNodeMap.map((row) => ({ ...row }));
     this.remoteSubscriptionSources = new Map(remoteSubscriptionSources.map((row) => [row.id, { ...row }]));
-    this.ruleSources = new Map(ruleSources.map((row) => [row.id, { ...row }]));
-    this.snapshots = snapshots.map((row) => ({ ...row }));
-    this.syncLogs = [];
   }
 
   prepare(sql) {
@@ -99,23 +94,12 @@ class MockDatabase {
       return candidates[0] ?? null;
     }
 
-    if (sql.includes('SELECT * FROM rule_sources WHERE id = ? LIMIT 1')) {
-      return this.ruleSources.get(bindings[0]) ?? null;
-    }
-
     if (sql.includes('SELECT * FROM remote_subscription_sources WHERE id = ? LIMIT 1')) {
       return this.remoteSubscriptionSources.get(bindings[0]) ?? null;
     }
 
     if (sql.includes('SELECT * FROM remote_subscription_sources WHERE source_url = ? LIMIT 1')) {
       return [...this.remoteSubscriptionSources.values()].find((row) => row.source_url === bindings[0]) ?? null;
-    }
-
-    if (sql.includes('SELECT * FROM rule_snapshots WHERE rule_source_id = ?')) {
-      const rows = this.snapshots
-        .filter((row) => row.rule_source_id === bindings[0])
-        .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
-      return rows[0] ?? null;
     }
 
     throw new Error(`Unexpected first query in worker integration test: ${sql}`);
@@ -132,17 +116,6 @@ class MockDatabase {
         .map((nodeId) => this.nodes.get(nodeId))
         .filter((row) => row && row.enabled === 1)
         .sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
-    }
-
-    if (sql.includes('FROM rule_snapshots rs') && sql.includes('INNER JOIN rule_sources rsrc')) {
-      return this.snapshots
-        .map((snapshot) => {
-          const source = this.ruleSources.get(snapshot.rule_source_id);
-          return source ? { ...snapshot, name: source.name, format: source.format, enabled: source.enabled } : null;
-        })
-        .filter((row) => row && row.enabled === 1)
-        .sort((left, right) => (left.created_at < right.created_at ? 1 : -1))
-        .map(({ enabled, ...row }) => row);
     }
 
     if (sql.includes('SELECT * FROM nodes WHERE source_type = ? ORDER BY created_at DESC')) {
@@ -179,10 +152,6 @@ class MockDatabase {
           id: user.id,
           token: user.token
         }));
-    }
-
-    if (sql.includes('SELECT * FROM rule_sources WHERE enabled = 1')) {
-      return [...this.ruleSources.values()].filter((row) => row.enabled === 1);
     }
 
     if (sql.includes('SELECT * FROM remote_subscription_sources WHERE enabled = 1')) {
@@ -281,32 +250,6 @@ class MockDatabase {
       return { success: true };
     }
 
-    if (sql.startsWith('INSERT INTO rule_snapshots')) {
-      const [id, ruleSourceId, contentHash, content, createdAt] = bindings;
-      this.snapshots.push({
-        id,
-        rule_source_id: ruleSourceId,
-        content_hash: contentHash,
-        content,
-        created_at: createdAt
-      });
-      return { success: true };
-    }
-
-    if (sql.startsWith('UPDATE rule_sources SET last_sync_at = ?, last_sync_status = ?, failure_count = ?, updated_at = ? WHERE id = ?')) {
-      const [lastSyncAt, status, failureCount, updatedAt, sourceId] = bindings;
-      const source = this.ruleSources.get(sourceId);
-
-      if (source) {
-        source.last_sync_at = lastSyncAt;
-        source.last_sync_status = status;
-        source.failure_count = failureCount;
-        source.updated_at = updatedAt;
-      }
-
-      return { success: true };
-    }
-
     if (sql.startsWith('INSERT INTO remote_subscription_sources')) {
       const [id, name, sourceUrl, enabled, lastSyncAt, lastSyncStatus, lastSyncMessage, lastSyncDetailsJson, failureCount, createdAt, updatedAt] = bindings;
       this.remoteSubscriptionSources.set(id, {
@@ -362,11 +305,6 @@ class MockDatabase {
 
     if (sql.startsWith('DELETE FROM remote_subscription_sources WHERE id = ?')) {
       this.remoteSubscriptionSources.delete(bindings[0]);
-      return { success: true };
-    }
-
-    if (sql.startsWith('INSERT INTO sync_logs')) {
-      this.syncLogs.push(bindings);
       return { success: true };
     }
 
@@ -496,22 +434,6 @@ function createNodeRow(overrides = {}) {
   };
 }
 
-function createRuleSourceRow(overrides = {}) {
-  return {
-    id: 'rs_demo',
-    name: 'Default Rules',
-    source_url: 'https://example.com/rules.txt',
-    format: 'text',
-    enabled: 1,
-    last_sync_at: null,
-    last_sync_status: null,
-    failure_count: 0,
-    created_at: '2026-03-08T00:00:00.000Z',
-    updated_at: '2026-03-08T00:00:00.000Z',
-    ...overrides
-  };
-}
-
 function createRemoteSubscriptionSourceRow(overrides = {}) {
   return {
     id: 'rss_demo',
@@ -529,17 +451,6 @@ function createRemoteSubscriptionSourceRow(overrides = {}) {
   };
 }
 
-function createSnapshotRow(overrides = {}) {
-  return {
-    id: 'snap_demo',
-    rule_source_id: 'rs_demo',
-    content_hash: 'hash_demo',
-    content: 'DOMAIN-SUFFIX,example.com,DIRECT',
-    created_at: '2026-03-08T00:00:00.000Z',
-    ...overrides
-  };
-}
-
 function createEnv({
   admins = [createAdminRow()],
   users = [createUserRow()],
@@ -547,8 +458,6 @@ function createEnv({
   nodes = [createNodeRow()],
   userNodeMap = [{ user_id: 'usr_demo', node_id: 'node_hk_01', enabled: 1 }],
   remoteSubscriptionSources = [],
-  ruleSources = [],
-  snapshots = [],
   cacheEntries = []
 } = {}) {
   const assets = new MockAssets();
@@ -558,9 +467,7 @@ function createEnv({
     templates,
     nodes,
     userNodeMap,
-    remoteSubscriptionSources,
-    ruleSources,
-    snapshots
+    remoteSubscriptionSources
   });
   const kv = new MockKvNamespace(cacheEntries);
 
@@ -617,9 +524,7 @@ test('setup status, bootstrap, login and admin me complete the first-install aut
     users: [],
     templates: [],
     nodes: [],
-    userNodeMap: [],
-    ruleSources: [],
-    snapshots: []
+    userNodeMap: []
   });
 
   const statusBefore = await requestJson('http://127.0.0.1:8787/api/setup/status', { method: 'GET' }, env);
